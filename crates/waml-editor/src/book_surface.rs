@@ -303,12 +303,26 @@ impl Widget for BookSurface {
                     }
                     SectionBody::Prose { .. } => {
                         if let Some(child) = self.live.get(&index) {
-                            let _ = child.draw_walk(cx, scope, Walk::abs_rect(section_rect));
-                            let drawn = child.area().rect(cx).size.y;
-                            if drawn > 0.0
-                                && self.measured.get(&section.row_id).copied() != Some(drawn)
-                            {
-                                self.measured.insert(section.row_id.clone(), drawn);
+                            // Fixed width, FIT height: the child must be free
+                            // to draw its natural height, or there is nothing
+                            // to measure -- `Walk::abs_rect` would pin height
+                            // to the cached value, and the measurement below
+                            // could only echo the estimate back forever.
+                            let walk = Walk {
+                                abs_pos: Some(section_rect.pos),
+                                margin: Inset::default(),
+                                width: Size::Fixed(section_rect.size.x),
+                                height: Size::fit(),
+                                metrics: Metrics::default(),
+                            };
+                            let _ = child.draw_walk(cx, scope, walk);
+                            // Measured via the viewer's own flow-height probe:
+                            // with a document installed, `MarkdownViewer` drives
+                            // a `TextFlow` and never draws its `view`, so the
+                            // child's widget area is stale/empty and cannot be
+                            // read for the drawn height.
+                            let drawn = child.as_markdown_viewer().content_height();
+                            if self.record_measured(section, drawn) {
                                 remeasured = true;
                             }
                         }
@@ -362,11 +376,38 @@ impl Widget for BookSurface {
 impl BookSurface {
     pub fn set_model(&mut self, cx: &mut Cx, model: Rc<BookModel>) {
         self.live.clear(); // children are per-section; a swap re-creates lazily
+                           // A rebuild of the SAME book keeps the reader's place (the clamp
+                           // below); a DIFFERENT book must not inherit it -- this widget is the
+                           // one shared body every book tab draws on, so without this reset a
+                           // nested book opened from deep in `/guide` would start at `/guide`'s
+                           // offset, and `last_marked` would index the previous model's
+                           // sections. `measured` deliberately survives either way: it is keyed
+                           // by `RowId`, which is collision-free across books.
+        if self
+            .model
+            .as_ref()
+            .is_some_and(|current| current.directory != model.directory)
+        {
+            self.scroll = 0.0;
+            self.last_marked = None;
+        }
         self.model = Some(model);
         self.rebuild_layout();
         let total: f64 = self.heights.iter().sum();
         self.scroll = self.scroll.min((total - self.last_viewport).max(0.0));
         self.view.redraw(cx);
+    }
+
+    /// Record one prose section's freshly-drawn height into the
+    /// `RowId`-keyed cache; true when the cache changed and the caller must
+    /// re-layout. The `> 0.0` guard skips the sentinel `content_height`
+    /// reports before the child's flow has drawn a document.
+    fn record_measured(&mut self, section: &BookSection, drawn: f64) -> bool {
+        if drawn > 0.0 && self.measured.get(&section.row_id).copied() != Some(drawn) {
+            self.measured.insert(section.row_id.clone(), drawn);
+            return true;
+        }
+        false
     }
 
     fn rebuild_layout(&mut self) {
@@ -840,6 +881,73 @@ mod tests {
         assert!(book.scroll() > 0.0);
         book.reconcile_live(&mut cx, 600.0);
         assert!(!book.live_section_indices().is_empty());
+    }
+
+    /// The prose measurement contract, at the level a headless test can
+    /// honestly pin. Covered here: a live prose child reports NO height
+    /// before any draw (`content_height` is zero, so the estimate stays
+    /// authoritative rather than being clobbered by a phantom measurement),
+    /// and a non-zero measurement that differs from the estimate updates the
+    /// `RowId`-keyed cache and moves every later section after re-layout.
+    /// NOT covered: that `draw_walk`'s Fit-height walk actually makes
+    /// `MarkdownViewer::content_height` report the real drawn height -- that
+    /// needs a live draw pass, which the headless gate cannot run, and is
+    /// owed a visual check.
+    #[test]
+    fn a_real_measurement_replaces_the_estimate_and_moves_later_sections() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        let model = model();
+        book.set_model(&mut cx, model.clone());
+        book.reconcile_live(&mut cx, 600.0);
+        // Before any draw, a live prose child has no measurement to offer...
+        let (_, child) = book.live_children_for_test().into_iter().next().unwrap();
+        assert_eq!(child.as_markdown_viewer().content_height(), 0.0);
+        // ...and the zero sentinel must not disturb the estimate cache.
+        assert!(!book.record_measured(&model.sections[0], 0.0));
+
+        let estimate = book.heights[0];
+        let next_top_before = book.tops[1];
+        let drawn = estimate + 480.0;
+        assert!(book.record_measured(&model.sections[0], drawn));
+        book.rebuild_layout();
+        assert_eq!(book.heights[0], drawn);
+        assert!(
+            (book.tops[1] - (next_top_before + 480.0)).abs() < 1e-6,
+            "every later section moves by the measured delta"
+        );
+        // Re-reporting the same height is not a change: no re-layout churn.
+        assert!(!book.record_measured(&model.sections[0], drawn));
+    }
+
+    #[test]
+    fn swapping_to_a_different_book_resets_the_reader_state() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        book.set_model(&mut cx, model());
+        book.scroll_to_section(&mut cx, 39);
+        let place = book.scroll();
+        assert!(place > 0.0);
+        // Same directory: a rebuild keeps the reader's place...
+        book.set_model(&mut cx, model());
+        assert_eq!(book.scroll(), place);
+        // ...and the fold gate keeps its memory across the rebuild.
+        assert!(
+            book.take_fold_moved_for_test(),
+            "the deep scroll marks once"
+        );
+        assert!(!book.take_fold_moved_for_test());
+        // A DIFFERENT directory: fresh book, top of the page, gate re-armed.
+        book.set_model(&mut cx, guide_model());
+        assert_eq!(book.scroll(), 0.0, "a different book starts at its top");
+        assert_eq!(book.current_section_index(), Some(0));
+        book.scroll_to_section(&mut cx, 1);
+        assert!(
+            book.take_fold_moved_for_test(),
+            "the first crossing in a new book must mark"
+        );
     }
 
     /// The Task 2 fixture: a book with a prose section (Intro), a diagram

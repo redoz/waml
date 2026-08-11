@@ -289,10 +289,9 @@ impl BodyWidgets {
         self.set_canvas_interaction_enabled(cx, false);
     }
 
-    /// Show the book surface (`book_surface`), mutually exclusive with every
-    /// sibling above. The widget itself arrives in a later task; until the
-    /// DSL mounts it, the lookup is an absent-widget no-op, which is also
-    /// what keeps every headless test green.
+    /// Show the book surface (`book_surface`, the mounted `BookSurface`
+    /// widget), mutually exclusive with every sibling above. In a headless
+    /// test with no DSL tree, the lookup is an absent-widget no-op.
     pub fn show_book_view(&self, cx: &mut Cx) {
         for surface in [
             ids!(markdown_surface),

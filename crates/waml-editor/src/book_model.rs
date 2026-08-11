@@ -24,22 +24,33 @@ use crate::markdown_hosts::WamlCodeHighlightHost;
 use crate::source_view::SourceView;
 
 /// A folder's book model: its sections, walked depth-first, plus every
-/// diagnostic the walk produced. `#[allow(dead_code)]` until Task 5's
-/// `book_surface.rs` reads the model's fields -- clippy's lib target does
-/// not count the unit tests below as callers.
-#[allow(dead_code)] // consumed by book_surface.rs in Task 5, which removes this allow
+/// diagnostic the walk produced. The remaining per-field `#[allow(dead_code)]`
+/// mark fields only this file's unit tests read today -- clippy's lib target
+/// does not count unit tests as callers.
 pub struct BookModel {
     pub directory: String,
+    /// The book root's display title. Only unit tests read it: the tab title
+    /// is taken from `folder_documents::title_for` at open time
+    /// (`book_documents::open`), and no shipped chrome re-titles from the
+    /// model afterwards.
+    #[allow(dead_code)]
     pub title: String,
     pub sections: Vec<BookSection>,
+    /// Everything the walk degraded or warned about. Only unit tests read
+    /// it: Phase 1 has no surface listing a book's diagnostics -- sections
+    /// degrade visibly to `Link` instead, which carries its own reason.
+    #[allow(dead_code)]
     pub diagnostics: Vec<Diagnostic>,
+    /// The session revision the model was built from. Only unit tests read
+    /// it: `BookView` guards staleness with its own `revision` field rather
+    /// than reading it back off the model.
+    #[allow(dead_code)]
     pub revision: u64,
 }
 
 /// One row of the book, flattened out of the folder's depth-first walk.
 /// `depth` is the row's nesting under the book root -- 0 for the book's own
 /// direct children -- so the view can indent without re-deriving structure.
-#[allow(dead_code)] // consumed by book_surface.rs in Task 5, which removes this allow
 pub struct BookSection {
     pub row_id: RowId,
     pub depth: u8,
@@ -49,7 +60,6 @@ pub struct BookSection {
 }
 
 /// What a section renders as, chosen by the row's resolved surface.
-#[allow(dead_code)] // consumed by book_surface.rs in Task 5, which removes this allow
 pub enum SectionBody {
     /// A plain folder row: no content of its own, just a heading whose
     /// children (if any) follow at the next depth.
@@ -66,6 +76,10 @@ pub enum SectionBody {
     /// `Vec<BookSection>` sized to the largest one.
     Diagram {
         scene: Box<crate::scene::Scene>,
+        /// Only unit tests read this today: the open-full affordance
+        /// navigates through the section's `target`
+        /// (`book_view::navigation_for_section`), not through the body.
+        #[allow(dead_code)]
         concept_id: String,
     },
     /// A row this build does not render inline: an unrenderable resolved
@@ -84,7 +98,6 @@ pub enum LinkReason {
 
 /// Build `directory`'s book model, or `None` if `directory` is not in the
 /// bundle. Pure data over `snapshot` -- no widgets, no `Cx`.
-#[allow(dead_code)] // consumed by book_surface.rs in Task 5, which removes this allow
 pub fn build_book(
     snapshot: &EditorSessionSnapshot,
     directory: &str,

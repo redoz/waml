@@ -236,6 +236,14 @@ pub struct MarkdownViewer {
     /// documents is responsible for reissuing or clearing them.
     #[rust]
     search_highlights: Arc<[TextRange]>,
+    /// Height, in logical pixels, the installed document actually drew at on
+    /// the last `draw_walk` -- the `TextFlow`'s turtle-ended rect, recorded
+    /// right after `flow.end`. Zero until the first draw with a document
+    /// installed (and reset by `install_document`), so callers can tell "not
+    /// yet measured" from a real measurement with a `> 0.0` guard.
+    /// `BookSurface` reads it to size a prose section to what actually drew.
+    #[rust]
+    content_height: f64,
 }
 
 impl MarkdownViewer {
@@ -248,7 +256,15 @@ impl MarkdownViewer {
         self.document = Some(document);
         self.source = Some(source);
         self.source_map.clear();
+        // The old document's drawn height says nothing about the new one.
+        self.content_height = 0.0;
         self.redraw(cx);
+    }
+
+    /// See the `content_height` field: the installed document's drawn height
+    /// from the last `draw_walk`, zero before any such draw.
+    pub fn content_height(&self) -> f64 {
+        self.content_height
     }
 
     pub fn source_map(&self) -> &SourceMap {
@@ -730,6 +746,12 @@ impl Widget for MarkdownViewer {
         self.draw_siblings(cx, &document.roots, &source);
         if let Some(mut flow) = flow_ref.borrow_mut() {
             flow.end(cx);
+            // `TextFlow::end` closes with `end_turtle_with_area`, so the
+            // flow's area rect now spans exactly what this pass drew. Its
+            // height is the document's natural drawn height at the walked
+            // width -- the one honest measurement (this widget's own `view`
+            // is never drawn on this path, so `self.area()` would be stale).
+            self.content_height = flow.area().rect(cx).size.y;
         }
         self.draw_search_highlights(cx);
         DrawStep::done()
@@ -754,6 +776,12 @@ impl MarkdownViewerRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.install_document(cx, document, source);
         }
+    }
+
+    /// See [`MarkdownViewer::content_height`]. Zero for an empty ref, which
+    /// deliberately reads the same as "not yet drawn".
+    pub fn content_height(&self) -> f64 {
+        self.borrow().map_or(0.0, |inner| inner.content_height())
     }
 
     pub fn selected_source_span(&self, cx: &Cx) -> Option<TextRange> {
