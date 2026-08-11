@@ -29,7 +29,9 @@ pub use canvas::{
     StructuralVisualPolicy, TextMeasurer, UseCaseGeometry,
 };
 mod book_documents;
+mod book_layout;
 mod book_model;
+mod book_surface;
 mod book_view;
 mod card;
 mod chrome_seam;

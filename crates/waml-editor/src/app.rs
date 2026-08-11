@@ -519,6 +519,28 @@ script_mod! {
                                         height: Fill
                                     }
                                 }
+                                // A folder's BOOK view: one continuous,
+                                // read-only, virtualized scroll of its
+                                // projected sections. Mutually exclusive with
+                                // every sibling above (`BookView::sync` ->
+                                // `show_book_view`).
+                                book_surface := View{
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    show_bg: true
+                                    draw_bg +: {
+                                        color: atlas.surface
+                                        pixel: fn() {
+                                            return vec4(self.color.rgb * self.color.a, self.color.a)
+                                        }
+                                    }
+                                    flow: Down
+                                    book := BookSurface{
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
                                 // A results tab's own view: the grouped hits for
                                 // one query. Mutually exclusive with the canvas,
                                 // both markdown surfaces, and the folder view
@@ -1505,6 +1527,11 @@ impl AppMain for App {
         // mounts it as the `FlatList` row template -- an unregistered child
         // silently becomes a dead, invisible node.
         crate::folder_list::script_mod(vm);
+        // `BookSurface` is mounted by App's own live layout (`book_surface.book`),
+        // so it must register before the App DSL is evaluated -- the DSL
+        // resolves `mod.widgets.*` eagerly at `use`-time, not lazily; an
+        // unregistered child is a dead, invisible, unqueryable node.
+        crate::book_surface::script_mod(vm);
         // `SearchGroupHeader`/`SearchResultRow` must register before
         // `SearchResultsListView`'s own DSL, which mounts them as the
         // `FlatList`'s two row templates -- an unregistered child silently

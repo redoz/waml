@@ -33,6 +33,7 @@ pub struct BodyWidgets {
     markdown_viewer: MarkdownViewerRef,
     folder_list: FolderListViewRef,
     search_results: SearchResultsListViewRef,
+    book: WidgetRef,
 }
 
 impl BodyWidgets {
@@ -53,6 +54,7 @@ impl BodyWidgets {
             search_results: ui
                 .widget(_cx, ids!(search_results_surface.search_results_list))
                 .as_search_results_list_view(),
+            book: ui.widget(_cx, ids!(book_surface.book)),
         }
     }
 
@@ -333,6 +335,10 @@ impl BodyWidgets {
 
     pub fn search_results(&self) -> SearchResultsListViewRef {
         self.search_results.clone()
+    }
+
+    pub fn book_view_widget(&self) -> WidgetRef {
+        self.book.clone()
     }
 
     pub fn markdown_editor(&self) -> MarkdownEditorRef {

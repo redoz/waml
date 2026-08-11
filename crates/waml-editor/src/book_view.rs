@@ -41,9 +41,6 @@ impl BookView {
         }
     }
 
-    // Consumed by book_surface.rs in Task 5, which removes this allow --
-    // clippy's lib target does not count the unit test below as a caller.
-    #[allow(dead_code)]
     pub(crate) fn model(&self) -> Option<&Rc<BookModel>> {
         self.model.as_ref()
     }
@@ -76,7 +73,13 @@ impl DocView for BookView {
 
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
         body.show_book_view(cx);
-        // Task 5 pushes self.model at the BookSurface widget here.
+        if let (Some(model), Some(mut widget)) = (
+            self.model().cloned(),
+            body.book_view_widget()
+                .borrow_mut::<crate::book_surface::BookSurface>(),
+        ) {
+            widget.set_model(cx, model);
+        }
     }
 
     fn sync_from_session(
