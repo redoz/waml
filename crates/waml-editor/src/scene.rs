@@ -821,9 +821,9 @@ fn stress_layout(
         })
         .collect();
     let hard_obstacles = if diagram.kind == waml::model::DiagramKind::UseCase {
-        visible_use_case_heading_obstacles(diagram, &groups)
+        Some(visible_use_case_heading_obstacles(diagram, &groups))
     } else {
-        Vec::new()
+        None
     };
     let route_cost = diagram_route_cost(diagram.kind);
     let route_policy = use_case_route_policy(diagram);
@@ -835,7 +835,7 @@ fn stress_layout(
         &group_depths,
         &route_edges,
         &SceneRoutePolicy {
-            hard_obstacles: &hard_obstacles,
+            hard_obstacles: hard_obstacles.as_deref().unwrap_or(&[]),
             cost: &route_cost,
             route: &route_policy,
         },
@@ -1194,7 +1194,7 @@ pub fn build_scene(
         &waml::solve::LabelRoutingPolicy {
             cost: diagram_route_cost(diagram.kind),
             route: &use_case_route_policy(diagram),
-            projected_headings: Some(&routing.hard_obstacles),
+            projected_headings: routing.hard_obstacles.as_deref(),
         },
     );
     // A reroute moves polylines, and the scene draws from `edges`, not from
@@ -1218,7 +1218,7 @@ pub fn build_scene(
         &final_routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
-        Some(&routing.hard_obstacles),
+        routing.hard_obstacles.as_deref(),
     );
     debug_assert!(
         unresolved.is_empty(),
@@ -2722,7 +2722,11 @@ mod tests {
             &connected,
             &SolveConfig::default(),
         );
-        let (solved, ..) = stress_layout(diagram, &compiled, &sizes, &model_edges);
+        let (solved, routing, ..) = stress_layout(diagram, &compiled, &sizes, &model_edges);
+        assert!(
+            routing.hard_obstacles.is_none(),
+            "generic diagrams must retain legacy group-title label obstacles"
+        );
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());

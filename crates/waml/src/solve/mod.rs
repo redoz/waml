@@ -271,7 +271,9 @@ pub struct SolvedRouting {
     pub rects: BTreeMap<BoxId, Rect>,
     pub edges: Vec<(BoxId, BoxId, Option<String>)>,
     /// Frontend-projected solid rectangles used by both routing and labels.
-    pub hard_obstacles: Vec<Rect>,
+    /// `Some` means the frontend authoritatively projected heading geometry.
+    /// `None` keeps the generic solver's legacy group-title fallback.
+    pub hard_obstacles: Option<Vec<Rect>>,
 }
 
 impl SolvedRouting {
