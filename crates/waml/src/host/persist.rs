@@ -9,9 +9,10 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::confine::{self, ConfineError, SymlinkPolicy};
 
 /// Write only changed/added entries; delete entries dropped from the bundle.
 /// Returns a human list of what happened.
@@ -138,10 +139,9 @@ fn write_back_with_ops(
         let mut targets = std::collections::BTreeSet::new();
 
         let mut reserve = |logical: &str| -> std::io::Result<PathBuf> {
-            let relative = Path::new(logical);
-            validate_relative(relative)?;
-            let target = root.join(relative);
-            validate_target(&root, &target)?;
+            let target =
+                confine::resolve_under(&root, logical, SymlinkPolicy::FollowWithinRoot, false)
+                    .map_err(|error| confine_error_to_io(logical, error))?;
             // Two logical paths that collide on one filesystem entry would
             // make the transaction overwrite its own work. Fold case only
             // where the platform's filesystems are conventionally
@@ -330,50 +330,36 @@ fn create_staging_directory(root: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-fn validate_relative(path: &Path) -> std::io::Result<()> {
-    if path.as_os_str().is_empty()
-        || path.components().any(|component| match component {
-            // A colon inside a name is an NTFS alternate-data-stream write
-            // (`a:b.md`), not a file the user can see; reject it everywhere
-            // so bundles behave identically across platforms.
-            Component::Normal(name) => name.to_string_lossy().contains(':'),
-            _ => true,
-        })
-    {
-        return Err(std::io::Error::new(
+/// Map a [`ConfineError`] from `confine::resolve_under` to `persist`'s
+/// existing `InvalidInput` contract. The syntactic message text is a named
+/// pin (`write_back_rejects_ntfs_alternate_data_stream_paths` asserts it
+/// verbatim) -- kept exactly, regardless of which syntactic rule inside
+/// `check_rel` actually fired, since that test predates the shared checker
+/// and pins persist's own wording, not `confine`'s.
+fn confine_error_to_io(logical: &str, error: ConfineError) -> std::io::Error {
+    match error {
+        ConfineError::Syntactic(_) => std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!(
-                "bundle path must be relative and traversal-free: {}",
-                path.display()
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_target(root: &Path, target: &Path) -> std::io::Result<()> {
-    let mut ancestor = target.parent().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "bundle path has no parent",
-        )
-    })?;
-    while !ancestor.exists() {
-        ancestor = ancestor.parent().ok_or_else(|| {
+            format!("bundle path must be relative and traversal-free: {logical}"),
+        ),
+        ConfineError::SymlinkRefused(target) | ConfineError::EscapesRoot(target) => {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "bundle path has no existing ancestor",
+                format!("bundle path resolves outside root: {}", target.display()),
             )
-        })?;
-    }
-    let canonical = ancestor.canonicalize()?;
-    if canonical == root || canonical.starts_with(root) {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
+        }
+        ConfineError::NotADirectory(target) => std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("bundle path resolves outside root: {}", target.display()),
-        ))
+            format!(
+                "bundle path parent is not a directory: {}",
+                target.display()
+            ),
+        ),
+        ConfineError::NotAFile(target) => std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("bundle target is not a file: {}", target.display()),
+        ),
+        ConfineError::Io(io_error) => io_error,
     }
 }
 
@@ -711,6 +697,22 @@ mod tests {
                 error.to_string().contains("relative and traversal-free"),
                 "{error}"
             );
+        }
+        assert_eq!(directory_entries(&temp.0), Vec::<String>::new());
+    }
+
+    /// `check_rel`'s reserved-device-name rule is new for `persist` as of the
+    /// shared `host::confine` module (Task 11): before, `con.md` passed
+    /// validation here and hit whatever platform-dependent behaviour writing
+    /// to a Windows console device produces. It now fails loudly, at the
+    /// point of mutation, before the transaction stages anything.
+    #[test]
+    fn write_back_rejects_reserved_device_names() {
+        let temp = TempDir::new();
+        for logical in ["con.md", "nested/con.md"] {
+            let new = vec![(logical.to_owned(), "streamed".to_owned())];
+            let error = write_back(&temp.0, &[], &new).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{logical}");
         }
         assert_eq!(directory_entries(&temp.0), Vec::<String>::new());
     }

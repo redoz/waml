@@ -3,6 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 use waml::source::SourceBundle;
 
 use crate::editor_session::{SaveCompletion, SaveTicket};
@@ -37,29 +38,32 @@ pub(crate) fn save_bundle_atomic(
     let mut resolved_targets = BTreeSet::new();
     let mut validated_targets = Vec::with_capacity(current.len());
     for document in current.documents() {
-        let relative = Path::new(document.path().as_str());
-        let target = root.join(relative);
+        let relative = document.path().as_str();
+        let target =
+            confine::resolve_under(&root, relative, SymlinkPolicy::FollowWithinRoot, false)
+                .map_err(|error| confine_error_to_io(relative, error))?;
         let parent = target
             .parent()
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "bundle path has no parent")
             })?
             .to_path_buf();
-        let resolved_target = resolved_target(&root, &parent, &target)?;
-        if !resolved_targets.insert(filesystem_path_key(&resolved_target)) {
+        if !resolved_targets.insert(filesystem_path_key(&target)) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("bundle contains paths resolving to the same target: {target:?}"),
             ));
         }
-        validated_targets.push((target, parent));
+        validated_targets.push((target, parent, relative.to_owned()));
     }
 
     let mut planned = Vec::new();
     // Plan every dirty target using only reads. Clean paths participate in
     // containment and alias validation above, but their contents are not read or
     // rewritten, so an unrelated external edit survives this save.
-    for (document, (target, parent)) in current.documents().iter().zip(validated_targets) {
+    for (document, (target, parent, relative_owned)) in
+        current.documents().iter().zip(validated_targets)
+    {
         let relative = Path::new(document.path().as_str());
         let desired = document.text();
         let baseline = baseline_by_path.get(&bundle_path_key(relative)).copied();
@@ -68,6 +72,7 @@ pub(crate) fn save_bundle_atomic(
         }
         if disk_state(&root, &target, baseline, desired)? == DiskState::NeedsWrite {
             planned.push(PlannedWrite {
+                relative: relative_owned,
                 target,
                 parent,
                 baseline,
@@ -87,7 +92,7 @@ pub(crate) fn save_bundle_atomic(
     // entire pending set before the first file replacement.
     let mut pending = Vec::with_capacity(planned.len());
     for write in planned {
-        let _ = resolved_target(&root, &write.parent, &write.target)?;
+        recheck_confinement(&root, &write.relative)?;
         if disk_state(&root, &write.target, write.baseline, write.desired)? == DiskState::NeedsWrite
         {
             pending.push(write);
@@ -98,7 +103,7 @@ pub(crate) fn save_bundle_atomic(
         // This final read narrows, but cannot eliminate, the filesystem TOCTOU
         // window between validation and atomic replacement. Preventing that
         // fully requires directory-handle-relative APIs unavailable in std.
-        let _ = resolved_target(&root, &write.parent, &write.target)?;
+        recheck_confinement(&root, &write.relative)?;
         if disk_state(&root, &write.target, write.baseline, write.desired)? == DiskState::NeedsWrite
         {
             write_atomic(&write.parent, &write.target, write.desired.as_bytes())?;
@@ -106,6 +111,12 @@ pub(crate) fn save_bundle_atomic(
     }
 
     Ok(())
+}
+
+fn recheck_confinement(root: &Path, relative: &str) -> io::Result<()> {
+    confine::resolve_under(root, relative, SymlinkPolicy::FollowWithinRoot, false)
+        .map(|_| ())
+        .map_err(|error| confine_error_to_io(relative, error))
 }
 
 pub(crate) fn save_ticket_atomic(root: &Path, ticket: &SaveTicket) -> io::Result<SaveCompletion> {
@@ -137,6 +148,7 @@ enum DiskState {
 }
 
 struct PlannedWrite<'a> {
+    relative: String,
     target: PathBuf,
     parent: PathBuf,
     baseline: Option<&'a str>,
@@ -209,55 +221,26 @@ fn normalize_path_key(key: String) -> String {
     key
 }
 
-fn resolved_target(root: &Path, parent: &Path, target: &Path) -> io::Result<PathBuf> {
-    let existing_parent = nearest_existing_ancestor(parent)?;
-    let canonical_parent = existing_parent.canonicalize()?;
-    ensure_within_root(root, &canonical_parent, parent)?;
-    if !fs::metadata(&existing_parent)?.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("bundle path parent is not a directory: {existing_parent:?}"),
-        ));
-    }
-
-    match fs::symlink_metadata(target) {
-        Ok(_) => {
-            let canonical_target = target.canonicalize()?;
-            ensure_within_root(root, &canonical_target, target)?;
-            Ok(canonical_target)
+/// Map a [`ConfineError`] from `waml::host::confine::resolve_under` (shared
+/// with `host::persist` and `serve/paths.rs`, Task 11 of the
+/// `waml-cli-logic-seam` plan) to the editor's existing all-`InvalidInput`
+/// save-error contract; no test here distinguishes error kinds beyond that.
+fn confine_error_to_io(relative: &str, error: ConfineError) -> io::Error {
+    let message = match &error {
+        ConfineError::Syntactic(message) => message.clone(),
+        ConfineError::SymlinkRefused(path) | ConfineError::EscapesRoot(path) => {
+            format!("bundle path resolves outside opened directory: {path:?}")
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let missing_parent = parent.strip_prefix(&existing_parent).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("bundle path has an invalid parent: {parent:?}"),
-                )
-            })?;
-            let file_name = target.file_name().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "bundle path has no file name")
-            })?;
-            Ok(canonical_parent.join(missing_parent).join(file_name))
+        ConfineError::NotADirectory(path) => {
+            format!("bundle path parent is not a directory: {path:?}")
         }
-        Err(error) => Err(error),
-    }
-}
-
-fn nearest_existing_ancestor(path: &Path) -> io::Result<PathBuf> {
-    let mut candidate = path;
-    loop {
-        match fs::symlink_metadata(candidate) {
-            Ok(_) => return Ok(candidate.to_path_buf()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                candidate = candidate.parent().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("bundle path has no existing ancestor: {path:?}"),
-                    )
-                })?;
-            }
-            Err(error) => return Err(error),
+        ConfineError::NotAFile(path) => format!("bundle target is not a file: {path:?}"),
+        ConfineError::Io(io_error) => {
+            return io::Error::new(io_error.kind(), io_error.to_string());
         }
-    }
+    };
+    let _ = relative;
+    io::Error::new(io::ErrorKind::InvalidInput, message)
 }
 
 fn ensure_within_root(root: &Path, canonical: &Path, original: &Path) -> io::Result<()> {
@@ -421,6 +404,21 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// New as of the shared `host::confine` module (Task 11 of the
+    /// waml-cli-logic-seam plan): before, `con.md` passed this validation and
+    /// hit whatever platform-dependent behaviour writing to a Windows
+    /// console device produces. It now fails loudly, before any mutation.
+    #[test]
+    fn rejects_a_reserved_device_name() {
+        let temp = TempDir::new();
+
+        let error =
+            save_bundle_atomic(temp.path(), &[], &[("con.md".into(), "new".into())]).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!temp.path().join("con.md").exists());
     }
 
     #[test]

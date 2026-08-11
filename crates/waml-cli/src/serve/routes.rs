@@ -510,6 +510,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_colon_segment_documents_path_is_422_not_500() {
+        // An interior colon is an NTFS alternate-data-stream write, rejected
+        // at the confinement layer as of the shared `host::confine` module
+        // (Task 11 of the waml-cli-logic-seam plan) -- same 422 contract as
+        // any other confinement failure.
+        let server = spawn().await;
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({
+            "revision": 0,
+            "writes": [{"path": "ab:c.md", "baseline": null, "desired": "# Colon\n"}],
+        });
+        let resp = client
+            .post(format!("{}/api/documents", server.base))
+            .bearer_auth("thetoken")
+            .header("X-Waml-Client", "1")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
     async fn a_stale_revision_is_409() {
         let server = spawn().await;
         let client = reqwest::Client::new();

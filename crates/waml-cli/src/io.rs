@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
-use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use waml::bundle_envelope::expand_text;
+use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 use waml::host::ingest::{ingest_markdown, rooted_key, triage, IngestError, IngestOptions};
 use waml::index_md::IndexChange;
 
@@ -180,100 +180,49 @@ fn escaped_index_path(message: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::PermissionDenied, message.into())
 }
 
+/// The index writer's own rules on top of shared confinement: only an
+/// `index.md`-basename target is acceptable (checked before any directory
+/// gets created, so a non-index basename never leaves a partial directory
+/// behind -- see `write_indexes_rejects_a_non_index_basename_before_writing`),
+/// and confinement itself is `SymlinkPolicy::RefuseAny`: a symlinked parent
+/// or target is refused categorically, even one that resolves inside the
+/// root -- stricter than the wire-input/persist/native-save writers, which
+/// follow in-root symlinks (`SymlinkPolicy::FollowWithinRoot`, `host::confine`).
 fn resolve_index_target(
     root: &Path,
     relative: &str,
     create_parents: bool,
 ) -> std::io::Result<PathBuf> {
-    let canonical_root = fs::canonicalize(root)?;
-    let mut components = Vec::new();
-    for component in Path::new(relative).components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(component) => components.push(component),
-            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
-                return Err(invalid_index_path(format!(
-                    "invalid index path: {relative}"
-                )));
-            }
-        }
-    }
-    let Some(filename) = components.pop() else {
-        return Err(invalid_index_path("index path is empty"));
-    };
+    let filename = Path::new(relative)
+        .file_name()
+        .ok_or_else(|| invalid_index_path("index path is empty"))?;
     if !waml::index_md::is_index_basename(&filename.to_string_lossy()) {
         return Err(invalid_index_path(format!(
             "not an index document: {relative}"
         )));
     }
+    confine::resolve_under(root, relative, SymlinkPolicy::RefuseAny, create_parents)
+        .map_err(|error| index_confine_error_to_io(relative, error))
+}
 
-    let mut current = canonical_root.clone();
-    for component in components {
-        let candidate = current.join(component);
-        match fs::symlink_metadata(&candidate) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(escaped_index_path(format!(
-                        "symlinked index parent: {}",
-                        candidate.display()
-                    )));
-                }
-                if !metadata.is_dir() {
-                    return Err(invalid_index_path(format!(
-                        "index parent is not a directory: {}",
-                        candidate.display()
-                    )));
-                }
-                let resolved = fs::canonicalize(&candidate)?;
-                if !resolved.starts_with(&canonical_root) {
-                    return Err(escaped_index_path(format!(
-                        "index path escapes root: {}",
-                        candidate.display()
-                    )));
-                }
-                current = resolved;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create_parents => {
-                fs::create_dir(&candidate)?;
-                let resolved = fs::canonicalize(&candidate)?;
-                if !resolved.starts_with(&canonical_root) {
-                    return Err(escaped_index_path(format!(
-                        "index path escapes root: {}",
-                        candidate.display()
-                    )));
-                }
-                current = resolved;
-            }
-            Err(error) => return Err(error),
+fn index_confine_error_to_io(relative: &str, error: ConfineError) -> std::io::Error {
+    match error {
+        ConfineError::Syntactic(_) => invalid_index_path(format!("invalid index path: {relative}")),
+        ConfineError::SymlinkRefused(path) => {
+            escaped_index_path(format!("symlinked index path: {}", path.display()))
         }
-    }
-
-    let target = current.join(filename);
-    if !target.starts_with(&canonical_root) {
-        return Err(invalid_index_path(format!(
-            "index path escapes root: {relative}"
-        )));
-    }
-    match fs::symlink_metadata(&target) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
-                return Err(escaped_index_path(format!(
-                    "symlinked index target: {}",
-                    target.display()
-                )));
-            }
-            let resolved = fs::canonicalize(&target)?;
-            if !resolved.starts_with(&canonical_root) {
-                return Err(escaped_index_path(format!(
-                    "index path escapes root: {}",
-                    target.display()
-                )));
-            }
+        ConfineError::EscapesRoot(path) => {
+            invalid_index_path(format!("index path escapes root: {}", path.display()))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+        ConfineError::NotADirectory(path) => invalid_index_path(format!(
+            "index parent is not a directory: {}",
+            path.display()
+        )),
+        ConfineError::NotAFile(path) => {
+            invalid_index_path(format!("index target is not a file: {}", path.display()))
+        }
+        ConfineError::Io(io_error) => io_error,
     }
-    Ok(target)
 }
 
 pub fn write_indexes(root: &Path, changes: &[IndexChange]) -> std::io::Result<()> {
@@ -596,6 +545,37 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(target).unwrap(), "keep");
+    }
+
+    /// The index writer's policy is categorical refusal
+    /// (`SymlinkPolicy::RefuseAny`), not "follow and contain": a symlinked
+    /// parent is refused even when it resolves *inside* the root. The two
+    /// tests above only cover an out-of-root link target, which a
+    /// follow-and-contain resolver would also reject -- so they cannot tell
+    /// the two policies apart. This one can: if `resolve_index_target` were
+    /// ever loosened to follow-and-contain, this is the test that would
+    /// catch it (Task 11 of the waml-cli-logic-seam plan).
+    #[test]
+    fn write_indexes_rejects_an_in_root_symlinked_parent() {
+        let temp = TempDir::new();
+        let real = temp.0.join("real");
+        fs::create_dir(&real).unwrap();
+        let link = temp.0.join("linked");
+        if create_dir_symlink(&real, &link).is_err() {
+            return;
+        }
+
+        let error = write_indexes(
+            &temp.0,
+            &[waml::index_md::IndexChange::Upsert {
+                path: "linked/index.md".into(),
+                rendered: "bad".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(!real.join("index.md").exists());
     }
 
     #[cfg(windows)]

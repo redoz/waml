@@ -3,124 +3,46 @@
 //! `site::is_safe_relative_path` stays as-is for the embedded manifest — this
 //! is the stricter live-filesystem sibling for wire input (op/document paths
 //! arriving over the API), so the two intentionally are not merged.
+//!
+//! Both functions here are thin wrappers over `waml::host::confine`, which
+//! carries the actual syntactic and symlink-containment rules shared with
+//! `host::persist` and the editor's native save (Task 11 of the
+//! `waml-cli-logic-seam` plan). This module's job is only to translate
+//! `confine`'s typed `ConfineError` into the `Result<_, String>` contract
+//! `serve`'s error path expects (`ApplyFailure::Confinement` → HTTP 422).
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+
+use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 
 /// Syntactic check only: reject anything that could escape the served
 /// directory or name a reserved device, on every platform (a document
 /// authored on one OS can be served from another).
 pub fn is_safe_rel(rel: &str) -> Result<(), String> {
-    if rel.is_empty() {
-        return Err("path is empty".to_string());
-    }
-    if rel.contains('\0') {
-        return Err(format!("path contains a NUL byte: {rel:?}"));
-    }
-    if rel.starts_with('/') || rel.starts_with('\\') {
-        return Err(format!("path is absolute: {rel:?}"));
-    }
-    if rel.starts_with("\\\\") {
-        return Err(format!("path is a UNC path: {rel:?}"));
-    }
-    // Drive prefix, e.g. `C:` or `C:\x`.
-    let mut chars = rel.chars();
-    if let (Some(letter), Some(':')) = (chars.next(), chars.next()) {
-        if letter.is_ascii_alphabetic() {
-            return Err(format!("path has a drive prefix: {rel:?}"));
-        }
-    }
-
-    for segment in rel.split(['/', '\\']) {
-        if segment.is_empty() {
-            return Err(format!("path has an empty segment: {rel:?}"));
-        }
-        if segment == "." || segment == ".." {
-            return Err(format!("path traverses via {segment:?}: {rel:?}"));
-        }
-        if is_reserved_device_name(segment) {
-            return Err(format!("path names a reserved device: {segment:?}"));
-        }
-    }
-
-    Ok(())
-}
-
-/// Windows reserved device names are reserved with or without an extension,
-/// and case-insensitively — checked on every platform since a document might
-/// be shared to a Windows machine later.
-fn is_reserved_device_name(segment: &str) -> bool {
-    let stem = match segment.split_once('.') {
-        Some((stem, _ext)) => stem,
-        None => segment,
-    };
-    let upper = stem.to_ascii_uppercase();
-    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || matches!(
-            upper.as_str(),
-            "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-        )
-        || matches!(
-            upper.as_str(),
-            "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
-        )
+    confine::check_rel(rel).map_err(|error| confine_error_to_string(rel, error))
 }
 
 /// Join `rel` onto `root` and require the result to stay under the
 /// canonicalized root, resolving symlinks along the way. `rel` need not
 /// exist yet: the nearest existing ancestor is canonicalized and the
-/// remaining components are appended, the same trick
-/// `native_save::resolved_target` uses for not-yet-created files.
+/// remaining components are appended.
 pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
     is_safe_rel(rel)?;
-
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|error| format!("could not resolve root {root:?}: {error}"))?;
-    let candidate = root.join(rel);
-
-    let existing_ancestor = nearest_existing_ancestor(&candidate)
-        .map_err(|error| format!("could not resolve {rel:?}: {error}"))?;
-    let canonical_ancestor = existing_ancestor
-        .canonicalize()
-        .map_err(|error| format!("could not resolve {rel:?}: {error}"))?;
-
-    if canonical_ancestor != canonical_root && !canonical_ancestor.starts_with(&canonical_root) {
-        return Err(format!(
-            "path resolves outside the served directory: {rel:?}"
-        ));
-    }
-
-    let remainder = candidate
-        .strip_prefix(&existing_ancestor)
-        .map_err(|_| format!("path has an invalid parent: {rel:?}"))?;
-    let resolved = canonical_ancestor.join(remainder);
-
-    if resolved != canonical_root && !resolved.starts_with(&canonical_root) {
-        return Err(format!(
-            "path resolves outside the served directory: {rel:?}"
-        ));
-    }
-
-    Ok(resolved)
+    confine::resolve_under(root, rel, SymlinkPolicy::FollowWithinRoot, false)
+        .map_err(|error| confine_error_to_string(rel, error))
 }
 
-fn nearest_existing_ancestor(path: &Path) -> io::Result<PathBuf> {
-    let mut candidate = path;
-    loop {
-        match fs::symlink_metadata(candidate) {
-            Ok(_) => return Ok(candidate.to_path_buf()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                candidate = candidate.parent().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("path has no existing ancestor: {path:?}"),
-                    )
-                })?;
-            }
-            Err(error) => return Err(error),
+fn confine_error_to_string(rel: &str, error: ConfineError) -> String {
+    match error {
+        ConfineError::Syntactic(message) => message,
+        ConfineError::SymlinkRefused(_) | ConfineError::EscapesRoot(_) => {
+            format!("path resolves outside the served directory: {rel:?}")
         }
+        ConfineError::NotADirectory(path) => {
+            format!("not a directory: {}", path.display())
+        }
+        ConfineError::NotAFile(path) => format!("not a file: {}", path.display()),
+        ConfineError::Io(io_error) => format!("could not resolve {rel:?}: {io_error}"),
     }
 }
 
@@ -159,6 +81,21 @@ mod tests {
         }
         // Negative: a name that merely contains a reserved word is fine.
         assert!(is_safe_rel("console.md").is_ok());
+    }
+
+    /// New as of the shared `host::confine` module (Task 11): an interior
+    /// colon is an NTFS alternate-data-stream write (`a:b.md`), not a file a
+    /// client can see, so it is now rejected at the confinement layer too --
+    /// previously such a path passed here and only died later at
+    /// `SourceBundle::try_from_pairs`/`BundlePath::parse`, still a 422 but a
+    /// different error body (`routes.rs`'s `an_invalid_documents_candidate_is_422_with_diagnostics`
+    /// still covers that fallback for any path that reaches the model
+    /// layer some other way).
+    #[test]
+    fn rejects_interior_colon_segments() {
+        for rel in ["ab:c.md", "nested/ab:c.md"] {
+            assert!(is_safe_rel(rel).is_err(), "expected {rel:?} to be rejected");
+        }
     }
 
     #[test]

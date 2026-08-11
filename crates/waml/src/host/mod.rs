@@ -3,6 +3,9 @@ use std::fmt;
 use crate::source::{BundlePath, SourceBundle, SourceDocument, SourceError};
 
 #[cfg(not(target_arch = "wasm32"))]
+pub mod confine;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ingest;
 
 #[cfg(not(target_arch = "wasm32"))]
