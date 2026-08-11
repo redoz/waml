@@ -41,6 +41,38 @@ pub fn base_items() -> Vec<PopupItem> {
     ]
 }
 
+/// Folder-row commands (spec 2026-08-11-read-as-scroll-design). A separate
+/// enum from `NodeMenuCommand`: the subject is a directory address, not a
+/// concept id, and the two lists grow independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderMenuCommand {
+    ReadAsScroll,
+}
+
+/// The folder menu's items, top to bottom. A list (composed like
+/// `base_items`, not a special-cased single entry) so the projection entries
+/// and the later lenses land as items rather than as new menus.
+pub fn folder_items() -> Vec<PopupItem> {
+    vec![PopupItem {
+        id: live_id!(read_as_scroll),
+        label: "Read as scroll".into(),
+        icon: Some(Icon::Scroll),
+        danger: false,
+        enabled: true,
+        checked: None,
+    }]
+}
+
+/// Map a menu-committed `LiveId` to a folder command. `None` = not one of
+/// ours (mirrors `command_for`).
+pub fn folder_command_for(id: LiveId) -> Option<FolderMenuCommand> {
+    if id == live_id!(read_as_scroll) {
+        Some(FolderMenuCommand::ReadAsScroll)
+    } else {
+        None
+    }
+}
+
 /// Map a menu-committed `LiveId` to a base command. `None` = not one of ours.
 pub fn command_for(id: LiveId) -> Option<NodeMenuCommand> {
     if id == live_id!(view_source) {
@@ -85,6 +117,28 @@ mod tests {
             Some(NodeMenuCommand::FindInDiagrams)
         );
         assert_eq!(command_for(live_id!(nope)), None);
+    }
+
+    #[test]
+    fn folder_items_yields_the_read_as_scroll_entry() {
+        let items = folder_items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, live_id!(read_as_scroll));
+        assert_eq!(items[0].label, "Read as scroll");
+        assert_eq!(items[0].icon, Some(Icon::Scroll));
+        assert!(items[0].enabled);
+        assert!(!items[0].danger);
+    }
+
+    #[test]
+    fn folder_command_for_maps_ids_and_rejects_others() {
+        assert_eq!(
+            folder_command_for(live_id!(read_as_scroll)),
+            Some(FolderMenuCommand::ReadAsScroll)
+        );
+        // The node menu's ids are not folder commands.
+        assert_eq!(folder_command_for(live_id!(view_source)), None);
+        assert_eq!(folder_command_for(live_id!(nope)), None);
     }
 
     #[test]

@@ -235,7 +235,7 @@ impl App {
         self.observe_panel_splitters(cx, actions);
     }
 
-    fn observe_popup_results(&mut self, cx: &mut Cx, actions: &Actions) {
+    pub(super) fn observe_popup_results(&mut self, cx: &mut Cx, actions: &Actions) {
         let popup_root = self.ui.widget(cx, ids!(popup_root));
         let Some(popup) = popup_root.borrow::<PopupRoot>() else {
             return;
@@ -250,6 +250,7 @@ impl App {
         let burger_closed = result_for(live_id!(burger));
         let doc_switcher_closed = result_for(live_id!(doc_switcher));
         let node_closed = result_for(live_id!(node_menu));
+        let folder_closed = result_for(live_id!(folder_menu));
         let palette_closed = result_for(live_id!(palette));
         let palette_query = popup.palette_query_changed(cx, live_id!(palette), actions);
         let mut document_armed = popup.armed_event(actions);
@@ -323,6 +324,16 @@ impl App {
                     }
                     crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
                         log!("find in diagrams: {key}");
+                    }
+                }
+            }
+        }
+        if let Some(PopupResult::Invoked(id)) = folder_closed {
+            if let Some(command) = crate::popup::node_menu::folder_command_for(id) {
+                let address = self.folder_menu_address.clone().unwrap_or_default();
+                match command {
+                    crate::popup::node_menu::FolderMenuCommand::ReadAsScroll => {
+                        self.open_folder_as_scroll(cx, &address);
                     }
                 }
             }
@@ -1034,18 +1045,46 @@ impl App {
         );
     }
 
-    fn handle_tree_context_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+    pub(super) fn handle_tree_context_menu(
+        &mut self,
+        cx: &mut Cx,
+        actions: &Actions,
+    ) -> ActionFlow {
         let request = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.context_menu_request(actions));
-        let Some((key, anchor)) = request else {
+        let Some((target, anchor)) = request else {
             return ActionFlow::Continue;
         };
 
-        self.transition_document(cx, &key, false);
-        self.node_menu_key = Some(key);
+        let (tag, items) = match target {
+            crate::navigation::NavigationTarget::Document { concept_id, .. } => {
+                // Established behavior, kept: right-clicking a concept row
+                // selects (opens) it before the menu shows.
+                self.transition_document(cx, &concept_id, false);
+                self.node_menu_key = Some(concept_id);
+                (
+                    live_id!(node_menu),
+                    crate::popup::node_menu::compose(vec![], crate::popup::node_menu::base_items()),
+                )
+            }
+            crate::navigation::NavigationTarget::Directory { address } => {
+                // Deliberately NO transition here: a menu the user may
+                // dismiss must not open the folder's tab as a side effect.
+                self.folder_menu_address = Some(address);
+                (
+                    live_id!(folder_menu),
+                    crate::popup::node_menu::compose(
+                        vec![],
+                        crate::popup::node_menu::folder_items(),
+                    ),
+                )
+            }
+            // The tree never emits an external-url target.
+            crate::navigation::NavigationTarget::ExternalUrl(_) => return ActionFlow::Continue,
+        };
         let bounds = self.window_bounds(cx);
         if let Some(mut popup) = self
             .ui
@@ -1055,13 +1094,10 @@ impl App {
             popup.show_at(
                 cx,
                 PopupSpec::Menu {
-                    tag: live_id!(node_menu),
+                    tag,
                     anchor,
                     bounds,
-                    items: crate::popup::node_menu::compose(
-                        vec![],
-                        crate::popup::node_menu::base_items(),
-                    ),
+                    items,
                     open: MenuOpen::Popup {
                         open_marking: None,
                         max_height: None,

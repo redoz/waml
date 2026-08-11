@@ -122,4 +122,43 @@ mod tests {
         )
         .is_none());
     }
+
+    /// Read-as-scroll's load-bearing check (spec
+    /// 2026-08-11-read-as-scroll-design §5): `describe` gates on
+    /// `bundle.directory`, and the menu targets exactly the folders that
+    /// never declared anything -- so a directory with files but NO
+    /// `index.md` must resolve, or the entry would appear and silently do
+    /// nothing. Directory addresses are derived from every document path
+    /// (`okf/shell.rs`'s `project`), not from index files, so it does.
+    #[test]
+    fn a_directory_without_an_index_still_describes_and_opens_as_a_book() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [First](notes/first.md)\n"),
+            ("notes/first.md", "# First\n\nSome prose.\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        assert!(
+            describe(prepared.okf(), "/notes").is_some(),
+            "an index-less directory must resolve in the bundle"
+        );
+        let document = open(
+            prepared.okf(),
+            "/notes",
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            document.title, "notes",
+            "title falls back to the folder name"
+        );
+        assert_eq!(
+            document.locator,
+            DocumentLocator::new(
+                waml::view::row::RowTarget::Folder("/notes".to_string()),
+                waml::view::surface::SurfaceId::book(),
+            )
+        );
+    }
 }

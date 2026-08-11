@@ -61,6 +61,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(FileCodeCorner, "View source -- open-edge variant, unwired"),
             ie!(Search, "Find in diagrams"),
             ie!(PackageOpen, "Open package (radial)"),
+            ie!(Scroll, "Read as scroll (folder context menu)"),
         ],
     ),
     (

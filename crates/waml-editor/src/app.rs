@@ -815,6 +815,11 @@ pub struct App {
     /// dispatched against it. Read in the `node_closed` branch (Task 4).
     #[rust]
     node_menu_key: Option<String>,
+    /// The folder-menu sibling of `node_menu_key`: the address of the
+    /// directory whose context menu is currently open (spec
+    /// 2026-08-11-read-as-scroll-design). Read in the `folder_closed` branch.
+    #[rust]
+    folder_menu_address: Option<String>,
     #[rust]
     narrow: bool,
     #[rust]

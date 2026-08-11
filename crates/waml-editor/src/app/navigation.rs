@@ -75,6 +75,34 @@ impl App {
         }
     }
 
+    /// "Read as scroll" (spec 2026-08-11-read-as-scroll-design): open
+    /// `address`'s BOOK tab through the shared history-aware transition path
+    /// -- the same path a stored book locator in history takes. A navigation,
+    /// not a mode: nothing is written, and `book_documents::open` already
+    /// opens any directory in the bundle, declared or not. The tab identity
+    /// bakes the surface in, so this tab is distinct from the folder's
+    /// listing tab and re-invoking activates rather than duplicates.
+    pub(super) fn open_folder_as_scroll(&mut self, cx: &mut Cx, address: &str) -> bool {
+        let changed = self.transition_to_location(
+            cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::new(
+                    waml::view::row::RowTarget::Folder(address.to_string()),
+                    waml::view::surface::SurfaceId::book(),
+                ),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        );
+        if !changed {
+            self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
+            return false;
+        }
+        cx.redraw_all();
+        self.set_navigation_message(cx, None);
+        true
+    }
+
     /// `query`'s `ResultRow`s (snippet width 80, spec §Results tab), `hidden`
     /// from `SearchState::hidden_documents`. Shared by `build_search_document`
     /// (the results tab's own contents) and `open_search_results` (Task 14's

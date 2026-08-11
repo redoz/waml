@@ -3274,3 +3274,194 @@ fn a_tree_mark_outcome_scrolls_and_pulses_the_tree_row() {
         .and_then(|p| p.test_reveal_key().map(str::to_string));
     assert!(reveal.is_some(), "the tree's reveal pulse path is armed");
 }
+
+// ---------------------------------------------------------------------------
+// Read as scroll (spec 2026-08-11-read-as-scroll-design): the folder context
+// menu's entry is a navigation to the folder's book locator, not a mode.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn read_as_scroll_opens_the_folders_book_tab_distinct_from_its_listing() {
+    let (mut cx, mut app) = book_navigation_app();
+    // "/plain" declares nothing, so a click opens its listing...
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/plain".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let listing_id = app.documents.active_id();
+    // ...while the menu entry opens the same folder's BOOK tab.
+    assert!(app.open_folder_as_scroll(&mut cx, "/plain"));
+    let tab = app.documents.active_tab().unwrap();
+    assert_eq!(
+        tab.locator(),
+        crate::view_history::DocumentLocator::new(
+            waml::view::row::RowTarget::Folder("/plain".to_string()),
+            waml::view::surface::SurfaceId::book(),
+        )
+    );
+    assert_ne!(
+        app.documents.active_id(),
+        listing_id,
+        "the book tab and the listing tab are two tabs"
+    );
+}
+
+#[test]
+fn the_menu_path_and_the_declared_path_share_one_book_tab() {
+    let (mut cx, mut app) = book_navigation_app();
+    // "/guide" declares `view: book`, so a plain click already opens the book.
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let declared_id = app.documents.active_id();
+    let declared_locator = app.documents.active_tab().unwrap().locator();
+    let tabs_before = app.documents.tabs().len();
+    // The menu entry lands on the SAME tab: one path, no second book surface.
+    assert!(app.open_folder_as_scroll(&mut cx, "/guide"));
+    assert_eq!(app.documents.active_id(), declared_id);
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        declared_locator
+    );
+    assert_eq!(app.documents.tabs().len(), tabs_before, "no duplicate tab");
+}
+
+#[test]
+fn a_folder_with_no_index_opens_as_a_scroll_titled_by_its_name() {
+    let (mut cx, mut app) = navigation_app();
+    let source = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [First](notes/first.md)\n"),
+        ("notes/first.md", "# First\n\nSome prose.\n"),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+
+    assert!(
+        app.open_folder_as_scroll(&mut cx, "/notes"),
+        "an index-less folder is exactly what the menu entry is for"
+    );
+    let tab = app.documents.active_tab().unwrap();
+    assert_eq!(
+        tab.locator().surface,
+        waml::view::surface::SurfaceId::book()
+    );
+    assert_eq!(tab.title, "notes", "title falls back to the folder name");
+}
+
+#[test]
+fn a_missing_folder_reports_instead_of_opening() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(!app.open_folder_as_scroll(&mut cx, "/absent"));
+    assert!(app.documents.active_tab().is_none());
+}
+
+#[test]
+fn right_clicking_a_folder_row_opens_no_tab() {
+    let (mut cx, mut app) = mounted_production_shell();
+    let uid = app.ui.widget(&cx, ids!(project_tree)).widget_uid();
+    let actions: ActionsBuf = vec![Box::new(WidgetAction {
+        data: None,
+        action: Box::new(crate::tree_panel::ProjectTreeAction::ContextMenu {
+            target: NavigationTarget::Directory {
+                address: "/guide".to_string(),
+            },
+            anchor: dvec2(10.0, 10.0),
+        }),
+        widget_uid: uid,
+        group: None,
+    })];
+
+    let flow = app.handle_tree_context_menu(&mut cx, &actions);
+
+    assert_eq!(flow, super::super::actions::ActionFlow::Consumed);
+    assert!(
+        app.documents.tabs().is_empty(),
+        "a menu the user may dismiss must not open a tab as a side effect"
+    );
+    assert_eq!(
+        app.folder_menu_address.as_deref(),
+        Some("/guide"),
+        "the commit handler's subject is armed"
+    );
+}
+
+#[test]
+fn committing_read_as_scroll_opens_the_armed_folders_book() {
+    let (mut cx, mut app) = mounted_production_shell();
+    let source = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [Plain](plain/)\n"),
+        ("plain/index.md", "# Plain\n\n* [Note](note.md)\n"),
+        ("plain/note.md", "# Note\n"),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    app.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
+    // As armed by `handle_tree_context_menu`'s `Directory` arm.
+    app.folder_menu_address = Some("/plain".to_string());
+    let popup_uid = app.ui.widget(&cx, ids!(popup_root)).widget_uid();
+    let actions: ActionsBuf = vec![Box::new(WidgetAction {
+        data: None,
+        action: Box::new(crate::popup::root::PopupRootAction::Closed {
+            tag: live_id!(folder_menu),
+            result: crate::popup::base::PopupResult::Invoked(live_id!(read_as_scroll)),
+        }),
+        widget_uid: popup_uid,
+        group: None,
+    })];
+
+    app.observe_popup_results(&mut cx, &actions);
+
+    let tab = app.documents.active_tab().expect("the commit opened a tab");
+    assert_eq!(
+        tab.locator(),
+        crate::view_history::DocumentLocator::new(
+            waml::view::row::RowTarget::Folder("/plain".to_string()),
+            waml::view::surface::SurfaceId::book(),
+        )
+    );
+}
+
+#[test]
+fn right_clicking_a_concept_row_still_opens_it_before_the_menu() {
+    let (mut cx, mut app) = mounted_production_shell();
+    let source = waml::source::SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\ntype: Runbook\ntitle: Order\n---\n# Order\n",
+    )])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    app.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
+    let uid = app.ui.widget(&cx, ids!(project_tree)).widget_uid();
+    let actions: ActionsBuf = vec![Box::new(WidgetAction {
+        data: None,
+        action: Box::new(crate::tree_panel::ProjectTreeAction::ContextMenu {
+            target: NavigationTarget::Document {
+                concept_id: "order".to_string(),
+                surface: None,
+                fragment: None,
+            },
+            anchor: dvec2(10.0, 10.0),
+        }),
+        widget_uid: uid,
+        group: None,
+    })];
+
+    let flow = app.handle_tree_context_menu(&mut cx, &actions);
+
+    assert_eq!(flow, super::super::actions::ActionFlow::Consumed);
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("order"),
+        "the concept path keeps its established open-then-menu behavior"
+    );
+    assert_eq!(app.node_menu_key.as_deref(), Some("order"));
+}

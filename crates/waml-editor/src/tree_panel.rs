@@ -230,10 +230,14 @@ pub enum ProjectTreeAction {
     #[default]
     None,
     Navigate(NavigationIntent),
-    /// A secondary-button press over a classifier row. `App` selects the row
-    /// (via `open_preview`) and opens the base node menu at `anchor`.
+    /// A secondary-button press over a row. Carries the same
+    /// `NavigationTarget` a primary click would navigate to (one arbiter,
+    /// `row_navigation`, for both buttons), so directory rows get a menu just
+    /// like concept rows. `App` matches on the target: `Document` selects the
+    /// row and opens the node menu at `anchor`, `Directory` opens the folder
+    /// menu without opening a tab.
     ContextMenu {
-        key: String,
+        target: NavigationTarget,
         anchor: DVec2,
     },
     /// The projection glyph was clicked. The panel does not flip its own
@@ -320,6 +324,21 @@ fn row_navigation(
             OpenDisposition::Preview
         },
     })
+}
+
+/// The context-menu subject for a row: the same target a primary click would
+/// navigate to. Delegates to `row_navigation` so the two buttons can never
+/// disagree about which rows are actionable -- directories included.
+fn row_context_target(
+    address: Option<&str>,
+    concept_id: Option<&str>,
+    is_directory: bool,
+    openable: bool,
+) -> Option<NavigationTarget> {
+    match row_navigation(address, concept_id, is_directory, openable, 1)? {
+        NavigationIntent::Resolved { target, .. } => Some(target),
+        _ => None,
+    }
 }
 
 /// The fold chevron's pen. A dedicated draw struct (rather than a plain
@@ -676,21 +695,29 @@ impl Widget for ProjectTree {
                         }
                     }
                 }
-                // Secondary button over a row: the node context menu. Openable,
-                // concept-carrying rows only -- `App` dispatches the menu
-                // against a concept id, which no directory row has.
+                // Secondary button over a row: the context menu. The subject
+                // is the row's navigation target -- the same currency the
+                // primary path speaks -- so concept rows and directory rows
+                // both get one, and non-openable rows get none.
                 (false, Some(TreeHit::Row(key))) => {
-                    let concept_id = self
+                    let target = self
                         .layout
                         .rows()
                         .iter()
-                        .find(|row| row.key == key && row.openable)
-                        .and_then(|row| row.concept_id.clone());
-                    if let Some(key) = concept_id {
+                        .find(|row| row.key == key)
+                        .and_then(|row| {
+                            row_context_target(
+                                row.address.as_deref(),
+                                row.concept_id.as_deref(),
+                                row.is_directory,
+                                row.openable,
+                            )
+                        });
+                    if let Some(target) = target {
                         cx.widget_action(
                             uid,
                             ProjectTreeAction::ContextMenu {
-                                key,
+                                target,
                                 anchor: fe.abs,
                             },
                         );
@@ -1261,12 +1288,14 @@ impl ProjectTree {
         }
     }
 
-    /// A right-click over a classifier row. `App` selects the row and relays
-    /// the base node menu to `PopupRoot` (mirrors `scope_request`/`filter_request`).
-    pub fn context_menu_request(&self, actions: &Actions) -> Option<(String, DVec2)> {
+    /// A right-click over a row, decoded to its navigation target. `App`
+    /// relays the matching menu to `PopupRoot` (mirrors
+    /// `scope_request`/`filter_request`): node menu for `Document` targets,
+    /// folder menu for `Directory` targets.
+    pub fn context_menu_request(&self, actions: &Actions) -> Option<(NavigationTarget, DVec2)> {
         let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::ContextMenu { key, anchor } = item.cast() {
-            Some((key, anchor))
+        if let ProjectTreeAction::ContextMenu { target, anchor } = item.cast() {
+            Some((target, anchor))
         } else {
             None
         }
@@ -2147,11 +2176,13 @@ mod tests {
         assert_eq!(panel.layout.open_keys(), before);
     }
 
-    /// Regression: the context menu must carry the row's *concept id*. Rows
-    /// are keyed on `RowId` (owner + path), which no document provider
-    /// resolves, so emitting the row key made every menu command a no-op.
+    /// Regression: the context menu must carry the row's *navigation
+    /// identity* -- the concept id for documents (not the `RowId` row key,
+    /// which no document provider resolves) and the address for directories
+    /// (the right-click asymmetry is closed; spec
+    /// 2026-08-11-read-as-scroll-design).
     #[test]
-    fn context_menu_key_is_the_concept_id_not_the_row_key() {
+    fn context_menu_subject_is_the_rows_navigation_target() {
         let (mut cx, mut panel) = project_tree_test_context();
         panel.set_view(
             &mut cx,
@@ -2170,12 +2201,78 @@ mod tests {
                 .layout
                 .rows()
                 .iter()
-                .find(|row| row.key == key && row.openable)
-                .and_then(|row| row.concept_id.clone())
+                .find(|row| row.key == key)
+                .and_then(|row| {
+                    row_context_target(
+                        row.address.as_deref(),
+                        row.concept_id.as_deref(),
+                        row.is_directory,
+                        row.openable,
+                    )
+                })
         };
-        assert_eq!(menu_subject(&k("customer")).as_deref(), Some("customer"));
-        // Directories are not openable: no menu.
-        assert_eq!(menu_subject(&k("/")), None);
+        assert_eq!(
+            menu_subject(&k("customer")),
+            Some(NavigationTarget::Document {
+                concept_id: "customer".into(),
+                surface: None,
+                fragment: None,
+            })
+        );
+        assert_eq!(
+            menu_subject(&k("/")),
+            Some(NavigationTarget::Directory {
+                address: "/".into()
+            })
+        );
+    }
+
+    /// The two buttons share one arbiter: whatever `row_navigation` refuses,
+    /// `row_context_target` refuses too.
+    #[test]
+    fn context_menu_targets_track_row_navigation() {
+        assert_eq!(
+            row_context_target(Some("/sales"), None, true, false),
+            Some(NavigationTarget::Directory {
+                address: "/sales".into(),
+            })
+        );
+        assert_eq!(
+            row_context_target(None, Some("sales/order"), false, true),
+            Some(NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                surface: None,
+                fragment: None,
+            })
+        );
+        // Non-openable, non-directory rows still get no menu.
+        assert_eq!(
+            row_context_target(None, Some("unknown"), false, false),
+            None
+        );
+        assert_eq!(row_context_target(None, None, false, true), None);
+    }
+
+    #[test]
+    fn context_menu_request_reads_the_context_menu_action() {
+        let (_cx, panel) = project_tree_test_context();
+        let target = NavigationTarget::Directory {
+            address: "/sales".into(),
+        };
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(ProjectTreeAction::ContextMenu {
+                target: target.clone(),
+                anchor: dvec2(3.0, 4.0),
+            }),
+            widget_uid: panel.widget_uid(),
+            group: None,
+        })];
+
+        assert_eq!(
+            panel.context_menu_request(&actions),
+            Some((target, dvec2(3.0, 4.0)))
+        );
     }
 
     #[test]

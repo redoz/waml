@@ -4334,6 +4334,37 @@ script_mod! {
         }
     }
 
+    // Scroll: the folder context menu's "Read as scroll" entry. Faithful port
+    // of resources/icons/scroll.svg via scripts/gen-icon.py.
+    mod.draw.IconScroll = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.7917, s * 0.7083)
+            sdf.line_to(s * 0.7917, s * 0.2083)
+            sdf.arc_to(s * 0.7083, s * 0.2083, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.1667, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.8750)
+            sdf.line_to(s * 0.8333, s * 0.8750)
+            sdf.arc_to(s * 0.8333, s * 0.7917, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.9167, s * 0.7500)
+            sdf.arc_to(s * 0.8750, s * 0.7500, s * 0.0417, 0.0000, -1.5708)
+            sdf.line_to(s * 0.4583, s * 0.7083)
+            sdf.arc_to(s * 0.4583, s * 0.7500, s * 0.0417, -1.5708, -3.1416)
+            sdf.line_to(s * 0.4167, s * 0.7917)
+            sdf.arc_to(s * 0.3333, s * 0.7917, s * 0.0833, 0.0000, 3.1416)
+            sdf.line_to(s * 0.2500, s * 0.2083)
+            sdf.arc_to(s * 0.1667, s * 0.2083, s * 0.0833, 0.0000, -3.1416)
+            sdf.line_to(s * 0.0833, s * 0.2917)
+            sdf.arc_to(s * 0.1250, s * 0.2917, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.2500, s * 0.3333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4473,6 +4504,7 @@ script_mod! {
         eye_dashed: mod.draw.IconEyeDashed{ color: atlas.accent }
         a_arrow_up: mod.draw.IconAArrowUp{ color: atlas.accent }
         a_arrow_down: mod.draw.IconAArrowDown{ color: atlas.accent }
+        scroll: mod.draw.IconScroll{ color: atlas.accent }
     }
 }
 
@@ -4751,6 +4783,8 @@ pub struct IconSet {
     pub a_arrow_up: DrawColor,
     #[live]
     pub a_arrow_down: DrawColor,
+    #[live]
+    pub scroll: DrawColor,
 }
 
 impl IconSet {
@@ -4892,6 +4926,7 @@ impl IconSet {
             Icon::EyeDashed => &mut self.eye_dashed,
             Icon::AArrowUp => &mut self.a_arrow_up,
             Icon::AArrowDown => &mut self.a_arrow_down,
+            Icon::Scroll => &mut self.scroll,
         }
     }
 
@@ -5047,12 +5082,13 @@ pub enum Icon {
     EyeDashed,
     AArrowUp,
     AArrowDown,
+    Scroll,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 134] = [
+    pub const ALL: [Icon; 135] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -5187,6 +5223,7 @@ impl Icon {
         Icon::EyeDashed,
         Icon::AArrowUp,
         Icon::AArrowDown,
+        Icon::Scroll,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5327,6 +5364,7 @@ impl Icon {
             Icon::EyeDashed => "eye-dashed",
             Icon::AArrowUp => "a-arrow-up",
             Icon::AArrowDown => "a-arrow-down",
+            Icon::Scroll => "scroll",
         }
     }
 }
@@ -5336,8 +5374,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_134_entries() {
-        assert_eq!(Icon::ALL.len(), 134);
+    fn icon_all_has_135_entries() {
+        assert_eq!(Icon::ALL.len(), 135);
     }
 
     // ------------------------------------------------------------------
@@ -5551,20 +5589,28 @@ mod tests {
     /// The tree panel's partial/fully-masked projection glyphs, appended on
     /// the same rule.
     #[test]
-    fn the_projection_eye_pair_keeps_its_catalog_index_and_lucide_slugs() {
+    fn the_projection_eye_pair_keeps_its_catalog_indices_and_lucide_slugs() {
         assert_eq!(Icon::ALL[130], Icon::EyeClosed);
         assert_eq!(Icon::ALL[131], Icon::EyeDashed);
         assert_eq!(Icon::EyeClosed.label(), "eye-closed");
         assert_eq!(Icon::EyeDashed.label(), "eye-dashed");
     }
 
-    /// The header font-size control's pair, appended last on the same rule.
+    /// The header font-size control's pair, appended on the same rule.
     #[test]
-    fn the_font_size_pair_closes_the_catalog_with_its_lucide_slugs() {
+    fn the_font_size_pair_keeps_its_catalog_indices_and_lucide_slugs() {
         assert_eq!(Icon::ALL[132], Icon::AArrowUp);
         assert_eq!(Icon::ALL[133], Icon::AArrowDown);
         assert_eq!(Icon::AArrowUp.label(), "a-arrow-up");
         assert_eq!(Icon::AArrowDown.label(), "a-arrow-down");
+    }
+
+    /// The folder menu's "Read as scroll" glyph, appended last on the same
+    /// rule.
+    #[test]
+    fn the_scroll_glyph_closes_the_catalog_with_its_lucide_slug() {
+        assert_eq!(Icon::ALL[134], Icon::Scroll);
+        assert_eq!(Icon::Scroll.label(), "scroll");
     }
 
     #[test]
@@ -5586,7 +5632,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 134);
+        assert_eq!(seen.len(), 135);
     }
 
     #[test]
