@@ -63,6 +63,7 @@ mod folder_documents;
 mod folder_list;
 mod folder_projection;
 mod folder_view;
+mod font_size_control;
 pub mod fonts;
 mod fonts_overlay;
 mod fps_meter;

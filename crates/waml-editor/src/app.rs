@@ -1465,6 +1465,13 @@ impl AppMain for App {
         // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
+        // `FontSizeControl` mounts `IconButton`, and Task 7 mounts
+        // `FontSizeControl` inside `DocumentHeader`'s own DSL, so it must
+        // register after its dependency (`IconButton`, just above) and
+        // before `DocumentHeader` registers its own DSL below -- the same
+        // eager `mod.widgets.*` resolution order as every other dependency
+        // pair on this list.
+        crate::font_size_control::script_mod(vm);
         // `PanelSplitter` is mounted directly by App's own live layout (inside
         // `tree_host` / `inspector_host`), so it must register before the App
         // DSL is evaluated by `self::script_mod` -- same eager `mod.widgets.*`
