@@ -45,6 +45,36 @@ impl App {
         crate::navigation::DocumentLocator::concept(concept_id.to_string(), surface)
     }
 
+    /// The folder sibling of `primary_locator`: the surface a DIRECTORY
+    /// opens on when nothing requests one. A folder declaring `view: book`
+    /// resolves to the book surface; everything else keeps today's listing.
+    /// Asks the declared chain statically (`Chain::resolution_surface`)
+    /// instead of running it -- a click site must not project rows twice.
+    /// Deliberately narrowed to `book`: the `markdown`/`member:` folder
+    /// resolutions are not yet consumed by any editor open path, and
+    /// widening a click route is its own spec, not a side effect of this
+    /// one.
+    pub(super) fn primary_folder_locator(
+        &self,
+        address: &str,
+    ) -> crate::navigation::DocumentLocator {
+        let registry = crate::folder_projection::core_registry();
+        let (chain, _diagnostics) = crate::folder_projection::chain_for(
+            self.session.okf_analysis(),
+            address,
+            &self.projection_mask,
+            &registry,
+        );
+        if chain.resolution_surface() == Some(waml::view::surface::SurfaceId::book()) {
+            crate::navigation::DocumentLocator::new(
+                waml::view::row::RowTarget::Folder(address.to_string()),
+                waml::view::surface::SurfaceId::book(),
+            )
+        } else {
+            crate::navigation::DocumentLocator::folder(address)
+        }
+    }
+
     /// `query`'s `ResultRow`s (snippet width 80, spec §Results tab), `hidden`
     /// from `SearchState::hidden_documents`. Shared by `build_search_document`
     /// (the results tab's own contents) and `open_search_results` (Task 14's
@@ -416,11 +446,13 @@ impl App {
                 // is not in the bundle makes `open_locator_with_asset_host`
                 // return `None`, which surfaces here as `false`. Probing
                 // separately with `open_folder` would build the whole
-                // `FolderView` twice per navigation.
+                // `FolderView` twice per navigation. The locator is
+                // chain-routed: a `view: book` declaration opens the book
+                // surface, everything else the listing.
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
-                        document: crate::navigation::DocumentLocator::folder(&address),
+                        document: self.primary_folder_locator(&address),
                         anchor: ViewAnchor::None,
                     },
                     TransitionCause::UserNavigation,
@@ -888,13 +920,23 @@ impl App {
     /// view whenever the tab id is already open; that is exactly what made
     /// the old per-folder "View raw" build a view and throw it away.
     pub(super) fn refresh_folder_tabs(&mut self, cx: &mut Cx) {
-        for directory in self.open_folder_listing_addresses() {
-            let Some(document) = crate::documents::open_folder(
-                self.session.okf_analysis(),
-                &directory,
-                self.chain_limits,
-                &self.projection_mask,
-            ) else {
+        for (directory, surface) in self.open_directory_tab_addresses() {
+            let document = if surface == waml::view::surface::SurfaceId::book() {
+                crate::book_documents::open(
+                    self.session.okf_analysis(),
+                    &directory,
+                    self.chain_limits,
+                    &self.projection_mask,
+                )
+            } else {
+                crate::documents::open_folder(
+                    self.session.okf_analysis(),
+                    &directory,
+                    self.chain_limits,
+                    &self.projection_mask,
+                )
+            };
+            let Some(document) = document else {
                 // The directory left the bundle underneath us. Leaving the
                 // stale view up is wrong, but so is silently closing a tab
                 // the user opened; the next model refresh reconciles it.
@@ -909,19 +951,22 @@ impl App {
         }
     }
 
-    /// The addresses of the open tabs that show a folder LISTING -- both
-    /// halves of the locator matter. A folder's `source` tab shares the
-    /// folder target but is a different surface; rebuilding a listing for it
-    /// would refresh the listing tab twice and never refresh the source tab.
-    pub(super) fn open_folder_listing_addresses(&self) -> Vec<String> {
+    /// The addresses of open tabs showing a directory SURFACE (listing or
+    /// book) -- both halves of the locator matter, same reasoning as before:
+    /// a folder's `source` tab shares the target but must not be rebuilt as
+    /// a listing.
+    pub(super) fn open_directory_tab_addresses(
+        &self,
+    ) -> Vec<(String, waml::view::surface::SurfaceId)> {
         self.documents
             .tabs()
             .iter()
             .filter_map(|tab| match &tab.locator.target {
                 waml::view::row::RowTarget::Folder(address)
-                    if tab.locator.surface == waml::view::surface::SurfaceId::folder() =>
+                    if tab.locator.surface == waml::view::surface::SurfaceId::folder()
+                        || tab.locator.surface == waml::view::surface::SurfaceId::book() =>
                 {
-                    Some(address.clone())
+                    Some((address.clone(), tab.locator.surface.clone()))
                 }
                 _ => None,
             })

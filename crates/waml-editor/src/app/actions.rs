@@ -1755,6 +1755,18 @@ impl App {
             flow = ActionFlow::Consumed;
         }
 
+        if let Some(address) = outcome.open_folder_listing {
+            self.transition_to_location(
+                cx,
+                ViewLocation {
+                    document: crate::navigation::DocumentLocator::folder(&address),
+                    anchor: ViewAnchor::None,
+                },
+                TransitionCause::UserNavigation,
+            );
+            flow = ActionFlow::Consumed;
+        }
+
         // AFTER the navigation above: a transition to a different document
         // clears the shared markdown surfaces' search decoration, so the
         // landing's own highlights must be installed on the far side of it.

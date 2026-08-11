@@ -13,6 +13,7 @@ use crate::doc_view::{
     ViewData, ViewOutcome,
 };
 use crate::editor_session::EditorSessionSnapshot;
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 
 pub struct BookView {
@@ -101,12 +102,22 @@ impl DocView for BookView {
 
     fn handle(
         &mut self,
-        _cx: &mut Cx,
-        _body: &BodyWidgets,
-        _actions: &Actions,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        // Task 4: header toggle. Task 6: link/open-full clicks. Task 8: fold marking.
+        if body
+            .header_view_action_button(cx)
+            .as_icon_button()
+            .clicked(actions)
+        {
+            return ViewOutcome {
+                open_folder_listing: Some(self.directory.clone()),
+                ..ViewOutcome::default()
+            };
+        }
+        // Task 6: link/open-full clicks. Task 8: fold marking.
         ViewOutcome::default()
     }
 

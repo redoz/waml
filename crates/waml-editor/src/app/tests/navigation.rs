@@ -2589,8 +2589,11 @@ fn a_mode_flip_collects_folder_listing_tabs_only_not_their_source_tabs() {
     );
 
     assert_eq!(
-        app.open_folder_listing_addresses(),
-        vec!["/shop".to_string()],
+        app.open_directory_tab_addresses(),
+        vec![(
+            "/shop".to_string(),
+            waml::view::surface::SurfaceId::folder()
+        )],
         "the source tab must not be collected as a folder listing"
     );
 
@@ -3002,5 +3005,110 @@ fn esc_ends_the_live_session_and_further_f3_is_a_no_op() {
             .and_then(|tab| tab.concept_id())
             .map(str::to_string),
         landed
+    );
+}
+
+fn book_navigation_app() -> (Cx, App) {
+    let (cx, mut app) = navigation_app();
+    let source = waml::source::SourceBundle::try_from_pairs([
+        (
+            "index.md",
+            "# Root\n\n* [Guide](guide/)\n* [Plain](plain/)\n",
+        ),
+        (
+            "guide/index.md",
+            "---\nview: book\n---\n# Guide\n\n* [Intro](intro.md)\n",
+        ),
+        ("guide/intro.md", "# Intro\n\nSome prose.\n"),
+        ("plain/index.md", "# Plain\n\n* [Note](note.md)\n"),
+        ("plain/note.md", "# Note\n"),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    (cx, app)
+}
+
+#[test]
+fn a_directory_declaring_view_book_opens_on_the_book_surface() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let tab = app.documents.active_tab().unwrap();
+    assert_eq!(
+        tab.locator().surface,
+        waml::view::surface::SurfaceId::book()
+    );
+    assert!(matches!(
+        &tab.locator().target,
+        waml::view::row::RowTarget::Folder(address) if address == "/guide"
+    ));
+}
+
+#[test]
+fn a_plain_directory_still_opens_the_folder_listing() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/plain".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        crate::view_history::DocumentLocator::folder("/plain")
+    );
+}
+
+#[test]
+fn the_book_header_toggle_drops_to_the_folder_listing_of_the_same_directory() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let outcome = crate::doc_view::ViewOutcome {
+        open_folder_listing: Some("/guide".to_string()),
+        ..Default::default()
+    };
+    app.apply_view_outcome(&mut cx, outcome);
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        crate::view_history::DocumentLocator::folder("/guide")
+    );
+}
+
+#[test]
+fn refreshing_folder_tabs_rebuilds_an_open_book_tab_in_place() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let before = app.documents.active_id();
+    app.refresh_folder_tabs(&mut cx);
+    assert_eq!(
+        app.documents.active_id(),
+        before,
+        "same tab identity after reopen-in-place"
+    );
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator().surface,
+        waml::view::surface::SurfaceId::book()
     );
 }

@@ -431,6 +431,11 @@ pub struct ViewOutcome {
     /// arriving tab has drawn (Task 9, spec §DocView::reveal /
     /// §Activation per document kind).
     pub reveal: Option<(String, RevealTarget)>,
+    /// Ask the shell to open this directory's LISTING surface -- the book
+    /// header's toggle destination. A `NavigationTarget::Directory` cannot
+    /// express this (the Directory arm chain-routes back to the book), so
+    /// like `view_source` it names the surface explicitly.
+    pub open_folder_listing: Option<String>,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
