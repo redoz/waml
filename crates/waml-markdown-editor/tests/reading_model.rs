@@ -333,6 +333,11 @@ fn registered_fence_languages_become_fenced_extensions_case_insensitively() {
         let ReadingBlockKind::FencedExtension(extension) = &block.kind else {
             panic!("registered fence becomes an extension")
         };
+        assert_eq!(
+            extension.language.as_ref(),
+            "mermaid",
+            "registered extension keys use an ASCII-normalized language"
+        );
         assert_eq!(extension.source_range, code.source_range);
         assert_eq!(
             &source[extension.content_range.start().to_usize()

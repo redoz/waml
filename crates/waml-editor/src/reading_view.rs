@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use makepad_widgets::*;
 use waml_markdown_editor::presentation::{compile_presentation, PresentationStyles};
-use waml_markdown_editor::reading::{build_reading_document, ReadingDocument};
+use waml_markdown_editor::reading::{
+    build_reading_document, ReadingDocument, RegisteredBlockExtensions,
+};
 
 use crate::doc_view::BodyWidgets;
 use crate::editor_session::EditorSessionSnapshot;
@@ -111,7 +113,7 @@ impl ReadingView {
                 return;
             }
         };
-        let document = match build_reading_document(&plan) {
+        let document = match build_reading_document(&plan, &RegisteredBlockExtensions::default()) {
             Ok(document) => document,
             Err(error) => {
                 log!(

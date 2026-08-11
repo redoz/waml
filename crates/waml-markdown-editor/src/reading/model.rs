@@ -6,9 +6,7 @@
 //! byte lies in exactly one piece. Dropping a run instead would make
 //! "everything drawn maps back to source" unverifiable.
 
-use std::collections::HashSet;
-use std::fmt;
-use std::sync::Arc;
+use std::{collections::HashSet, fmt, sync::Arc};
 
 use waml_syntax::{TextRange, TextSize};
 
@@ -246,7 +244,13 @@ pub fn build_reading_document(
                             role: PresentationRole::Embedded(EmbeddedBlockRole::FencedExtension),
                             fragment_ordinal: 0,
                         },
-                        language: fence.language.clone().expect("checked above"),
+                        language: Arc::from(
+                            fence
+                                .language
+                                .as_deref()
+                                .expect("checked above")
+                                .to_ascii_lowercase(),
+                        ),
                         source_range: block.source_range,
                         content_range: fence.content_range,
                     })

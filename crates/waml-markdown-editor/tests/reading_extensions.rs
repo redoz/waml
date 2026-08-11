@@ -10,7 +10,7 @@ use waml_markdown_editor::reading::{
     ReadingBlockKind, ReadingDocument, RegisteredBlockExtensions, RenderedBlockSvg,
 };
 use waml_markdown_editor::syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange,
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
 };
 
 #[derive(Default)]
@@ -219,6 +219,21 @@ fn events_change_only_the_matching_live_loading_entry() {
         &states.frame(DocumentRevision::INITIAL).items[0],
         (_, BlockExtensionState::Ready(_))
     ));
+    assert_eq!(
+        states.apply_event(BlockExtensionEvent::Ready {
+            request_id: request.request_id,
+            revision: request.revision,
+            item: request.item,
+            source_range: request.source_range,
+            svg: svg(),
+        }),
+        BlockExtensionEventOutcome::IgnoredStale,
+        "a duplicate completion cannot replace a ready state"
+    );
+    assert!(matches!(
+        &states.frame(DocumentRevision::INITIAL).items[0],
+        (_, BlockExtensionState::Ready(_))
+    ));
 
     let mut failed_states = BlockExtensionStates::default();
     let mut failed_host = FakeHost::default();
@@ -248,4 +263,35 @@ fn events_change_only_the_matching_live_loading_entry() {
             BlockExtensionState::Failed(Arc::from("diagram has a cycle"))
         )
     );
+}
+
+#[test]
+fn an_invalid_extension_content_range_fails_without_requesting_the_host() {
+    let source: Arc<str> = Arc::from("```mermaid\ngraph TD; A-->B\n```\n");
+    let mut document = document(&source);
+    let ReadingBlockKind::FencedExtension(extension) = &mut document.roots[0].kind else {
+        panic!("an extension block")
+    };
+    extension.content_range = TextRange::new(
+        extension.content_range.start(),
+        TextSize::try_from_usize(source.len() + 1).expect("small test source"),
+    )
+    .expect("ordered invalid range");
+
+    let mut host = FakeHost::default();
+    let mut states = BlockExtensionStates::default();
+    states.reconcile(
+        &mut host,
+        DocumentRevision::INITIAL,
+        &document,
+        source,
+        BlockExtensionAppearance::Light,
+    );
+
+    assert!(host.requests.is_empty(), "an invalid range stays local");
+    assert_eq!(states.pending_count(), 0);
+    assert!(matches!(
+        &states.frame(DocumentRevision::INITIAL).items[0],
+        (_, BlockExtensionState::Failed(message)) if message.as_ref() == "invalid fenced extension content range"
+    ));
 }
