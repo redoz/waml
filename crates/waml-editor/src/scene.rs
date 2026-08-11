@@ -1194,7 +1194,7 @@ pub fn build_scene(
         &waml::solve::LabelRoutingPolicy {
             cost: diagram_route_cost(diagram.kind),
             route: &use_case_route_policy(diagram),
-            hard_obstacles: &routing.hard_obstacles,
+            projected_headings: Some(&routing.hard_obstacles),
         },
     );
     // A reroute moves polylines, and the scene draws from `edges`, not from
@@ -1218,7 +1218,7 @@ pub fn build_scene(
         &final_routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
-        &routing.hard_obstacles,
+        Some(&routing.hard_obstacles),
     );
     debug_assert!(
         unresolved.is_empty(),

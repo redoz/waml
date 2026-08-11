@@ -321,25 +321,27 @@ pub fn connected_label_widths(
 }
 
 /// The hard-obstacle set `place_labels_with_reroute` places
-/// against: every solved node, plus each group's title strip (its interior is
-/// not solid -- a group legitimately holds edges and their labels).
-fn label_obstacles_with(solved: &Solved, extra_hard: &[Rect]) -> label::Obstacles {
+/// against: every solved node, plus either frontend-projected headings or each
+/// group's legacy title strip. A projected list replaces the fallback; it does
+/// not add a second invisible strip inside the group.
+fn label_obstacles_with(solved: &Solved, projected_headings: Option<&[Rect]>) -> label::Obstacles {
+    let legacy_group_titles = projected_headings.is_none().then(|| {
+        solved
+            .groups
+            .iter()
+            .filter(|g| g.title.is_some())
+            .map(|g| Rect {
+                h: label::GROUP_TITLE_BAND.min(g.rect.h),
+                ..g.rect
+            })
+    });
     label::Obstacles {
         hard: solved
             .nodes
             .values()
             .copied()
-            .chain(
-                solved
-                    .groups
-                    .iter()
-                    .filter(|g| g.title.is_some())
-                    .map(|g| Rect {
-                        h: label::GROUP_TITLE_BAND.min(g.rect.h),
-                        ..g.rect
-                    }),
-            )
-            .chain(extra_hard.iter().copied())
+            .chain(legacy_group_titles.into_iter().flatten())
+            .chain(projected_headings.into_iter().flatten().copied())
             .collect(),
     }
 }
@@ -369,7 +371,9 @@ pub struct RoutingContext<'a> {
 pub struct LabelRoutingPolicy<'a> {
     pub cost: route::RouteCost,
     pub route: &'a route::RoutePolicy,
-    pub hard_obstacles: &'a [Rect],
+    /// `Some` replaces legacy full-width group-title strips. `Some(&[])`
+    /// deliberately means that the frontend renders no heading obstacles.
+    pub projected_headings: Option<&'a [Rect]>,
 }
 
 /// How badly a placement went, smaller is better: labels with no route at all
@@ -464,7 +468,7 @@ pub fn place_labels_with_reroute_cost(
         &LabelRoutingPolicy {
             cost: base_cost,
             route: &route::RoutePolicy::default(),
-            hard_obstacles: &[],
+            projected_headings: None,
         },
     )
 }
@@ -479,7 +483,7 @@ pub fn place_labels_with_reroute_policy(
     policy: &LabelRoutingPolicy,
 ) -> Vec<label::LabelRequest> {
     // Only the ROUTES move here, never the nodes or groups the labels dodge.
-    let obstacles = label_obstacles_with(solved, policy.hard_obstacles);
+    let obstacles = label_obstacles_with(solved, policy.projected_headings);
     let original: Vec<Vec<(f64, f64)>> = routes.to_vec();
     let mut placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
 
@@ -600,9 +604,9 @@ pub fn place_labels_final(
     routes: &[Vec<(f64, f64)>],
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
-    hard_obstacles: &[Rect],
+    projected_headings: Option<&[Rect]>,
 ) -> Vec<label::LabelRequest> {
-    let obstacles = label_obstacles_with(solved, hard_obstacles);
+    let obstacles = label_obstacles_with(solved, projected_headings);
     let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
     solved.label_leaders = placement
         .placed
@@ -640,7 +644,7 @@ mod tests {
             &routes,
             &requests,
             &label::LabelConfig::default(),
-            &[],
+            None,
         );
 
         assert!(unresolved.is_empty());
@@ -650,6 +654,43 @@ mod tests {
             "terminal label must attach after the clipped endpoint: {:?}",
             solved.labels[0]
         );
+    }
+
+    #[test]
+    fn projected_headings_replace_the_legacy_full_width_title_band() {
+        let group = SolvedGroup {
+            rect: Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 300.0,
+                h: 180.0,
+            },
+            shape: Shape::Shrink,
+            title: Some("Boundary".into()),
+            depth: 0,
+        };
+        let solved = Solved {
+            nodes: BTreeMap::new(),
+            groups: vec![group],
+            flags: BTreeMap::new(),
+            routes: vec![],
+            labels: vec![],
+            label_reroutes: 0,
+            label_leaders: 0,
+        };
+        let visible = Rect {
+            x: 10.0,
+            y: -12.0,
+            w: 72.0,
+            h: 18.0,
+        };
+
+        let fallback = label_obstacles_with(&solved, None);
+        assert_eq!(fallback.hard[0].y, 20.0);
+        assert_eq!(fallback.hard[0].w, 300.0);
+
+        let projected = label_obstacles_with(&solved, Some(&[visible]));
+        assert_eq!(projected.hard, vec![visible]);
     }
 
     fn route_points(solved: &Solved) -> Vec<Vec<(f64, f64)>> {
@@ -666,7 +707,7 @@ mod tests {
         requests: &[label::LabelRequest],
         cfg: &label::LabelConfig,
     ) -> Vec<label::LabelRequest> {
-        let obstacles = label_obstacles_with(solved, &[]);
+        let obstacles = label_obstacles_with(solved, None);
         let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
         solved.label_leaders = placement
             .placed
