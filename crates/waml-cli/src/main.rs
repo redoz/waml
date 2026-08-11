@@ -629,7 +629,7 @@ fn run_index(path: &Path, check: bool) -> i32 {
             return 2;
         }
     };
-    let changes = match commands::plan_indexes(&bundle.files) {
+    let changes = match waml::index_md::plan_indexes(&bundle.files) {
         Ok(changes) => changes,
         Err(error) => {
             eprintln!("waml: {error}");
@@ -639,8 +639,8 @@ fn run_index(path: &Path, check: bool) -> i32 {
     if check {
         for change in &changes {
             let path = match change {
-                commands::IndexChange::Upsert { path, .. }
-                | commands::IndexChange::Remove { path } => path,
+                waml::index_md::IndexChange::Upsert { path, .. }
+                | waml::index_md::IndexChange::Remove { path } => path,
             };
             let display = bundle
                 .display_paths

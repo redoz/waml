@@ -1,6 +1,5 @@
 use serde::Serialize;
 use waml::diagnostic::{Diagnostic, Severity};
-use waml::index_md::reindex_source;
 use waml::source::SourceBundle;
 
 #[derive(Serialize)]
@@ -132,12 +131,6 @@ pub fn check_exit_code(diags: &[Diagnostic]) -> i32 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IndexChange {
-    Upsert { path: String, rendered: String },
-    Remove { path: String },
-}
-
 /// Build the export-time search-index asset for `files` (spec: `waml export
 /// site`'s static bundle also ships its index). The index is built from
 /// exactly the pairs `files` holds -- the same pairs that go into
@@ -169,88 +162,6 @@ pub fn build_search_index_asset_for_envelope(envelope: &str) -> Result<Vec<u8>, 
         .ok_or_else(|| "encoded bundle is not a WAML bundle envelope".to_string())?;
     let bundle = SourceBundle::try_from_pairs(parts).map_err(|error| error.to_string())?;
     build_search_index_asset(&bundle.to_pairs())
-}
-
-pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, String> {
-    let mut original_index_paths = std::collections::BTreeMap::new();
-    let mut planning_files = Vec::with_capacity(files.len());
-    for (path, text) in files {
-        let (directory, basename) = path.rsplit_once('/').unwrap_or(("", path));
-        let planning_path = if basename.eq_ignore_ascii_case("index.md") {
-            if directory.is_empty() {
-                "index.md".to_string()
-            } else {
-                format!("{directory}/index.md")
-            }
-        } else {
-            path.clone()
-        };
-        if basename.eq_ignore_ascii_case("index.md") {
-            if let Some(existing) = original_index_paths.insert(planning_path.clone(), path.clone())
-            {
-                if existing != *path {
-                    return Err(format!("index basename collision: {existing} and {path}"));
-                }
-            }
-        }
-        planning_files.push((planning_path, text.clone()));
-    }
-
-    let prepared = waml::validate::prepare(&planning_files)?;
-    let before: std::collections::BTreeMap<String, String> =
-        prepared.source().to_pairs().into_iter().collect();
-    let mut after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
-        .to_pairs()
-        .into_iter()
-        .collect();
-    let mut desired_index_directories = std::collections::BTreeSet::from([String::new()]);
-    for path in before.keys() {
-        let basename = path.rsplit('/').next().unwrap_or(path);
-        if basename.eq_ignore_ascii_case("index.md") {
-            continue;
-        }
-        let mut parent = path.rsplit_once('/').map(|(parent, _)| parent);
-        while let Some(directory) = parent {
-            desired_index_directories.insert(directory.to_string());
-            parent = directory.rsplit_once('/').map(|(parent, _)| parent);
-        }
-    }
-    after.retain(|path, _| {
-        let (directory, basename) = path.rsplit_once('/').unwrap_or(("", path));
-        !basename.eq_ignore_ascii_case("index.md") || desired_index_directories.contains(directory)
-    });
-    let paths: std::collections::BTreeSet<_> = before.keys().chain(after.keys()).collect();
-    let mut changes = Vec::new();
-
-    for path in paths {
-        if !path
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.eq_ignore_ascii_case("index.md"))
-        {
-            continue;
-        }
-        if before.get(path) == after.get(path) {
-            continue;
-        }
-        match after.get(path) {
-            Some(rendered) => changes.push(IndexChange::Upsert {
-                path: original_index_paths
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_else(|| path.clone()),
-                rendered: rendered.clone(),
-            }),
-            None => changes.push(IndexChange::Remove {
-                path: original_index_paths
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_else(|| path.clone()),
-            }),
-        }
-    }
-
-    Ok(changes)
 }
 
 #[cfg(test)]
@@ -322,49 +233,6 @@ mod tests {
         let other = vec![("order.md".to_string(), "# Order\n".to_string())];
         let other_hash = waml::search::asset::bundle_hash(&other);
         assert!(waml::search::asset::decode(&text, other_hash).is_err());
-    }
-
-    #[test]
-    fn plan_indexes_keeps_deep_ancestors_and_removes_an_orphan_index() {
-        let files = vec![
-            (
-                "alpha/beta/order.md".to_string(),
-                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
-            ),
-            ("orphan/Index.md".to_string(), "# Orphan\n".to_string()),
-        ];
-
-        let changes = plan_indexes(&files).unwrap();
-        let changes = changes
-            .iter()
-            .map(|change| match change {
-                IndexChange::Upsert { path, .. } => ("upsert", path.as_str()),
-                IndexChange::Remove { path } => ("remove", path.as_str()),
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            changes,
-            [
-                ("upsert", "alpha/beta/index.md"),
-                ("upsert", "alpha/index.md"),
-                ("upsert", "index.md"),
-                ("remove", "orphan/Index.md"),
-            ]
-        );
-    }
-
-    #[test]
-    fn plan_indexes_rejects_case_colliding_index_paths() {
-        let files = vec![
-            ("nested/index.md".to_string(), "# Lower\n".to_string()),
-            ("nested/Index.md".to_string(), "# Mixed\n".to_string()),
-        ];
-
-        let error = plan_indexes(&files).unwrap_err();
-
-        assert!(error.contains("nested/index.md"), "{error}");
-        assert!(error.contains("nested/Index.md"), "{error}");
     }
 
     fn sample() -> Vec<Diagnostic> {

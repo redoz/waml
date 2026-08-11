@@ -94,10 +94,7 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
                 .expect("validated document exists")
                 .text()
                 .to_owned();
-            let is_index = path
-                .rsplit('/')
-                .next()
-                .is_some_and(|segment| segment.eq_ignore_ascii_case("index.md"));
+            let is_index = crate::index_md::is_index_basename(path);
             let claimed = prepared.uml().syntax.document(document);
             let skipped = !is_index
                 && (diagnostics.iter().any(|diagnostic| {

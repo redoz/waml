@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use waml::bundle_envelope::expand_text;
 use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
-
-use crate::commands::IndexChange;
+use waml::index_md::IndexChange;
 
 /// Recursively collect `.md` files under the given files/directories.
 ///
@@ -214,7 +213,7 @@ fn resolve_index_target(
     let Some(filename) = components.pop() else {
         return Err(invalid_index_path("index path is empty"));
     };
-    if !filename.to_string_lossy().eq_ignore_ascii_case("index.md") {
+    if !waml::index_md::is_index_basename(&filename.to_string_lossy()) {
         return Err(invalid_index_path(format!(
             "not an index document: {relative}"
         )));
@@ -1486,7 +1485,7 @@ mod tests {
         let outside = temp.0.parent().unwrap().join("outside-index.md");
         let error = write_indexes(
             &temp.0,
-            &[crate::commands::IndexChange::Upsert {
+            &[waml::index_md::IndexChange::Upsert {
                 path: "../outside-index.md/index.md".into(),
                 rendered: "bad".into(),
             }],
@@ -1505,7 +1504,7 @@ mod tests {
         fs::write(&outside, "keep").unwrap();
         let error = write_indexes(
             &temp.0,
-            &[crate::commands::IndexChange::Remove {
+            &[waml::index_md::IndexChange::Remove {
                 path: outside.to_string_lossy().into_owned(),
             }],
         )
@@ -1520,7 +1519,7 @@ mod tests {
         let temp = TempDir::new();
         let error = write_indexes(
             &temp.0,
-            &[crate::commands::IndexChange::Upsert {
+            &[waml::index_md::IndexChange::Upsert {
                 path: "nested/not-index.md".into(),
                 rendered: "bad".into(),
             }],
@@ -1542,7 +1541,7 @@ mod tests {
 
         let error = write_indexes(
             &temp.0,
-            &[crate::commands::IndexChange::Upsert {
+            &[waml::index_md::IndexChange::Upsert {
                 path: "linked/index.md".into(),
                 rendered: "bad".into(),
             }],
@@ -1566,7 +1565,7 @@ mod tests {
 
         let error = write_indexes(
             &temp.0,
-            &[crate::commands::IndexChange::Remove {
+            &[waml::index_md::IndexChange::Remove {
                 path: "index.md".into(),
             }],
         )

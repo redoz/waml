@@ -2,6 +2,16 @@ use crate::frontmatter::{FmValue, Frontmatter};
 use crate::source::{BundlePath, SourceBundle};
 use crate::view::decl::ViewDecl;
 
+/// True if `path`'s final `/`-separated segment is `index.md`,
+/// case-insensitively. The one predicate every index-basename check in this
+/// crate and `waml-cli` shares.
+pub fn is_index_basename(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .eq_ignore_ascii_case("index.md")
+}
+
 pub struct IndexEntry {
     pub key: String,
     pub title: String,
@@ -190,14 +200,95 @@ pub fn reindex_source(bundle: &SourceBundle) -> SourceBundle {
     }
     out.retain_documents(|document| {
         let path = document.path().as_str();
-        let is_index = path
-            .rsplit('/')
-            .next()
-            .unwrap_or(path)
-            .eq_ignore_ascii_case("index.md");
-        !is_index || retained_indexes.contains(path)
+        !is_index_basename(path) || retained_indexes.contains(path)
     });
     out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexChange {
+    Upsert { path: String, rendered: String },
+    Remove { path: String },
+}
+
+pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, String> {
+    let mut original_index_paths = std::collections::BTreeMap::new();
+    let mut planning_files = Vec::with_capacity(files.len());
+    for (path, text) in files {
+        let (directory, basename) = path.rsplit_once('/').unwrap_or(("", path));
+        let planning_path = if is_index_basename(basename) {
+            if directory.is_empty() {
+                "index.md".to_string()
+            } else {
+                format!("{directory}/index.md")
+            }
+        } else {
+            path.clone()
+        };
+        if is_index_basename(basename) {
+            if let Some(existing) = original_index_paths.insert(planning_path.clone(), path.clone())
+            {
+                if existing != *path {
+                    return Err(format!("index basename collision: {existing} and {path}"));
+                }
+            }
+        }
+        planning_files.push((planning_path, text.clone()));
+    }
+
+    let prepared = crate::validate::prepare(&planning_files)?;
+    let before: std::collections::BTreeMap<String, String> =
+        prepared.source().to_pairs().into_iter().collect();
+    let mut after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
+        .to_pairs()
+        .into_iter()
+        .collect();
+    let mut desired_index_directories = std::collections::BTreeSet::from([String::new()]);
+    for path in before.keys() {
+        if is_index_basename(path) {
+            continue;
+        }
+        let mut parent = path.rsplit_once('/').map(|(parent, _)| parent);
+        while let Some(directory) = parent {
+            desired_index_directories.insert(directory.to_string());
+            parent = directory.rsplit_once('/').map(|(parent, _)| parent);
+        }
+    }
+    after.retain(|path, _| {
+        let directory = path
+            .rsplit_once('/')
+            .map(|(directory, _)| directory)
+            .unwrap_or("");
+        !is_index_basename(path) || desired_index_directories.contains(directory)
+    });
+    let paths: std::collections::BTreeSet<_> = before.keys().chain(after.keys()).collect();
+    let mut changes = Vec::new();
+
+    for path in paths {
+        if !is_index_basename(path) {
+            continue;
+        }
+        if before.get(path) == after.get(path) {
+            continue;
+        }
+        match after.get(path) {
+            Some(rendered) => changes.push(IndexChange::Upsert {
+                path: original_index_paths
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| path.clone()),
+                rendered: rendered.clone(),
+            }),
+            None => changes.push(IndexChange::Remove {
+                path: original_index_paths
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| path.clone()),
+            }),
+        }
+    }
+
+    Ok(changes)
 }
 
 #[deprecated(note = "use SourceBundle with reindex_source")]
@@ -437,6 +528,49 @@ mod tests {
             root.starts_with("# My Domain\n"),
             "root H1 must survive reindex, got: {root}"
         );
+    }
+
+    #[test]
+    fn plan_indexes_keeps_deep_ancestors_and_removes_an_orphan_index() {
+        let files = vec![
+            (
+                "alpha/beta/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            ("orphan/Index.md".to_string(), "# Orphan\n".to_string()),
+        ];
+
+        let changes = plan_indexes(&files).unwrap();
+        let changes = changes
+            .iter()
+            .map(|change| match change {
+                IndexChange::Upsert { path, .. } => ("upsert", path.as_str()),
+                IndexChange::Remove { path } => ("remove", path.as_str()),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            changes,
+            [
+                ("upsert", "alpha/beta/index.md"),
+                ("upsert", "alpha/index.md"),
+                ("upsert", "index.md"),
+                ("remove", "orphan/Index.md"),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_indexes_rejects_case_colliding_index_paths() {
+        let files = vec![
+            ("nested/index.md".to_string(), "# Lower\n".to_string()),
+            ("nested/Index.md".to_string(), "# Mixed\n".to_string()),
+        ];
+
+        let error = plan_indexes(&files).unwrap_err();
+
+        assert!(error.contains("nested/index.md"), "{error}");
+        assert!(error.contains("nested/Index.md"), "{error}");
     }
 
     #[test]
