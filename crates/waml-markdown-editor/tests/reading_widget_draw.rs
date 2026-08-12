@@ -4,6 +4,7 @@
 
 use std::{cell::Cell, sync::Arc};
 
+use makepad_widgets::event::{ScrollEvent, ScrollPhase};
 use makepad_widgets::*;
 use waml_markdown_editor::presentation::{
     compile_presentation, HighlighterRegistry, PresentationStyles,
@@ -37,6 +38,38 @@ fn mounted_body(cx: &mut Cx) -> WidgetRef {
     root.children
         .push((live_id!(markdown_viewer_surface), surface));
     WidgetRef::new_with_inner(Box::new(root))
+}
+
+fn mounted_scrolling_body(cx: &mut Cx) -> WidgetRef {
+    waml_markdown_editor::live_design(cx);
+    cx.with_vm(|vm| {
+        makepad_widgets::script_mod(vm);
+        waml_markdown_editor::script_mod(vm);
+        let value = script_eval!(vm, {
+            use mod.prelude.widgets_internal.*
+            mod.widgets.ScrollYView {
+                width: Fill
+                height: Fill
+                flow: Down
+            }
+        });
+        let mut root = WidgetRef::script_new(vm);
+        root.script_apply(vm, &Apply::New, &mut Scope::empty(), value);
+        let viewer_value = script_eval!(vm, {
+            use mod.prelude.widgets_internal.*
+            mod.widgets.MarkdownViewer {
+                width: Fill
+                height: Fit
+            }
+        });
+        let mut viewer = WidgetRef::script_new(vm);
+        viewer.script_apply(vm, &Apply::New, &mut Scope::empty(), viewer_value);
+        root.borrow_mut::<View>()
+            .expect("ScrollYView is a View")
+            .children
+            .push((live_id!(viewer), viewer));
+        root
+    })
 }
 
 fn empty_frame() -> Arc<BlockExtensionFrame> {
@@ -133,6 +166,104 @@ fn mouse_down(abs: DVec2) -> Event {
         handled: Cell::new(Area::default()),
         time: 0.0,
     })
+}
+
+fn draw_scrolling_ui(cx: &mut Cx, ui: &WidgetRef, width: f64, height: f64) {
+    let draw_event = DrawEvent {
+        redraw_all: true,
+        ..DrawEvent::default()
+    };
+    let pass = DrawPass::new_with_name(cx, "reading-widget-scroll-test");
+    pass.set_size(cx, dvec2(width, height));
+    let mut draw_list = DrawList2d::new(cx);
+    let mut draw_cx = CxDraw::new(cx, &draw_event);
+    let mut cx_2d = Cx2d::new(&mut draw_cx);
+    cx_2d.begin_pass(&pass, None);
+    draw_list.begin_always(&mut cx_2d);
+    let size = cx_2d.current_pass_size();
+    cx_2d.begin_root_turtle(size, Layout::flow_down());
+    ui.draw_walk_all(&mut cx_2d, &mut Scope::empty(), Walk::fill());
+    cx_2d.end_pass_sized_turtle();
+    draw_list.end(&mut cx_2d);
+    cx_2d.end_pass(&pass);
+}
+
+#[test]
+fn wheel_input_scrolls_the_parent_around_a_mounted_viewer() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_scrolling_body(&mut cx);
+    let viewer_widget = ui.widget(&cx, ids!(viewer));
+    assert!(
+        viewer_widget
+            .borrow::<waml_markdown_editor::reading::MarkdownViewer>()
+            .is_some(),
+        "the scripted scroller must contain the MarkdownViewer"
+    );
+    assert!(
+        viewer_widget.visible(),
+        "the MarkdownViewer must be visible"
+    );
+    let viewer_walk = viewer_widget.walk(&mut cx);
+    assert!(
+        viewer_walk.height.is_fit(),
+        "the MarkdownViewer must use Fit height: {viewer_walk:?}"
+    );
+    let viewer = viewer_widget.as_markdown_viewer();
+
+    let source = (0..80)
+        .map(|line| format!("Paragraph {line} has enough text to draw.\n\n"))
+        .collect::<String>();
+    let text = SourceText::new(source.clone()).expect("valid source text");
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("markdown parses");
+    let styles = Arc::new(PresentationStyles::balanced());
+    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
+        .expect("presentation compiles");
+    let document = Arc::new(
+        build_reading_document(&plan, &RegisteredBlockExtensions::default())
+            .expect("reading model builds"),
+    );
+    viewer.install_document(&mut cx, document, Arc::from(source), empty_frame());
+
+    draw_scrolling_ui(&mut cx, &ui, 400.0, 120.0);
+    let flow = ui.widget(&cx, ids!(viewer.flow_body));
+    let before = flow.area().rect(&cx);
+    assert!(
+        before.size.y > 120.0,
+        "the viewer text must overflow its parent: {before:?}"
+    );
+
+    let event = Event::Scroll(ScrollEvent {
+        window_id: WindowId(0, 0),
+        scroll: dvec2(0.0, 80.0),
+        abs: dvec2(100.0, 80.0),
+        modifiers: KeyModifiers::default(),
+        handled_x: Cell::new(false),
+        handled_y: Cell::new(false),
+        is_mouse: true,
+        time: 0.0,
+        phase: ScrollPhase::Changed,
+    });
+    ui.handle_event(&mut cx, &event, &mut Scope::empty());
+    let Event::Scroll(scroll) = &event else {
+        unreachable!();
+    };
+    assert!(
+        scroll.handled_y.get(),
+        "the parent must claim vertical wheel input"
+    );
+
+    draw_scrolling_ui(&mut cx, &ui, 400.0, 120.0);
+    let after = flow.area().rect(&cx);
+    assert!(
+        after.pos.y < before.pos.y,
+        "the parent must move the tall viewer after wheel input: before={before:?}, after={after:?}"
+    );
 }
 
 #[test]

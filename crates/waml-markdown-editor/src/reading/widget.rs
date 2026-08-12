@@ -1031,6 +1031,10 @@ impl MarkdownViewer {
     }
 }
 
+fn should_forward_to_text_flow(event: &Event) -> bool {
+    !matches!(event, Event::Scroll(_))
+}
+
 impl Widget for MarkdownViewer {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         let (Some(document), Some(source)) = (self.document.clone(), self.source.clone()) else {
@@ -1123,8 +1127,13 @@ impl Widget for MarkdownViewer {
                 }
             }
         }
-        // Selection, copy and point_to_index are TextFlow's, not ours.
-        self.view.handle_event(cx, event, scope);
+        // Selection, copy and point_to_index are TextFlow's, not ours. Plain
+        // wheel input belongs to the parent ScrollYView. Sending it into the
+        // selectable TextFlow would make Makepad's hit test claim both scroll
+        // axes even though TextFlow has no FingerScroll behavior.
+        if should_forward_to_text_flow(event) {
+            self.view.handle_event(cx, event, scope);
+        }
         let finger_down = match event {
             Event::MouseDown(event) if event.button.is_primary() => Some(event.abs),
             Event::TouchUpdate(event) => event
