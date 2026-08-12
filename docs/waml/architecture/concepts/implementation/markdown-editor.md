@@ -4,8 +4,12 @@ title: Markdown Editor
 description: The WAML-owned Markdown document session, input controller, layout pipeline, and Makepad widget.
 stereotype: runtime
 sources:
-  - { id: markdown-widget, resource: ../../../../../crates/waml-markdown-editor/src/widget.rs, title: crates/waml-markdown-editor/src/widget.rs::MarkdownEditor }
-  - { id: markdown-session, resource: ../../../../../crates/waml-markdown-editor/src/session.rs, title: crates/waml-markdown-editor/src/session.rs::MarkdownDocumentSession }
+  - id: markdown-widget
+    resource: ../../../../../crates/waml-markdown-editor/src/widget.rs
+    title: crates/waml-markdown-editor/src/widget.rs::MarkdownEditor
+  - id: markdown-session
+    resource: ../../../../../crates/waml-markdown-editor/src/session.rs
+    title: crates/waml-markdown-editor/src/session.rs::MarkdownDocumentSession
 ---
 
 # Markdown Editor

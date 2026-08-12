@@ -4,7 +4,9 @@ title: waml Syntax Crate
 description: The crate that owns immutable Markdown green and red syntax and incremental reparse.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml-syntax/Cargo.toml, title: crates/waml-syntax/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml-syntax/Cargo.toml
+    title: crates/waml-syntax/Cargo.toml
 ---
 
 # waml Syntax Crate

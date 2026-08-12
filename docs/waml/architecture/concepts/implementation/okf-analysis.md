@@ -4,7 +4,9 @@ title: OKF Analysis
 description: Markdown syntax and catalog analysis plus OKF lowering for one bundle revision.
 stereotype: runtime
 sources:
-  - { id: okf-analysis, resource: ../../../../../crates/waml/src/analysis.rs, title: crates/waml/src/analysis.rs::OkfAnalysis }
+  - id: okf-analysis
+    resource: ../../../../../crates/waml/src/analysis.rs
+    title: crates/waml/src/analysis.rs::OkfAnalysis
 ---
 
 # OKF Analysis

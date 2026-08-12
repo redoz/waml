@@ -4,7 +4,9 @@ title: UML Analysis
 description: UML syntax, semantic analysis, projection, diagnostics, freshness, and affected closure for one bundle revision.
 stereotype: runtime
 sources:
-  - { id: uml-analysis, resource: ../../../../../crates/waml/src/uml/analysis.rs, title: crates/waml/src/uml/analysis.rs::Analysis }
+  - id: uml-analysis
+    resource: ../../../../../crates/waml/src/uml/analysis.rs
+    title: crates/waml/src/uml/analysis.rs::Analysis
 ---
 
 # UML Analysis

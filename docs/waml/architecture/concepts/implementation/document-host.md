@@ -4,8 +4,12 @@ title: Document Host
 description: The owner of open-tab state and the registry and lifecycle of live document views.
 stereotype: runtime
 sources:
-  - { id: document-host, resource: ../../../../../crates/waml-editor/src/document_host.rs, title: crates/waml-editor/src/document_host.rs::DocumentHost }
-  - { id: document-tabs, resource: ../../../../../crates/waml-editor/src/doc_tabs.rs, title: crates/waml-editor/src/doc_tabs.rs::OpenTabs and DocTabs }
+  - id: document-host
+    resource: ../../../../../crates/waml-editor/src/document_host.rs
+    title: crates/waml-editor/src/document_host.rs::DocumentHost
+  - id: document-tabs
+    resource: ../../../../../crates/waml-editor/src/doc_tabs.rs
+    title: crates/waml-editor/src/doc_tabs.rs::OpenTabs and DocTabs
 ---
 
 # Document Host

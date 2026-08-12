@@ -4,7 +4,9 @@ title: waml Editor Crate
 description: The crate that owns the app shell, editor session, document host, navigation, renderers, and platform adapters.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml-editor/Cargo.toml, title: crates/waml-editor/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml-editor/Cargo.toml
+    title: crates/waml-editor/Cargo.toml
 ---
 
 # waml Editor Crate

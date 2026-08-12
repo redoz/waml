@@ -4,7 +4,9 @@ title: Source Bundle
 description: An immutable candidate set of source documents and bundle-relative identities.
 stereotype: runtime
 sources:
-  - { id: source-bundle, resource: ../../../../../crates/waml/src/source.rs, title: crates/waml/src/source.rs::SourceBundle }
+  - id: source-bundle
+    resource: ../../../../../crates/waml/src/source.rs
+    title: crates/waml/src/source.rs::SourceBundle
 ---
 
 # Source Bundle

@@ -4,8 +4,12 @@ title: Editor Session
 description: The owner of the live revisioned source and analysis snapshot and its prepare-then-commit edit transaction.
 stereotype: runtime
 sources:
-  - { id: editor-session, resource: ../../../../../crates/waml-editor/src/editor_session.rs, title: crates/waml-editor/src/editor_session.rs::EditorSession }
-  - { id: editor-session-snapshot, resource: ../../../../../crates/waml-editor/src/editor_session.rs, title: crates/waml-editor/src/editor_session.rs::EditorSessionSnapshot }
+  - id: editor-session
+    resource: ../../../../../crates/waml-editor/src/editor_session.rs
+    title: crates/waml-editor/src/editor_session.rs::EditorSession
+  - id: editor-session-snapshot
+    resource: ../../../../../crates/waml-editor/src/editor_session.rs
+    title: crates/waml-editor/src/editor_session.rs::EditorSessionSnapshot
 ---
 
 # Editor Session

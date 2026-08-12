@@ -4,10 +4,18 @@ title: Platform Adapter
 description: The native and browser boundary for bundle saving, browser boot selection, and external URLs.
 stereotype: runtime
 sources:
-  - { id: native-save, resource: ../../../../../crates/waml-editor/src/native_save.rs, title: crates/waml-editor/src/native_save.rs }
-  - { id: platform-browser, resource: ../../../../../crates/waml-editor/src/platform_browser.rs, title: crates/waml-editor/src/platform_browser.rs::PlatformBrowser }
-  - { id: browser-boot, resource: ../../../../../crates/waml-editor/src/browser_boot.rs, title: crates/waml-editor/src/browser_boot.rs::BrowserBootSource }
-  - { id: api-save, resource: ../../../../../crates/waml-editor/src/api_save.rs, title: crates/waml-editor/src/api_save.rs }
+  - id: native-save
+    resource: ../../../../../crates/waml-editor/src/native_save.rs
+    title: crates/waml-editor/src/native_save.rs
+  - id: platform-browser
+    resource: ../../../../../crates/waml-editor/src/platform_browser.rs
+    title: crates/waml-editor/src/platform_browser.rs::PlatformBrowser
+  - id: browser-boot
+    resource: ../../../../../crates/waml-editor/src/browser_boot.rs
+    title: crates/waml-editor/src/browser_boot.rs::BrowserBootSource
+  - id: api-save
+    resource: ../../../../../crates/waml-editor/src/api_save.rs
+    title: crates/waml-editor/src/api_save.rs
 ---
 
 # Platform Adapter

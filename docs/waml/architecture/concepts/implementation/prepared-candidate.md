@@ -4,7 +4,9 @@ title: Prepared Candidate
 description: Fully prepared immutable source, OKF, UML, affected, and revision state that can replace a live snapshot.
 stereotype: runtime
 sources:
-  - { id: prepared-candidate, resource: ../../../../../crates/waml/src/analysis.rs, title: crates/waml/src/analysis.rs::PreparedCandidate }
+  - id: prepared-candidate
+    resource: ../../../../../crates/waml/src/analysis.rs
+    title: crates/waml/src/analysis.rs::PreparedCandidate
 ---
 
 # Prepared Candidate

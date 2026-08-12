@@ -4,7 +4,9 @@ title: waml CLI Crate
 description: The crate that owns check, format, index, query, mutation, delivery, API, and language-server hosts.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml-cli/Cargo.toml, title: crates/waml-cli/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml-cli/Cargo.toml
+    title: crates/waml-cli/Cargo.toml
 ---
 
 # waml CLI Crate

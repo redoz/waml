@@ -4,7 +4,9 @@ title: Affected Analysis
 description: The sorted affected documents, syntax islands, and diagrams for one analysis.
 stereotype: runtime
 sources:
-  - { id: affected-analysis, resource: ../../../../../crates/waml/src/analysis.rs, title: crates/waml/src/analysis.rs::AffectedAnalysis }
+  - id: affected-analysis
+    resource: ../../../../../crates/waml/src/analysis.rs
+    title: crates/waml/src/analysis.rs::AffectedAnalysis
 ---
 
 # Affected Analysis

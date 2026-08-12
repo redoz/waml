@@ -4,7 +4,9 @@ title: Markdown Syntax
 description: A revisioned immutable Markdown syntax tree, structure map, diagnostics, and query surface.
 stereotype: runtime
 sources:
-  - { id: markdown-snapshot, resource: ../../../../../crates/waml-syntax/src/markdown/snapshot.rs, title: crates/waml-syntax/src/markdown/snapshot.rs::MarkdownSyntaxSnapshot }
+  - id: markdown-snapshot
+    resource: ../../../../../crates/waml-syntax/src/markdown/snapshot.rs
+    title: crates/waml-syntax/src/markdown/snapshot.rs::MarkdownSyntaxSnapshot
 ---
 
 # Markdown Syntax

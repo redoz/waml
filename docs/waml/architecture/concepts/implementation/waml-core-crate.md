@@ -4,7 +4,9 @@ title: waml Core Crate
 description: The crate that owns source bundles, analysis, semantic edits, projection, layout, and index generation.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml/Cargo.toml, title: crates/waml/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml/Cargo.toml
+    title: crates/waml/Cargo.toml
 ---
 
 # waml Core Crate

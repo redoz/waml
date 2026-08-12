@@ -4,7 +4,9 @@ title: waml Markdown Editor Crate
 description: The crate that owns WAML Markdown reading and editing sessions, input, layout, and the Makepad widget.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml-markdown-editor/Cargo.toml, title: crates/waml-markdown-editor/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml-markdown-editor/Cargo.toml
+    title: crates/waml-markdown-editor/Cargo.toml
 ---
 
 # waml Markdown Editor Crate

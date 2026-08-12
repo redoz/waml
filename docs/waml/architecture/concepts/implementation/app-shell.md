@@ -4,9 +4,15 @@ title: App Shell
 description: The editor composition root that coordinates UI state, session changes, documents, navigation, and platform effects.
 stereotype: runtime
 sources:
-  - { id: app, resource: ../../../../../crates/waml-editor/src/app.rs, title: crates/waml-editor/src/app.rs::App }
-  - { id: navigation-model, resource: ../../../../../crates/waml-editor/src/navigation.rs, title: crates/waml-editor/src/navigation.rs }
-  - { id: navigation-controller, resource: ../../../../../crates/waml-editor/src/app/navigation.rs, title: crates/waml-editor/src/app/navigation.rs }
+  - id: app
+    resource: ../../../../../crates/waml-editor/src/app.rs
+    title: crates/waml-editor/src/app.rs::App
+  - id: navigation-model
+    resource: ../../../../../crates/waml-editor/src/navigation.rs
+    title: crates/waml-editor/src/navigation.rs
+  - id: navigation-controller
+    resource: ../../../../../crates/waml-editor/src/app/navigation.rs
+    title: crates/waml-editor/src/app/navigation.rs
 ---
 
 # App Shell

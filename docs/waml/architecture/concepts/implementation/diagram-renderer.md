@@ -4,12 +4,24 @@ title: Diagram Renderer
 description: The document-view coordinators and surfaces that present analyzed UML as class and behavior diagrams.
 stereotype: runtime
 sources:
-  - { id: class-diagram-view, resource: ../../../../../crates/waml-editor/src/class_diagram_view.rs, title: crates/waml-editor/src/class_diagram_view.rs::ClassDiagramView }
-  - { id: class-diagram-surface, resource: ../../../../../crates/waml-editor/src/canvas/class/widget.rs, title: crates/waml-editor/src/canvas/class/widget.rs::ClassDiagramSurface }
-  - { id: behavior-document-view, resource: ../../../../../crates/waml-editor/src/behavior_doc_view.rs, title: crates/waml-editor/src/behavior_doc_view.rs::BehaviorDocView }
-  - { id: behavior-surface, resource: ../../../../../crates/waml-editor/src/canvas/behavior/mod.rs, title: crates/waml-editor/src/canvas/behavior/mod.rs::BehaviorSurface }
-  - { id: document-host, resource: ../../../../../crates/waml-editor/src/document_host.rs, title: crates/waml-editor/src/document_host.rs::DocumentHost }
-  - { id: body-widgets, resource: ../../../../../crates/waml-editor/src/doc_view.rs, title: crates/waml-editor/src/doc_view.rs::BodyWidgets }
+  - id: class-diagram-view
+    resource: ../../../../../crates/waml-editor/src/class_diagram_view.rs
+    title: crates/waml-editor/src/class_diagram_view.rs::ClassDiagramView
+  - id: class-diagram-surface
+    resource: ../../../../../crates/waml-editor/src/canvas/class/widget.rs
+    title: crates/waml-editor/src/canvas/class/widget.rs::ClassDiagramSurface
+  - id: behavior-document-view
+    resource: ../../../../../crates/waml-editor/src/behavior_doc_view.rs
+    title: crates/waml-editor/src/behavior_doc_view.rs::BehaviorDocView
+  - id: behavior-surface
+    resource: ../../../../../crates/waml-editor/src/canvas/behavior/mod.rs
+    title: crates/waml-editor/src/canvas/behavior/mod.rs::BehaviorSurface
+  - id: document-host
+    resource: ../../../../../crates/waml-editor/src/document_host.rs
+    title: crates/waml-editor/src/document_host.rs::DocumentHost
+  - id: body-widgets
+    resource: ../../../../../crates/waml-editor/src/doc_view.rs
+    title: crates/waml-editor/src/doc_view.rs::BodyWidgets
 ---
 
 # Diagram Renderer

@@ -4,7 +4,9 @@ title: waml Operations DTO Crate
 description: The crate that owns the serde wire contract for command-line semantic operations.
 stereotype: crate
 sources:
-  - { id: manifest, resource: ../../../../../crates/waml-ops-dto/Cargo.toml, title: crates/waml-ops-dto/Cargo.toml }
+  - id: manifest
+    resource: ../../../../../crates/waml-ops-dto/Cargo.toml
+    title: crates/waml-ops-dto/Cargo.toml
 ---
 
 # waml Operations DTO Crate

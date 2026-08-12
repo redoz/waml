@@ -14,9 +14,7 @@ profile: uml-domain
 - [Reader](../actors/reader.md)
 
 ### WAML editor boundary
-
 #### Create and change
-
 - [Edit Prose](../workflows/edit-prose.md)
 - [Interact with an Activity Diagram](../workflows/interact-with-an-activity-diagram.md)
 - [Interact with a Class Diagram](../workflows/interact-with-a-class-diagram.md)
@@ -27,9 +25,7 @@ profile: uml-domain
 - [Sequence Language](../workflows/sequence-language.md)
 - [Solve the Layout](../workflows/solve-the-layout.md)
 - [Use the Shell](../workflows/use-the-shell.md)
-
 #### Find and understand
-
 - [Browse the Tree](../workflows/browse-the-tree.md)
 - [Fit the Window](../workflows/fit-the-window.md)
 - [Navigate and Return](../workflows/navigate-and-return.md)
