@@ -4,6 +4,7 @@
 //! Model in, markdown out. No editor dependency — a CLI subcommand can emit
 //! the identical page.
 
+use crate::model::RelationshipKind;
 use crate::multiplicity::Multiplicity;
 
 /// Cardinal numbers spelled out through ten; above ten prose reads worse than
@@ -56,6 +57,81 @@ fn spell_multiplicity(raw: &str) -> Option<String> {
     Some(format!("{} to {}", number_word(lo), number_word(hi)))
 }
 
+/// The link a classifier's page is written to. Absolute from the bundle root:
+/// a node key IS its concept id, so `/{key}.md` resolves the same from any
+/// referring directory (`waml-editor`'s `navigation::resolve_link` normalises
+/// a leading `/` against the bundle root).
+// Wired in via `far_end_phrase`, which is itself wired into the association
+// sections in Task 4.
+#[allow(dead_code)]
+fn document_href(key: &str) -> String {
+    format!("/{key}.md")
+}
+
+/// The far end's noun phrase. The classifier name is the link text either way;
+/// a declared role leads, with the classifier in parentheses behind it. A role
+/// spelled exactly like the classifier adds nothing, so it collapses.
+///
+/// Class names are never inflected: a plural count beside a singular name
+/// ("one or more Wheel") is deliberate. The name is an identifier and must
+/// match the model exactly; an author who wants a plural noun declares a role,
+/// which is their own text.
+// Wired into the association sections in Task 4.
+#[allow(dead_code)]
+fn far_end_phrase(role: Option<&str>, classifier: &str, key: &str) -> String {
+    let link = format!("[{classifier}]({})", document_href(key));
+    match role {
+        Some(role) if !role.is_empty() && role != classifier => format!("{role} ({link})"),
+        _ => link,
+    }
+}
+
+/// The verb under `## Associations`, where this classifier is the elided
+/// subject. `Associates` is the one kind that shifts register: it is not a
+/// transitive verb in ordinary English ("Associates one Customer" reads as a
+/// typo), so its elided form is the participial "Associated with".
+// Wired into the association sections in Task 4.
+#[allow(dead_code)]
+fn outgoing_verb(kind: RelationshipKind) -> &'static str {
+    match kind {
+        RelationshipKind::Associates => "Associated with",
+        RelationshipKind::Aggregates => "Aggregates",
+        RelationshipKind::Composes => "Composes",
+        RelationshipKind::Specializes => "Specializes",
+        RelationshipKind::Implements => "Implements",
+        RelationshipKind::Depends => "Depends on",
+        RelationshipKind::Includes => "Includes",
+        RelationshipKind::Extends => "Extends",
+        RelationshipKind::InstanceOf => "Instance of",
+        RelationshipKind::Links => "Links to",
+        RelationshipKind::Annotates => {
+            unreachable!("Annotates anchors a uml.Note and is skipped before any verb lookup")
+        }
+    }
+}
+
+/// The verb under `## Referenced by`, where the FAR classifier is the named
+/// subject and this one is the object.
+// Wired into the association sections in Task 4.
+#[allow(dead_code)]
+fn incoming_verb(kind: RelationshipKind) -> &'static str {
+    match kind {
+        RelationshipKind::Associates => "is associated with",
+        RelationshipKind::Aggregates => "aggregates",
+        RelationshipKind::Composes => "composes",
+        RelationshipKind::Specializes => "specializes",
+        RelationshipKind::Implements => "implements",
+        RelationshipKind::Depends => "depends on",
+        RelationshipKind::Includes => "includes",
+        RelationshipKind::Extends => "extends",
+        RelationshipKind::InstanceOf => "is an instance of",
+        RelationshipKind::Links => "links to",
+        RelationshipKind::Annotates => {
+            unreachable!("Annotates anchors a uml.Note and is skipped before any verb lookup")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +173,49 @@ mod tests {
         // omit the count rather than invent one.
         for raw in ["", "0", "many", "1..", "5..2", "-1"] {
             assert_eq!(spell_multiplicity(raw), None, "multiplicity {raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_far_end_without_a_role_is_just_the_linked_classifier() {
+        assert_eq!(far_end_phrase(None, "Wheel", "wheel"), "[Wheel](/wheel.md)");
+    }
+
+    #[test]
+    fn a_declared_role_leads_and_the_classifier_follows_in_parentheses() {
+        assert_eq!(
+            far_end_phrase(Some("lines"), "OrderLine", "sales/order-line"),
+            "lines ([OrderLine](/sales/order-line.md))"
+        );
+    }
+
+    #[test]
+    fn a_role_identical_to_the_classifier_is_not_repeated() {
+        // "Customer (Customer)" says nothing twice.
+        assert_eq!(
+            far_end_phrase(Some("Customer"), "Customer", "customer"),
+            "[Customer](/customer.md)"
+        );
+    }
+
+    #[test]
+    fn every_kind_has_both_a_subject_elided_and_a_named_subject_verb() {
+        use crate::model::RelationshipKind as RK;
+        let cases = [
+            (RK::Associates, "Associated with", "is associated with"),
+            (RK::Aggregates, "Aggregates", "aggregates"),
+            (RK::Composes, "Composes", "composes"),
+            (RK::Specializes, "Specializes", "specializes"),
+            (RK::Implements, "Implements", "implements"),
+            (RK::Depends, "Depends on", "depends on"),
+            (RK::Includes, "Includes", "includes"),
+            (RK::Extends, "Extends", "extends"),
+            (RK::InstanceOf, "Instance of", "is an instance of"),
+            (RK::Links, "Links to", "links to"),
+        ];
+        for (kind, out, incoming) in cases {
+            assert_eq!(outgoing_verb(kind), out, "{kind:?} outgoing");
+            assert_eq!(incoming_verb(kind), incoming, "{kind:?} incoming");
         }
     }
 }
