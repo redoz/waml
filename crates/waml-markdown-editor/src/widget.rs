@@ -2818,6 +2818,12 @@ impl MarkdownEditorRef {
         }
     }
 
+    /// Whether the shared widget currently refuses input. An unmounted ref
+    /// reports `true`: nothing there can accept typing either.
+    pub fn read_only(&self) -> bool {
+        self.borrow().map_or(true, |inner| inner.read_only)
+    }
+
     /// Off, absolute, or cursor-relative line numbers. Changing the mode
     /// changes the reserved width, so the layout is rebuilt on the next draw.
     pub fn set_line_numbers(&self, cx: &mut Cx, mode: LineNumberMode) {

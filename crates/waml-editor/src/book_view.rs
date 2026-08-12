@@ -192,12 +192,13 @@ impl DocView for BookView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: None,
+                emphasis_toggle: None,
                 // The destination the toggle LEADS to: the plain listing of
                 // the same directory -- the same shape as the source toggle.
-                view_toggle: Some(HeaderViewAction {
-                    icon: Icon::Folder,
-                    tooltip: "View folder listing",
-                }),
+                view_toggle: Some(HeaderViewAction::destination(
+                    Icon::Folder,
+                    "View folder listing",
+                )),
                 // Book mode is prose and would read well zoomed, but the
                 // font-size control's approved scope is the reading view and
                 // the source editor only. Opting in here is a deliberate

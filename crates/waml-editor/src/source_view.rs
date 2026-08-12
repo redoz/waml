@@ -145,16 +145,6 @@ impl SourceView {
         }
     }
 
-    pub(crate) fn new_read_only(
-        key: String,
-        assets: SharedMarkdownAssetHost,
-        emphasis: EditorEmphasis,
-    ) -> SourceView {
-        let mut view = Self::new_with_asset_host(key, assets, emphasis);
-        view.read_only = true;
-        view
-    }
-
     fn toggle_emphasis(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
         self.emphasis = match self.emphasis {
             EditorEmphasis::Code => EditorEmphasis::Layout,
@@ -166,17 +156,39 @@ impl SourceView {
         editor.set_emphasis(cx, self.emphasis);
     }
 
-    fn emphasis_action(&self) -> HeaderViewAction {
-        match self.emphasis {
-            EditorEmphasis::Code => HeaderViewAction {
-                icon: Icon::Eye,
-                tooltip: "Use layout emphasis",
+    /// A MODE action, not a destination: one icon, lit while the non-default
+    /// (layout) emphasis is on. It used to borrow the `view_toggle` slot with
+    /// `Eye`/`Code` glyphs, which read as "go to the rendered view" and took
+    /// the user somewhere that looked like another source view instead.
+    pub(crate) fn emphasis_action(&self) -> HeaderViewAction {
+        HeaderViewAction {
+            icon: Icon::Paintbrush,
+            tooltip: match self.emphasis {
+                EditorEmphasis::Code => "Use layout emphasis",
+                EditorEmphasis::Layout => "Use code emphasis",
             },
-            EditorEmphasis::Layout => HeaderViewAction {
-                icon: Icon::Code,
-                tooltip: "Use code emphasis",
-            },
+            active: matches!(self.emphasis, EditorEmphasis::Layout),
         }
+    }
+
+    /// Route the emphasis button. Callers that OWN the view toggle (the
+    /// source/rendered wrappers) drive this instead of `SourceView::handle`
+    /// reading the button itself, so one surface never has two owners.
+    pub(crate) fn handle_emphasis_action(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        actions: &Actions,
+    ) -> bool {
+        if !body
+            .header_emphasis_action_button(cx)
+            .as_icon_button()
+            .clicked(actions)
+        {
+            return false;
+        }
+        self.toggle_emphasis(cx, &body.markdown_editor());
+        true
     }
 
     pub(crate) fn resolve_document(
@@ -615,15 +627,11 @@ impl DocView for SourceView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
-        if body
-            .header_view_action_button(cx)
-            .as_icon_button()
-            .clicked(actions)
-        {
-            self.toggle_emphasis(cx, &body.markdown_editor());
-            body.apply_chrome(cx, self.chrome());
-            return ViewOutcome::default();
-        }
+        // The emphasis button is deliberately NOT read here: this surface is
+        // always composed inside an owner (the source/rendered toggle) that
+        // publishes the header chrome, and two owners pushing chrome for one
+        // button is how the header got confused in the first place. Owners
+        // call `handle_emphasis_action` before delegating.
         let mut outcome = ViewOutcome::default();
         if let SourceViewState::Ready(ready) = &mut self.state {
             if let Some(local) = MarkdownEditorRef::proposed_edit(actions) {
@@ -667,7 +675,8 @@ impl DocView for SourceView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(self.emphasis_action()),
+                view_toggle: None,
+                emphasis_toggle: Some(self.emphasis_action()),
                 zoom: Some(crate::zoom::ZoomTarget::Source),
             },
         }
@@ -882,26 +891,33 @@ mod tests {
     }
 
     #[test]
-    fn source_emphasis_action_projects_the_destination() {
+    /// Emphasis is a MODE, not a destination: it keeps one glyph and lights
+    /// it, and it never occupies the `view_toggle` slot -- that slot means
+    /// "go to the other surface" and nothing else.
+    fn the_emphasis_action_is_a_lit_mode_button_off_the_view_toggle_slot() {
         let mut view = source_view("shop/order");
 
+        assert_eq!(view.chrome().document_header.view_toggle, None);
         assert_eq!(
-            view.chrome().document_header.view_toggle,
-            Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Eye,
+            view.chrome().document_header.emphasis_toggle,
+            Some(HeaderViewAction {
+                icon: Icon::Paintbrush,
                 tooltip: "Use layout emphasis",
+                active: false,
             })
         );
 
         view.emphasis = EditorEmphasis::Layout;
 
         assert_eq!(
-            view.chrome().document_header.view_toggle,
-            Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Code,
+            view.chrome().document_header.emphasis_toggle,
+            Some(HeaderViewAction {
+                icon: Icon::Paintbrush,
                 tooltip: "Use code emphasis",
+                active: true,
             })
         );
+        assert_eq!(view.chrome().document_header.view_toggle, None);
     }
 
     #[test]
@@ -978,10 +994,11 @@ mod tests {
         assert_eq!(ready.styles.emphasis(), EditorEmphasis::Code);
         assert_eq!(view.emphasis, EditorEmphasis::Code);
         assert_eq!(
-            view.chrome().document_header.view_toggle,
+            view.chrome().document_header.emphasis_toggle,
             Some(HeaderViewAction {
-                icon: Icon::Eye,
+                icon: Icon::Paintbrush,
                 tooltip: "Use layout emphasis",
+                active: false,
             })
         );
     }

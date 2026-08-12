@@ -448,6 +448,7 @@ impl DocView for FolderView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: None,
+                emphasis_toggle: None,
                 view_toggle: None,
                 zoom: None,
             },

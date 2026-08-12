@@ -987,6 +987,7 @@ impl DocView for ClassDiagramView {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },
@@ -999,6 +1000,7 @@ impl DocView for ClassDiagramView {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },
@@ -1285,6 +1287,7 @@ mod tests {
                 document_header: crate::doc_view::DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },
@@ -1338,6 +1341,7 @@ mod tests {
                 document_header: crate::doc_view::DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(crate::icons::Icon::PanelRight),
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },

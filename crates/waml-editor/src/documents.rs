@@ -496,11 +496,22 @@ mod tests {
             waml_markdown_editor::EditorEmphasis::Layout,
         )
         .expect("the direct source factory must open the document");
+        // A source tab opens on the source FACE of the shared view: the
+        // rendered surface is one `view_toggle` click away, and the session's
+        // layout emphasis reaches the mode button beside it.
         assert_eq!(
             direct.view.chrome().document_header.view_toggle,
+            Some(crate::doc_view::HeaderViewAction::destination(
+                Icon::Eye,
+                "View rendered"
+            ))
+        );
+        assert_eq!(
+            direct.view.chrome().document_header.emphasis_toggle,
             Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Code,
+                icon: Icon::Paintbrush,
                 tooltip: "Use code emphasis",
+                active: true,
             })
         );
 
@@ -516,10 +527,11 @@ mod tests {
         )
         .expect("the stored source locator must reopen the document");
         assert_eq!(
-            reopened.view.chrome().document_header.view_toggle,
+            reopened.view.chrome().document_header.emphasis_toggle,
             Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Code,
+                icon: Icon::Paintbrush,
                 tooltip: "Use code emphasis",
+                active: true,
             })
         );
     }

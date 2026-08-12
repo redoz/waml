@@ -1979,6 +1979,7 @@ fn document_header_projection_keeps_icon_when_breadcrumb_is_missing() {
     let chrome = DocumentHeaderChrome {
         breadcrumb: true,
         right_dock: Some(Icon::PanelRight),
+        emphasis_toggle: None,
         view_toggle: None,
         zoom: None,
     };
@@ -2002,6 +2003,7 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
     let icon_only = DocumentHeaderChrome {
         breadcrumb: false,
         right_dock: Some(Icon::PanelRight),
+        emphasis_toggle: None,
         view_toggle: None,
         zoom: None,
     };
@@ -2013,6 +2015,7 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
     let breadcrumb = DocumentHeaderChrome {
         breadcrumb: true,
         right_dock: None,
+        emphasis_toggle: None,
         view_toggle: None,
         zoom: None,
     };

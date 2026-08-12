@@ -100,11 +100,16 @@ pub fn open_source_with_asset_host(
                 .to_string()
         }),
         presentation,
-        view: Box::new(crate::source_view::SourceView::new_with_asset_host(
-            concept_id.to_string(),
-            assets.clone(),
-            emphasis,
-        )),
+        // The SAME view a concept tab opens, just opened on its source face --
+        // so the rendered view stays one toggle away no matter which door you
+        // came through.
+        view: Box::new(
+            crate::generic_okf_view::GenericOkfView::new_source_with_asset_host(
+                concept_id.to_string(),
+                assets.clone(),
+                emphasis,
+            ),
+        ),
     })
 }
 
@@ -219,11 +224,13 @@ pub fn open_source_for_target(
                     accent: generic_okf_accent(),
                     category: NavCategory::OkfDocument,
                 },
-                view: Box::new(crate::source_view::SourceView::new_with_asset_host(
-                    key.clone(),
-                    assets.clone(),
-                    emphasis,
-                )),
+                view: Box::new(
+                    crate::generic_okf_view::GenericOkfView::new_source_with_asset_host(
+                        key.clone(),
+                        assets.clone(),
+                        emphasis,
+                    ),
+                ),
             })
         }
         RowTarget::Virtual => None,

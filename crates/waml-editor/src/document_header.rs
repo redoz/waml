@@ -75,10 +75,16 @@ script_mod! {
                 height: Fill
             }
             // Trailing action buttons. `font_size_control` is the browser-style
-            // zoom cluster (Task 7); `view_button` is the active document's
-            // view action; `right_button` is the inspector dock toggle. More
-            // document actions slot in here.
+            // zoom cluster (Task 7); `emphasis_button` restyles the raw-source
+            // surface; `view_button` is the source/rendered toggle;
+            // `right_button` is the inspector dock toggle. More document
+            // actions slot in here.
             font_size_control := FontSizeControl {}
+            emphasis_button := IconButton {
+                visible: false
+                width: 30.0
+                height: 30.0
+            }
             view_button := IconButton {
                 visible: false
                 width: 30.0
@@ -231,6 +237,8 @@ struct DocumentHeaderState {
     right_dock: Option<Icon>,
     /// The destination action supplied by the active document, when present.
     view_toggle: Option<HeaderViewAction>,
+    /// The raw-source surface's emphasis action, when that surface is up.
+    emphasis_toggle: Option<HeaderViewAction>,
     /// The active view's zoom percent, when it declares a zoom target
     /// (`DocumentHeaderChrome::zoom`, Task 8). `None` hides the
     /// `FontSizeControl` cluster and reserves no width.
@@ -253,6 +261,7 @@ impl DocumentHeaderState {
             segments,
             right_dock,
             view_toggle: None,
+            emphasis_toggle: None,
             zoom: None,
             segment_rects,
             document_active: false,
@@ -286,6 +295,15 @@ impl DocumentHeaderState {
         true
     }
 
+    fn replace_emphasis_toggle(&mut self, emphasis_toggle: Option<HeaderViewAction>) -> bool {
+        if self.emphasis_toggle == emphasis_toggle {
+            return false;
+        }
+        self.emphasis_toggle = emphasis_toggle;
+        self.segment_rects.clear();
+        true
+    }
+
     #[cfg_attr(not(test), allow(dead_code))] // consumed by DocumentHeader::set_zoom (Task 8)
     fn replace_zoom(&mut self, zoom: Option<u32>) -> bool {
         if self.zoom == zoom {
@@ -304,6 +322,7 @@ impl DocumentHeaderState {
     fn invalidate_pushed_children(&mut self) {
         self.right_dock = None;
         self.view_toggle = None;
+        self.emphasis_toggle = None;
         self.zoom = None;
     }
 
@@ -312,6 +331,9 @@ impl DocumentHeaderState {
         let mut width = 0.0;
         if self.zoom.is_some() {
             width += FONT_SIZE_CONTROL_W;
+        }
+        if self.emphasis_toggle.is_some() {
+            width += DOCUMENT_HEADER_H;
         }
         if self.view_toggle.is_some() {
             width += DOCUMENT_HEADER_H;
@@ -325,7 +347,10 @@ impl DocumentHeaderState {
     fn visible_height(&self) -> f64 {
         header_height_for_document(
             !self.segments.is_empty(),
-            self.right_dock.is_some() || self.view_toggle.is_some() || self.zoom.is_some(),
+            self.right_dock.is_some()
+                || self.view_toggle.is_some()
+                || self.emphasis_toggle.is_some()
+                || self.zoom.is_some(),
             self.document_active,
         )
     }
@@ -540,6 +565,30 @@ impl DocumentHeader {
         self.sync_content_layout(cx);
     }
 
+    /// The emphasis action keeps ONE icon and lights it while the non-default
+    /// emphasis is on -- see `HeaderViewAction::active`. `set_active` is
+    /// applied unconditionally because the memo above only guards the
+    /// show/hide and icon push; a lit/unlit flip carries no icon change.
+    pub fn set_emphasis_toggle(&mut self, cx: &mut Cx, action: Option<HeaderViewAction>) {
+        if !self.state.replace_emphasis_toggle(action) {
+            return;
+        }
+
+        let button = self.view.widget(cx, ids!(emphasis_button));
+        button.set_visible(cx, action.is_some());
+        if let Some(action) = action {
+            let button = button.as_icon_button();
+            button.set_icon(cx, action.icon);
+            button.set_active(cx, action.active);
+        }
+        self.sync_content_layout(cx);
+    }
+
+    /// The raw-source surface's emphasis button, for click detection.
+    pub fn emphasis_action_button(&self, cx: &mut Cx) -> WidgetRef {
+        self.view.widget(cx, ids!(emphasis_button))
+    }
+
     /// `Some(percent)` shows the `[-][percent%][+]` cluster (pushing the
     /// percent and end-of-ladder dimming to it); `None` hides it and
     /// reserves no width. See `crate::zoom` for the ladder walk used here.
@@ -618,6 +667,11 @@ impl DocumentHeader {
         self.state.view_toggle
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_emphasis_toggle(&self) -> Option<HeaderViewAction> {
+        self.state.emphasis_toggle
+    }
+
     /// Test-only probe for the zoom percent last pushed via `set_zoom`, so
     /// App-level tests can assert the chord/button apply path without
     /// routing through the real (non-test-injectable) `crate::config` disk
@@ -630,6 +684,11 @@ impl DocumentHeader {
     #[cfg(test)]
     pub(crate) fn test_mount_view_action_button(&mut self, button: WidgetRef) {
         self.view.children.push((live_id!(view_button), button));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_mount_emphasis_action_button(&mut self, button: WidgetRef) {
+        self.view.children.push((live_id!(emphasis_button), button));
     }
 
     #[cfg(test)]
@@ -901,16 +960,15 @@ mod tests {
     fn replacing_the_view_destination_preserves_it_in_one_button_slot() {
         let mut state = DocumentHeaderState::for_test(Vec::new(), None, Vec::new());
 
-        assert!(state.replace_view_toggle(Some(HeaderViewAction {
-            icon: Icon::Code,
-            tooltip: "View source",
-        })));
+        assert!(
+            state.replace_view_toggle(Some(HeaderViewAction::destination(
+                Icon::Code,
+                "View source"
+            )))
+        );
         assert_eq!(state.trailing_buttons_width(), DOCUMENT_HEADER_H);
 
-        let destination = HeaderViewAction {
-            icon: Icon::Eye,
-            tooltip: "View rendered",
-        };
+        let destination = HeaderViewAction::destination(Icon::Eye, "View rendered");
         assert!(state.replace_view_toggle(Some(destination)));
         assert_eq!(state.view_toggle, Some(destination));
         assert_eq!(state.trailing_buttons_width(), DOCUMENT_HEADER_H);
@@ -1053,10 +1111,7 @@ mod tests {
     #[test]
     fn a_live_reload_makes_the_next_chrome_push_reapply_the_buttons() {
         let mut state = DocumentHeaderState::for_test(Vec::new(), None, Vec::new());
-        let toggle = HeaderViewAction {
-            icon: Icon::Code,
-            tooltip: "View source",
-        };
+        let toggle = HeaderViewAction::destination(Icon::Code, "View source");
         assert!(state.replace_view_toggle(Some(toggle)));
         assert!(state.replace_zoom(Some(110)));
         assert!(state.replace_right_dock(Some(Icon::PanelRight)));

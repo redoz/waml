@@ -224,7 +224,7 @@ fn production_scan_excludes_nested_tests_directories() {
 }
 
 #[test]
-fn one_shared_waml_widget_serves_source_and_read_only_generic_views() {
+fn one_shared_waml_widget_serves_both_doors_onto_the_editable_source() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let app_source =
         fs::read_to_string(manifest_dir.join("src/app.rs")).expect("application source");
@@ -239,10 +239,11 @@ fn one_shared_waml_widget_serves_source_and_read_only_generic_views() {
     assert_eq!(markdown_editor_mount_count(&app), 1);
     assert!(source.contains("session : MarkdownDocumentSession"));
     assert!(generic.contains("source : SourceView"));
-    assert!(generic.contains("SourceView :: new_read_only"));
-    assert!(generic.contains("set_read_only"));
-    assert!(generic.contains("outcome . source_edit = None ;"));
-    assert_eq!(generic.matches("source_edit").count(), 1);
+    assert!(generic.contains("SourceView :: new_with_asset_host"));
+    // The source face is EDITABLE through this door: the wrapper neither
+    // pins the shared widget read-only nor swallows the edit it produces.
+    assert!(!generic.contains("set_read_only (cx , true)"));
+    assert!(!generic.contains("source_edit = None"));
 }
 
 #[test]

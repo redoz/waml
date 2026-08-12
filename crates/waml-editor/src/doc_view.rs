@@ -362,13 +362,22 @@ impl BodyWidgets {
         }
     }
 
-    /// The active document's view action button in the breadcrumb header.
-    /// Views use it for source/rendered or emphasis destination actions.
+    /// The active document's view action button in the breadcrumb header --
+    /// the source/rendered toggle, and only that.
     pub fn header_view_action_button(&self, cx: &mut Cx) -> WidgetRef {
         self.ui
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
             .map(|header| header.view_action_button(cx))
+            .unwrap_or_default()
+    }
+
+    /// The raw-source surface's emphasis button, beside the view toggle.
+    pub fn header_emphasis_action_button(&self, cx: &mut Cx) -> WidgetRef {
+        self.ui
+            .widget(cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .map(|header| header.emphasis_action_button(cx))
             .unwrap_or_default()
     }
 
@@ -384,6 +393,7 @@ impl BodyWidgets {
         {
             header.set_right_dock(cx, chrome.document_header.right_dock);
             header.set_view_toggle(cx, chrome.document_header.view_toggle);
+            header.set_emphasis_toggle(cx, chrome.document_header.emphasis_toggle);
         }
         if chrome.document_header.right_dock.is_none() {
             if let Some(mut panel) = self
@@ -756,6 +766,22 @@ pub trait DocView {
 pub struct HeaderViewAction {
     pub icon: Icon,
     pub tooltip: &'static str,
+    /// Renders the button lit. A destination action (`view_toggle`) is never
+    /// active -- its icon already names where you are going. A mode action
+    /// (`emphasis_toggle`) keeps one icon and lights it while the non-default
+    /// mode is on, so the button states WHAT IS rather than what is next.
+    pub active: bool,
+}
+
+impl HeaderViewAction {
+    /// A destination action: click to go somewhere else, never lit.
+    pub const fn destination(icon: Icon, tooltip: &'static str) -> Self {
+        Self {
+            icon,
+            tooltip,
+            active: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -763,7 +789,14 @@ pub struct DocumentHeaderChrome {
     pub breadcrumb: bool,
     pub right_dock: Option<Icon>,
     /// The active document's destination action in the trailing button row.
+    /// This slot means ONE thing everywhere: it flips between the rendered
+    /// surface and the raw markdown behind it. Anything else that wants a
+    /// header button gets its own slot rather than borrowing this one.
     pub view_toggle: Option<HeaderViewAction>,
+    /// The raw-source surface's presentation-emphasis action, when that
+    /// surface is showing. Separate from `view_toggle` because it does not
+    /// change WHICH surface you are on -- only how it is styled.
+    pub emphasis_toggle: Option<HeaderViewAction>,
     /// Which zoomable surface (if any) this view's body owns; `None` hides
     /// the `[-][%][+]` control and reserves no width (spec §Which view).
     pub zoom: Option<crate::zoom::ZoomTarget>,
@@ -789,6 +822,7 @@ impl BodyChrome {
             breadcrumb: false,
             right_dock: None,
             view_toggle: None,
+            emphasis_toggle: None,
             zoom: None,
         },
     };
@@ -836,6 +870,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },
@@ -850,6 +885,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
+                    emphasis_toggle: None,
                     view_toggle: None,
                     zoom: None,
                 },
@@ -864,9 +900,11 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
-                    view_toggle: Some(HeaderViewAction {
-                        icon: Icon::Eye,
+                    view_toggle: None,
+                    emphasis_toggle: Some(HeaderViewAction {
+                        icon: Icon::Paintbrush,
                         tooltip: "Use layout emphasis",
+                        active: false,
                     }),
                     zoom: Some(crate::zoom::ZoomTarget::Source),
                 },
@@ -881,10 +919,8 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(HeaderViewAction {
-                        icon: Icon::Code,
-                        tooltip: "View source",
-                    }),
+                    emphasis_toggle: None,
+                    view_toggle: Some(HeaderViewAction::destination(Icon::Code, "View source")),
                     zoom: Some(crate::zoom::ZoomTarget::Reading),
                 },
             }

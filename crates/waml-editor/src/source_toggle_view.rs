@@ -1,6 +1,6 @@
 //! `SourceToggleView` — wraps any primary document view with the breadcrumb
 //! header's view-source toggle, flipping in place between the wrapped surface
-//! and a read-only raw-markdown view of the same concept. This is the same
+//! and the editable raw-markdown view of the same concept. This is the same
 //! affordance the generic OKF viewer offers, made uniform for the diagram,
 //! behavior, and classifier-preview tabs.
 
@@ -20,9 +20,8 @@ use crate::view_history::ViewAnchor;
 
 pub struct SourceToggleView<V: DocView> {
     inner: V,
-    /// The raw-markdown surface behind the toggle. Read-only: this wrapper
-    /// discards the edit outcome, so a writable editor would silently drop
-    /// what the user typed.
+    /// The raw-markdown surface behind the toggle -- the same editable source
+    /// view every other door opens onto.
     source: SourceView,
     showing_source: bool,
 }
@@ -36,7 +35,7 @@ impl<V: DocView> SourceToggleView<V> {
     ) -> Self {
         Self {
             inner,
-            source: SourceView::new_read_only(concept_id, assets, emphasis),
+            source: SourceView::new_with_asset_host(concept_id, assets, emphasis),
             showing_source: false,
         }
     }
@@ -57,7 +56,7 @@ impl<V: DocView> SourceToggleView<V> {
     fn assert_source_surface(&self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_behavior_canvas_visible(cx, false);
         body.show_markdown_editor(cx);
-        body.markdown_editor().set_read_only(cx, true);
+        body.markdown_editor().set_read_only(cx, false);
     }
 
     /// Hand the surface back to the wrapped view: generic canvas visibility
@@ -159,9 +158,11 @@ impl<V: DocView> DocView for SourceToggleView<V> {
             return ViewOutcome::default();
         }
         if self.showing_source {
-            let mut outcome = self.source.handle(cx, body, actions, data);
-            outcome.source_edit = None;
-            outcome
+            if self.source.handle_emphasis_action(cx, body, actions) {
+                body.apply_chrome(cx, self.chrome());
+                return ViewOutcome::default();
+            }
+            self.source.handle(cx, body, actions, data)
         } else {
             self.inner.handle(cx, body, actions, data)
         }
@@ -203,16 +204,13 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         };
         // Icon shows the surface the toggle LEADS to.
         chrome.document_header.view_toggle = Some(if self.showing_source {
-            HeaderViewAction {
-                icon: Icon::Eye,
-                tooltip: "View rendered",
-            }
+            HeaderViewAction::destination(Icon::Eye, "View rendered")
         } else {
-            HeaderViewAction {
-                icon: Icon::Code,
-                tooltip: "View source",
-            }
+            HeaderViewAction::destination(Icon::Code, "View source")
         });
+        // Emphasis restyles the raw markdown, so it exists only on that face.
+        chrome.document_header.emphasis_toggle =
+            self.showing_source.then(|| self.source.emphasis_action());
         // The diagram face keeps its own zoom (none, per spec §Scope); the
         // source face is the shared markdown editor, same as SourceView.
         chrome.document_header.zoom = self
@@ -344,10 +342,8 @@ mod tests {
             DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(HeaderViewAction {
-                    icon: Icon::Code,
-                    tooltip: "View source",
-                }),
+                emphasis_toggle: None,
+                view_toggle: Some(HeaderViewAction::destination(Icon::Code, "View source")),
                 zoom: None,
             }
         );
@@ -366,9 +362,12 @@ mod tests {
             DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(HeaderViewAction {
-                    icon: Icon::Eye,
-                    tooltip: "View rendered",
+                view_toggle: Some(HeaderViewAction::destination(Icon::Eye, "View rendered")),
+                // The emphasis button rides along with the source face only.
+                emphasis_toggle: Some(HeaderViewAction {
+                    icon: Icon::Paintbrush,
+                    tooltip: "Use layout emphasis",
+                    active: false,
                 }),
                 zoom: Some(crate::zoom::ZoomTarget::Source),
             }
@@ -376,11 +375,9 @@ mod tests {
         view.toggle_for_test();
         assert_eq!(
             view.chrome().document_header.view_toggle,
-            Some(HeaderViewAction {
-                icon: Icon::Code,
-                tooltip: "View source",
-            })
+            Some(HeaderViewAction::destination(Icon::Code, "View source"))
         );
+        assert_eq!(view.chrome().document_header.emphasis_toggle, None);
         assert_eq!(view.chrome().document_header.zoom, None);
     }
 

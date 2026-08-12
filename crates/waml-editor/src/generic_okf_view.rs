@@ -17,9 +17,9 @@ const REVEAL_TOP_MARGIN: f64 = 48.0;
 pub struct GenericOkfView {
     /// The reading surface. A concept opens here.
     reading: crate::reading_view::ReadingView,
-    /// The raw-markdown surface, reached by the explicit source toggle. It
-    /// stays read-only: this view discards the edit outcome, so a writable
-    /// editor would silently drop what the user typed.
+    /// The raw-markdown surface, reached by the explicit source toggle. It is
+    /// the SAME editable surface a source tab opens on -- there is one source
+    /// view with two doors, and it behaves identically through either.
     source: SourceView,
 }
 
@@ -42,12 +42,35 @@ impl GenericOkfView {
     ) -> Self {
         // Opening a concept is a reading action: it renders. Seeing the
         // markdown behind it is a separate, explicit action.
+        Self::opened_on(concept_id, assets, emphasis, false)
+    }
+
+    /// Same view, opened on the raw-markdown face. This is what a source tab
+    /// ("View Source", the tree's source surface) constructs: the destination
+    /// differs, the view does not, so the rendered face stays one click away
+    /// through the very same toggle a concept tab uses.
+    pub fn new_source_with_asset_host(
+        concept_id: String,
+        assets: crate::markdown_hosts::SharedMarkdownAssetHost,
+        emphasis: waml_markdown_editor::EditorEmphasis,
+    ) -> Self {
+        Self::opened_on(concept_id, assets, emphasis, true)
+    }
+
+    fn opened_on(
+        concept_id: String,
+        assets: crate::markdown_hosts::SharedMarkdownAssetHost,
+        emphasis: waml_markdown_editor::EditorEmphasis,
+        showing_source: bool,
+    ) -> Self {
+        let mut reading = crate::reading_view::ReadingView::new_with_asset_host(
+            concept_id.clone(),
+            assets.clone(),
+        );
+        reading.set_showing_source(showing_source);
         Self {
-            reading: crate::reading_view::ReadingView::new_with_asset_host(
-                concept_id.clone(),
-                assets.clone(),
-            ),
-            source: SourceView::new_read_only(concept_id, assets, emphasis),
+            reading,
+            source: SourceView::new_with_asset_host(concept_id, assets, emphasis),
         }
     }
 
@@ -74,7 +97,7 @@ impl DocView for GenericOkfView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
         if self.reading.showing_source() {
             body.show_markdown_editor(cx);
-            body.markdown_editor().set_read_only(cx, true);
+            body.markdown_editor().set_read_only(cx, false);
         } else {
             body.show_markdown_viewer(cx);
         }
@@ -134,9 +157,13 @@ impl DocView for GenericOkfView {
             self.sync(cx, body, data);
             return ViewOutcome::default();
         }
-        let mut outcome = self.source.handle(cx, body, actions, data);
-        outcome.source_edit = None;
-        outcome
+        // The emphasis button belongs to the source face only; `sync` re-pushes
+        // the chrome so the button's lit state follows the new emphasis.
+        if self.reading.showing_source() && self.source.handle_emphasis_action(cx, body, actions) {
+            self.sync(cx, body, data);
+            return ViewOutcome::default();
+        }
+        self.source.handle(cx, body, actions, data)
     }
 
     fn chrome(&self) -> BodyChrome {
@@ -146,20 +173,23 @@ impl DocView for GenericOkfView {
             canvas_overlays: false,
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
-                right_dock: None,
+                // Chrome follows the FACE, not the door: the raw-source face
+                // keeps the inspector dock it has always had, the reading face
+                // keeps having none. Both doors onto a face agree.
+                right_dock: self.reading.showing_source().then_some(Icon::PanelRight),
                 // Icon shows the surface the toggle LEADS to; `sync` keeps it
                 // current when the user flips between them.
                 view_toggle: Some(if self.reading.showing_source() {
-                    HeaderViewAction {
-                        icon: Icon::Eye,
-                        tooltip: "View rendered",
-                    }
+                    HeaderViewAction::destination(Icon::Eye, "View rendered")
                 } else {
-                    HeaderViewAction {
-                        icon: Icon::Code,
-                        tooltip: "View source",
-                    }
+                    HeaderViewAction::destination(Icon::Code, "View source")
                 }),
+                // Emphasis restyles the raw markdown, so it exists only while
+                // that face is up.
+                emphasis_toggle: self
+                    .reading
+                    .showing_source()
+                    .then(|| self.source.emphasis_action()),
                 zoom: Some(if self.reading.showing_source() {
                     crate::zoom::ZoomTarget::Source
                 } else {
@@ -224,9 +254,13 @@ mod tests {
         let view_toggle = WidgetRef::new_with_inner(Box::new(
             cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
         ));
+        let emphasis_toggle = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
+        ));
         let mut header =
             cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default);
         header.test_mount_view_action_button(view_toggle);
+        header.test_mount_emphasis_action_button(emphasis_toggle);
         let header = WidgetRef::new_with_inner(Box::new(header));
         let markdown = WidgetRef::new_with_inner(Box::new(
             cx.with_vm(waml_markdown_editor::widget::MarkdownEditor::script_new_with_default),
@@ -268,8 +302,105 @@ mod tests {
         )
     }
 
+    fn source_first_view() -> GenericOkfView {
+        GenericOkfView::new_source_with_asset_host(
+            "runbook".into(),
+            crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ),
+            waml_markdown_editor::EditorEmphasis::Code,
+        )
+    }
+
+    /// The reported bug: flipping to source handed back a surface that could
+    /// not be typed into, because this wrapper pinned the shared widget
+    /// read-only and dropped the edit it produced.
     #[test]
-    fn generic_markdown_view_is_retained_and_read_only_by_construction() {
+    fn the_source_face_accepts_typing() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = crate::editor_session::EditorSession::default();
+        let snapshot = session.snapshot();
+        let mut view = generic_view();
+
+        view.toggle_source();
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        assert!(
+            !body.markdown_editor().read_only(),
+            "the source face is an editor, not a viewer"
+        );
+    }
+
+    /// Both doors land on the same face with the same chrome: whichever way
+    /// you got here, `view_toggle` leads to the rendered prose.
+    #[test]
+    fn a_source_first_open_is_the_same_view_on_its_source_face() {
+        let mut source_first = source_first_view();
+        assert!(source_first.showing_source());
+        assert_eq!(source_first.identity(), DocViewIdentity::GenericOkf);
+
+        let mut toggled = generic_view();
+        toggled.toggle_source();
+
+        assert_eq!(source_first.chrome(), toggled.chrome());
+        assert_eq!(
+            source_first.chrome().document_header.view_toggle,
+            Some(HeaderViewAction::destination(Icon::Eye, "View rendered"))
+        );
+
+        // And the Eye leads OUT of source, not to another source view.
+        source_first.toggle_source();
+        toggled.toggle_source();
+        assert!(!source_first.showing_source());
+        assert_eq!(source_first.chrome(), toggled.chrome());
+        assert_eq!(
+            source_first.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Reading)
+        );
+    }
+
+    /// The emphasis button restyles the source face WITHOUT leaving it -- the
+    /// behaviour that used to be bound to the `Eye`, where it read as "go to
+    /// the rendered view" and delivered a differently-styled source view.
+    #[test]
+    fn the_emphasis_button_restyles_the_source_face_without_leaving_it() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = crate::editor_session::EditorSession::default();
+        let snapshot = session.snapshot();
+        let mut view = source_first_view();
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        let emphasis = body.header_emphasis_action_button(&mut cx).as_icon_button();
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(crate::icon_button::IconButtonAction::Clicked),
+            widget_uid: emphasis.widget_uid(),
+            group: None,
+        })];
+        view.handle(&mut cx, &body, &actions, snapshot.borrowed().into());
+
+        assert!(
+            view.showing_source(),
+            "emphasis is a restyle, not a navigation"
+        );
+        assert_eq!(
+            body.markdown_editor().emphasis(),
+            waml_markdown_editor::EditorEmphasis::Layout
+        );
+        assert_eq!(
+            view.chrome().document_header.emphasis_toggle,
+            Some(HeaderViewAction {
+                icon: Icon::Paintbrush,
+                tooltip: "Use code emphasis",
+                active: true,
+            })
+        );
+    }
+
+    #[test]
+    fn generic_markdown_view_is_retained_by_construction() {
         let view = generic_view();
         assert_eq!(
             view.reconcile_policy(),
@@ -332,10 +463,7 @@ mod tests {
                 .borrow::<crate::document_header::DocumentHeader>()
                 .expect("the shared header must be mounted")
                 .test_view_toggle(),
-            Some(HeaderViewAction {
-                icon: Icon::Code,
-                tooltip: "View source",
-            })
+            Some(HeaderViewAction::destination(Icon::Code, "View source"))
         );
 
         view.toggle_source();
@@ -345,10 +473,7 @@ mod tests {
                 .borrow::<crate::document_header::DocumentHeader>()
                 .expect("the shared header must be mounted")
                 .test_view_toggle(),
-            Some(HeaderViewAction {
-                icon: Icon::Eye,
-                tooltip: "View rendered",
-            })
+            Some(HeaderViewAction::destination(Icon::Eye, "View rendered"))
         );
     }
 
@@ -389,12 +514,19 @@ mod tests {
         let header = header
             .borrow::<crate::document_header::DocumentHeader>()
             .expect("the shared header must be mounted");
-        assert_eq!(header.test_right_dock(), None);
+        // The source face carries the inspector dock and the emphasis button;
+        // the reading face carries neither. Chrome follows the face.
+        assert_eq!(header.test_right_dock(), Some(Icon::PanelRight));
         assert_eq!(
             header.test_view_toggle(),
+            Some(HeaderViewAction::destination(Icon::Eye, "View rendered"))
+        );
+        assert_eq!(
+            header.test_emphasis_toggle(),
             Some(HeaderViewAction {
-                icon: Icon::Eye,
-                tooltip: "View rendered",
+                icon: Icon::Paintbrush,
+                tooltip: "Use layout emphasis",
+                active: false,
             })
         );
     }
@@ -458,10 +590,8 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(HeaderViewAction {
-                        icon: Icon::Code,
-                        tooltip: "View source",
-                    }),
+                    emphasis_toggle: None,
+                    view_toggle: Some(HeaderViewAction::destination(Icon::Code, "View source")),
                     zoom: Some(crate::zoom::ZoomTarget::Reading),
                 },
             }
