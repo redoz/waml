@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 61e8d61a56a1fbd589fc02da0f34cbb0c0b055d1b8cc44d9267c76ab3c7293d4 # shrinks to v = List([List([Str("A}"), Null])])
+cc 72b6f0f4880cfcbbca42f0e7bca17e5bef8bef2ee6b4dc2978b9c295ff87b23f # shrinks to entries = [("a", List([List([List([Str(":'"), Null])])]))]

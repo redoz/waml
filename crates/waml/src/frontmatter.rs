@@ -281,8 +281,11 @@ fn escape_quoted_string(value: &str) -> String {
     escaped
 }
 
-/// Splits a flow sequence's inner text (`[...]` with the brackets already
-/// stripped) on top-level commas, quote-aware and bracket-depth-aware. A
+/// Splits a flow collection's inner text (`[...]` or `{...}` with the
+/// brackets already stripped) on top-level commas, quote-aware and
+/// depth-aware over BOTH bracket kinds — a flow sequence may hold flow
+/// mappings and vice versa, so a comma inside either one does not split the
+/// outer collection. A
 /// quote character only opens a quoted scalar when it is the FIRST
 /// significant byte of an ITEM — matching YAML, where a quote elsewhere
 /// inside a plain (unquoted) scalar is just a literal character, not a
@@ -330,15 +333,26 @@ fn split_flow_items(s: &str) -> Vec<&str> {
             continue;
         }
         match bytes[i] {
-            b'[' => {
+            b'[' | b'{' => {
                 depth += 1;
                 i += 1;
                 at_item_start = true;
             }
-            b']' => {
+            b']' | b'}' => {
                 depth -= 1;
                 i += 1;
                 at_item_start = false;
+            }
+            // A `: ` opens a mapping value, which may itself be a quoted
+            // scalar (`{ id: "a, b" }`) — an item start for the quote
+            // bookkeeping, exactly like the position after a comma. The
+            // brackets are stripped before this runs, so a flow mapping's own
+            // field separators sit at depth 0 here. The trailing space is
+            // required, per YAML: a `:` not followed by one (`:'`) is an
+            // ordinary character of a plain scalar, not an indicator.
+            b':' if i + 1 < bytes.len() && bytes[i + 1] == b' ' => {
+                i += 1;
+                at_item_start = true;
             }
             b',' if depth <= 0 => {
                 items.push(&s[start..i]);
@@ -363,6 +377,68 @@ fn split_flow_items(s: &str) -> Vec<&str> {
     items
 }
 
+/// Reads a flow mapping's inner text (`{...}` with the braces stripped) into
+/// ordered entries. `None` means "not a flat mapping" — an empty body, or a
+/// field with no top-level `:` or an empty key — and the caller keeps the raw
+/// text as a scalar instead of inventing structure for it.
+fn parse_flow_map_entries(inner: &str, depth: usize) -> Option<Vec<(String, FmValue)>> {
+    if inner.trim().is_empty() {
+        return None;
+    }
+    let mut entries = Vec::new();
+    for field in split_flow_items(inner) {
+        let (key, value) = split_flow_map_field(field)?;
+        let key = waml_syntax::decode_quoted_scalar(key.trim());
+        if key.is_empty() {
+            return None;
+        }
+        entries.push((key, parse_value_at(value.trim(), depth + 1)));
+    }
+    Some(entries)
+}
+
+/// Splits one flow-mapping field at its first top-level `:`, quote-aware and
+/// depth-aware so a colon inside a quoted scalar or a nested flow collection
+/// does not split. `None` when the field carries no such colon.
+fn split_flow_map_field(field: &str) -> Option<(&str, &str)> {
+    let bytes = field.as_bytes();
+    let mut at = 0usize;
+    let mut depth: i32 = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            quote @ (b'\'' | b'"') => {
+                at += 1;
+                while at < bytes.len() {
+                    if bytes[at] == quote {
+                        if quote == b'\'' && at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
+                            at += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    if quote == b'"' && bytes[at] == b'\\' && at + 1 < bytes.len() {
+                        at += 2;
+                        continue;
+                    }
+                    at += 1;
+                }
+                at += 1;
+            }
+            b'[' | b'{' => {
+                depth += 1;
+                at += 1;
+            }
+            b']' | b'}' => {
+                depth -= 1;
+                at += 1;
+            }
+            b':' if depth <= 0 => return Some((&field[..at], &field[at + 1..])),
+            _ => at += 1,
+        }
+    }
+    None
+}
+
 pub(crate) fn parse_value(s: &str) -> FmValue {
     parse_value_at(s, 0)
 }
@@ -380,6 +456,19 @@ fn parse_value_at(s: &str, depth: usize) -> FmValue {
             .map(|item| parse_value_at(item.trim(), depth + 1))
             .collect();
         return FmValue::List(items);
+    }
+    // A flow mapping (`{ id: a, title: b }`) is the compact map form the OKF
+    // spec writes `sources`/`parameters`/`verified` in. A shape that is not a
+    // flat mapping — no fields, or a field with no `:` — is NOT one; it falls
+    // through to the bare-scalar path and stays the `Str` it reads as, which
+    // the writer quotes so it round-trips unchanged.
+    if let Some(inner) = s.strip_prefix('{').and_then(|x| x.strip_suffix('}')) {
+        if depth >= MAX_VALUE_DEPTH {
+            return FmValue::Str(s.to_string());
+        }
+        if let Some(entries) = parse_flow_map_entries(inner, depth) {
+            return FmValue::Map(entries);
+        }
     }
     if s.len() >= 2 {
         if let Some(inner) = s.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
@@ -1201,10 +1290,16 @@ fn scalar_needs_quote(s: &str) -> bool {
 
 /// A list item needs quoting whenever a bare scalar would ([`scalar_needs_quote`]),
 /// or when it carries a byte the flow splitter treats as structural — `,`
-/// (the item separator) or `[`/`]` (nested-bracket boundaries) — even though
-/// those bytes are safe in a top-level bare scalar.
+/// (the item separator) or `[`/`]`/`{`/`}` (nested-collection boundaries, both
+/// kinds, since the splitter tracks depth over both) — even though those bytes
+/// are safe in a top-level bare scalar.
 fn flow_item_needs_quote(s: &str) -> bool {
-    scalar_needs_quote(s) || s.contains(',') || s.contains('[') || s.contains(']')
+    scalar_needs_quote(s)
+        || s.contains(',')
+        || s.contains('[')
+        || s.contains(']')
+        || s.contains('{')
+        || s.contains('}')
 }
 
 /// True when a bare `key` would not read back as the same key. Keys reach the
@@ -1575,6 +1670,66 @@ mod tests {
                 "{a: b}".into()
             )])]))
         );
+    }
+
+    /// A `{...}` flow mapping is the compact map form the OKF spec writes its
+    /// `sources`/`parameters`/`verified` examples in, so it must READ as a
+    /// `Map` — otherwise the entry falls back to a `Str`, the shell's
+    /// `promote_sources` refuses it, and the writer quotes the whole line back
+    /// into the document. The canonical WRITTEN form stays the block sequence;
+    /// what matters is that the round trip preserves the value.
+    #[test]
+    fn a_flow_mapping_reads_as_a_map_and_round_trips() {
+        let source = "---\nsources:\n  - { id: a, resource: x.rs, title: \"A, B\" }\n  - { id: b, resource: y.rs }\n---\n";
+        let fm = parse_frontmatter_for_test(source);
+        let expected = FmValue::List(vec![
+            FmValue::Map(vec![
+                ("id".into(), FmValue::Str("a".into())),
+                ("resource".into(), FmValue::Str("x.rs".into())),
+                ("title".into(), FmValue::Str("A, B".into())),
+            ]),
+            FmValue::Map(vec![
+                ("id".into(), FmValue::Str("b".into())),
+                ("resource".into(), FmValue::Str("y.rs".into())),
+            ]),
+        ]);
+        assert_eq!(fm.get("sources"), Some(&expected));
+
+        let rendered = render_frontmatter(&fm);
+        let reparsed = parse_frontmatter_for_test(&format!("---\n{rendered}\n---\n"));
+        assert_eq!(reparsed.get("sources"), Some(&expected));
+    }
+
+    /// A flow mapping in mapping-VALUE position reads the same way, and a
+    /// shape that is not a valid flat mapping stays the bare scalar it was
+    /// (the writer then quotes it, which round-trips unchanged).
+    #[test]
+    fn flow_mapping_values_and_non_mappings() {
+        assert_eq!(
+            parse_value("{ a: 1, b: \"x, y\" }"),
+            FmValue::Map(vec![
+                ("a".into(), FmValue::Num(1.0)),
+                ("b".into(), FmValue::Str("x, y".into())),
+            ])
+        );
+        assert_eq!(
+            parse_value("{ outer: { inner: 1 } }"),
+            FmValue::Map(vec![(
+                "outer".into(),
+                FmValue::Map(vec![("inner".into(), FmValue::Num(1.0))]),
+            )])
+        );
+        assert_eq!(
+            parse_value("[{ a: 1 }, { b: 2 }]"),
+            FmValue::List(vec![
+                FmValue::Map(vec![("a".into(), FmValue::Num(1.0))]),
+                FmValue::Map(vec![("b".into(), FmValue::Num(2.0))]),
+            ])
+        );
+        // No fields, no colon, and an unterminated brace are not mappings.
+        assert_eq!(parse_value("{}"), FmValue::Str("{}".into()));
+        assert_eq!(parse_value("{ a }"), FmValue::Str("{ a }".into()));
+        assert_eq!(parse_value("{ a: 1"), FmValue::Str("{ a: 1".into()));
     }
 
     #[test]
