@@ -138,6 +138,14 @@ function hasSourcesFrontmatter(text) {
   return frontmatterLines(text).some((line) => /^sources:\s*$/.test(line));
 }
 
+// A diagram document groups its members with headings — a use-case view's
+// `#### ` heading names a BAND (uml::use_case::classify_band), not a
+// scenario. Scenarios live in the goal documents; only those are scanned for
+// `#### <ID> — <description>`.
+function isDiagramDocument(text) {
+  return frontmatterLines(text).some((line) => /^type:\s*uml\.\w*Diagram\s*$/.test(line));
+}
+
 async function inspectArchitectureViews(documents, docsRoot, repositoryRoot, errors) {
   const viewsPrefix = "docs/waml/architecture/views/";
   for (const document of documents) {
@@ -327,7 +335,9 @@ export async function checkDocsContract(docsRoot, repositoryRoot) {
 
   for (const document of documents) {
     const documentPath = normalizedPath(repositoryRoot, document);
-    const lines = (await readFile(document, "utf8")).split(/\r?\n/);
+    const source = await readFile(document, "utf8");
+    const lines = source.split(/\r?\n/);
+    const scenariosAreScanned = !isDiagramDocument(source);
     let section = "";
     for (let index = 0; index < lines.length; index += 1) {
       const text = lines[index];
@@ -346,7 +356,7 @@ export async function checkDocsContract(docsRoot, repositoryRoot) {
           gaps.set(gap[1], { document: documentPath, line: number, target: gap[2], reason: gap[3] });
         }
       }
-      if (!text.startsWith("#### ")) continue;
+      if (!scenariosAreScanned || !text.startsWith("#### ")) continue;
 
       const heading = SCENARIO.exec(text);
       if (!heading) {
