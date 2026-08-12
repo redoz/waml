@@ -9,6 +9,19 @@ const PALETTE_SECTION_TYPE: &str = "WamlPaletteSection";
 const RESULT_GROUP_TYPE: &str = "WamlSearchGroupHeader";
 /// `FindStrip`'s single always-present counter `Label`.
 const FIND_COUNTER_ID: &str = "counter_label";
+/// `FindStrip`'s query `TextInput`. The readiness gate for "the strip is
+/// open" reads THIS, not [`FIND_COUNTER_ID`]: the counter's text is `""`
+/// until a query exists (`FindModel::counter_text`), and a `Label` with no
+/// text draws no quad, so its snapshot rect stays `0x0` -- and
+/// `try_wait_visible` only counts a widget with a non-zero rect. The query
+/// input is laid out at a fixed 200px the instant the strip draws.
+const FIND_QUERY_INPUT_ID: &str = "query_input";
+/// The results tab's surface `View`. Same reason as [`FIND_QUERY_INPUT_ID`]:
+/// [`RESULT_GROUP_TYPE`] items come from `semantic_items`, which reports the
+/// group list as pure data with a `Rect::default()` -- readable by a
+/// snapshot observation, never "visible" to a geometry-gated wait. The
+/// surface is hidden and `0x0` until the results tab opens.
+const RESULT_SURFACE_ID: &str = "search_results_surface";
 
 /// Ctrl+K (Cmd+K on macOS): open the search palette. Waits for at least one
 /// titled section header to become visible -- `open_palette` always seeds
@@ -67,7 +80,7 @@ pub(crate) fn escalate_to_results_tab(driver: &TestApp) -> Result<String, Operat
         .try_press_key(KeyCode::ReturnKey)
         .map_err(|error| results_driver_failure(driver, &error))?;
     driver
-        .locator(Selector::widget_type(RESULT_GROUP_TYPE))
+        .locator(Selector::id(RESULT_SURFACE_ID))
         .try_wait_visible()
         .map_err(|error| results_driver_failure(driver, &error))?;
     Ok("the results tab is active".to_string())
@@ -84,14 +97,16 @@ pub(crate) fn expect_results_grouped_by_document(
 }
 
 /// Ctrl+F (Cmd+F on macOS): open the find-in-document strip. Waits for its
-/// counter label to become visible (`FindStrip::open` flips its own
-/// `visible` flag synchronously on the app side).
+/// query input to become visible -- the first laid-out thing the strip draws
+/// once `FindStrip::open` flips its own `visible` flag (see
+/// [`FIND_QUERY_INPUT_ID`] for why the counter label cannot serve as the
+/// gate).
 pub(crate) fn open_find_strip(driver: &TestApp) -> Result<String, OperationFailure> {
     driver
         .try_press_key_with_modifiers(KeyCode::KeyF, primary_modifiers())
         .map_err(|error| find_strip_driver_failure(&error))?;
     driver
-        .locator(Selector::id(FIND_COUNTER_ID))
+        .locator(Selector::id(FIND_QUERY_INPUT_ID))
         .try_wait_visible()
         .map_err(|error| find_strip_driver_failure(&error))?;
     Ok("the find strip is open".to_string())

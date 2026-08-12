@@ -7,6 +7,10 @@ use std::io;
 use std::path::Path;
 
 const DRIVER_ARTIFACTS_DIR: &str = "driver-artifacts";
+/// How long one driver action (a wait, a snapshot query) may take before the
+/// scenario calls it a failure. See `build_driver_config` for why this is not
+/// makepad_test's own default.
+const ACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const DRIVER_EVIDENCE_FILES: &[&str] = &[
     "failure.txt",
     "failure-screenshot.png",
@@ -130,6 +134,14 @@ fn build_driver_config(
         full_test_name(scenario),
     )?;
     driver.artifacts_dir = identity.run_root.join(DRIVER_ARTIFACTS_DIR);
+    // makepad_test's own 10s default is a developer-machine number. A CI
+    // runner draws this editor through software GL on two cores, where a
+    // burst of keystrokes (each one re-running a bundle search) can leave the
+    // app busy past 10s and time out the very next observation -- seen as
+    // `palette_blends_a_query_into_titled_sections` failing "timed out waiting
+    // for hub response" on CI while passing locally. This bounds a SLOW app,
+    // not a wedged one: a wedged app fails just the same, only later.
+    driver.action_timeout = ACTION_TIMEOUT;
     driver.args = vec![
         staged_workspace.to_string_lossy().into_owned(),
         "--title".to_string(),
