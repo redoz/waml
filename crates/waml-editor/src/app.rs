@@ -99,6 +99,7 @@ script_mod! {
         flow_body +: {
             font_color: atlas.text
             draw_block +: {
+                selection_color: atlas.selection
                 // `text_mid`, not `text_dim`: thin linework (the `---` rule,
                 // the quote bar, table borders) falls below legibility in the
                 // dim grey on the light surface.
@@ -506,6 +507,16 @@ script_mod! {
                                         width: Fill
                                         height: Fill
                                         flow: Down
+                                        scroll_bars: ScrollBars {
+                                            scroll_bar_y: ScrollBar {
+                                                draw_bg +: {
+                                                    size: 5.0
+                                                    color: atlas.text_dim
+                                                    color_hover: atlas.accent
+                                                    color_drag: atlas.accent
+                                                }
+                                            }
+                                        }
                                         // Reading margin: prose should not
                                         // touch the window chrome.
                                         padding: Inset{left: 24.0, right: 24.0, top: 16.0, bottom: 24.0}

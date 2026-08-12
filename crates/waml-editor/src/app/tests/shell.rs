@@ -9,6 +9,75 @@ const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
 /// where the row's first control lands.
 const LEAD: f64 = DEFAULT_TAB_ROW_LEAD_W;
 
+fn resolved_script_property(vm: &mut ScriptVm, root: ScriptObject, path: &[LiveId]) -> ScriptValue {
+    path.iter().fold(root.into(), |value, field| {
+        let object = value
+            .as_object()
+            .unwrap_or_else(|| panic!("{field:?} requires a script object, got {value:?}"));
+        let trap = vm.bx.threads.cur().trap.pass();
+        vm.bx.heap.value(object, (*field).into(), trap)
+    })
+}
+
+#[test]
+fn markdown_reader_scrollbar_uses_waml_handle_style() {
+    let (mut cx, app) = mounted_production_shell();
+    let viewer_body = app
+        .ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer_body));
+    let source = viewer_body
+        .borrow::<View>()
+        .expect("reader body is a View")
+        .source
+        .clone();
+
+    cx.with_vm(|vm| {
+        let root = source.as_object();
+        let size = resolved_script_property(
+            vm,
+            root,
+            &[
+                live_id!(scroll_bars),
+                live_id!(scroll_bar_y),
+                live_id!(draw_bg),
+                live_id!(size),
+            ],
+        );
+        assert_eq!(size.as_f64(), Some(5.0));
+        for (field, expected) in [
+            (live_id!(color), 0x8a97a6ff),
+            (live_id!(color_hover), 0x1496dcff),
+            (live_id!(color_drag), 0x1496dcff),
+        ] {
+            let color = resolved_script_property(
+                vm,
+                root,
+                &[
+                    live_id!(scroll_bars),
+                    live_id!(scroll_bar_y),
+                    live_id!(draw_bg),
+                    field,
+                ],
+            );
+            assert_eq!(color.as_color(), Some(expected), "wrong {field:?}");
+        }
+    });
+}
+
+#[test]
+fn markdown_reader_selection_uses_waml_selection_color() {
+    let (cx, app) = mounted_production_shell();
+    let flow_widget = app.ui.widget(
+        &cx,
+        ids!(markdown_viewer_surface.viewer_body.viewer.flow_body),
+    );
+    let flow = flow_widget
+        .borrow::<TextFlow>()
+        .expect("reader flow is a TextFlow");
+
+    assert_eq!(flow.draw_block.selection_color, Vec4f::from_u32(0x1496dc22));
+}
+
 /// With no model open the toggle does not show, and its slot costs the row
 /// nothing.
 #[test]
