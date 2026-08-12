@@ -15,15 +15,19 @@ use makepad_widgets::*;
 use waml_markdown_editor::presentation::{
     compile_presentation, HighlighterRegistry, PresentationStyles,
 };
-use waml_markdown_editor::reading::build_reading_document;
+use waml_markdown_editor::reading::{build_reading_document, ReadingDocument};
 use waml_markdown_editor::syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
 
 pub struct ClassifierPreviewView {
     key: String,
     category: NavCategory,
-    /// The markdown installed on the viewer, kept so `handle` can resolve a
-    /// clicked link and so a re-sync at the same revision is a no-op.
+    /// The markdown this tab owns, kept so `handle` can resolve a clicked
+    /// link and so a re-sync at the same revision needs no regeneration.
     page: Option<Arc<str>>,
+    /// The compiled form of `page`, kept for the same reason: the reading
+    /// viewer is SHARED between tabs, so re-activating this one has to be
+    /// able to put its own document back without recompiling it.
+    document: Option<Arc<ReadingDocument>>,
     /// The session revision `page` was generated from.
     installed_revision: Option<u64>,
 }
@@ -34,6 +38,7 @@ impl ClassifierPreviewView {
             key,
             category,
             page: None,
+            document: None,
             installed_revision: None,
         }
     }
@@ -43,18 +48,47 @@ impl ClassifierPreviewView {
         self.page.as_deref()
     }
 
-    /// Generate the page and install it on the reading surface. A failure to
-    /// parse or compile leaves the previous page up and says so: a stale
-    /// surface is otherwise indistinguishable from a current one.
+    /// Generate the page when the model moved, then put this tab's own page
+    /// on the reading surface.
+    ///
+    /// The reconcile is unconditional because `body.markdown_viewer()` is ONE
+    /// widget shared by every reading tab: gating on the revision alone would
+    /// early-return when this tab is re-activated at an unchanged revision,
+    /// leaving whatever the previously active tab installed on screen,
+    /// captioned as this classifier.
     fn install_page(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
-        if self.installed_revision == Some(data.revision) {
-            return;
+        if self.installed_revision != Some(data.revision) {
+            self.installed_revision = Some(data.revision);
+            self.rebuild_page(data);
         }
-        self.installed_revision = Some(data.revision);
+        let viewer = body.markdown_viewer();
+        match (self.page.clone(), self.document.clone()) {
+            (Some(source), Some(document)) => {
+                let mine_is_up = viewer
+                    .installed_source()
+                    .is_some_and(|installed| Arc::ptr_eq(&installed, &source));
+                if !mine_is_up {
+                    viewer.install_document(cx, document, source);
+                }
+            }
+            // No page of our own: a package preview, an unknown key, or a
+            // classifier deleted from the model. An empty surface is the
+            // honest answer -- the alternative is another tab's document
+            // standing in for this one.
+            _ => viewer.clear_document(cx),
+        }
+    }
+
+    /// Regenerate `page`/`document` from the current model. A failure to
+    /// parse or compile keeps the previous pair and says so: that page is at
+    /// least this classifier's own, where a cleared surface would look like
+    /// the classifier had vanished.
+    fn rebuild_page(&mut self, data: ViewData<'_>) {
         let Some(markdown) =
             waml::classifier_page::classifier_page(&data.uml_analysis.projection, &self.key)
         else {
             self.page = None;
+            self.document = None;
             return;
         };
         let Ok(text) = SourceText::new(markdown.clone()) else {
@@ -99,10 +133,8 @@ impl ClassifierPreviewView {
                 return;
             }
         };
-        let source: Arc<str> = Arc::from(markdown.as_str());
-        self.page = Some(source.clone());
-        body.markdown_viewer()
-            .install_document(cx, Arc::new(document), source);
+        self.page = Some(Arc::from(markdown.as_str()));
+        self.document = Some(Arc::new(document));
     }
 }
 
@@ -386,6 +418,61 @@ mod tests {
         view.sync(&mut cx, &body, snapshot.borrowed().into());
 
         assert!(view.test_page().is_none());
+    }
+
+    /// The viewer is ONE widget shared by every reading tab, so a tab with no
+    /// page of its own must clear it -- not leave the previously active tab's
+    /// document up, captioned as this classifier.
+    #[test]
+    fn a_key_that_names_no_classifier_clears_the_shared_surface() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = session_with_order();
+        let snapshot = session.snapshot();
+        let mut order = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        let mut missing = ClassifierPreviewView::new("nope".into(), NavCategory::Class);
+
+        order.sync(&mut cx, &body, snapshot.borrowed().into());
+        assert!(body.markdown_viewer().installed_source().is_some());
+
+        missing.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        assert_eq!(body.markdown_viewer().installed_source(), None);
+    }
+
+    /// Two preview tabs at the SAME revision: re-activating the first must put
+    /// its own page back. A revision-only gate early-returns here and leaves
+    /// the second tab's page on the shared viewer.
+    #[test]
+    fn re_activating_a_tab_at_an_unchanged_revision_reinstalls_its_own_page() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = session_with_order();
+        let snapshot = session.snapshot();
+        let mut order = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        let mut customer = ClassifierPreviewView::new("customer".into(), NavCategory::Class);
+
+        order.sync(&mut cx, &body, snapshot.borrowed().into());
+        customer.sync(&mut cx, &body, snapshot.borrowed().into());
+        assert!(
+            body.markdown_viewer()
+                .installed_source()
+                .expect("customer installed its page")
+                .starts_with("# Customer\n"),
+            "the second tab owns the surface"
+        );
+
+        order.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        assert!(
+            body.markdown_viewer()
+                .installed_source()
+                .expect("order reinstalled its page")
+                .starts_with("# Order\n"),
+            "re-activating the first tab must put ITS page back"
+        );
     }
 
     #[test]
