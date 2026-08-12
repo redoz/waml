@@ -11,8 +11,6 @@ use crate::multiplicity::Multiplicity;
 
 /// Cardinal numbers spelled out through ten; above ten prose reads worse than
 /// digits, so digits win.
-// Wired into the association sentences in Task 4, via `spell_multiplicity`.
-#[allow(dead_code)]
 fn number_word(n: u64) -> String {
     const WORDS: [&str; 11] = [
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
@@ -26,8 +24,6 @@ fn number_word(n: u64) -> String {
 /// A UML multiplicity as English. `None` when `raw` is not a multiplicity this
 /// crate can parse — the caller then omits the count entirely rather than
 /// printing notation into a sentence.
-// Wired into the association sentences in Task 4.
-#[allow(dead_code)]
 fn spell_multiplicity(raw: &str) -> Option<String> {
     let parsed = Multiplicity::parse(raw)?;
     let raw = parsed.as_str();
@@ -63,9 +59,6 @@ fn spell_multiplicity(raw: &str) -> Option<String> {
 /// a node key IS its concept id, so `/{key}.md` resolves the same from any
 /// referring directory (`waml-editor`'s `navigation::resolve_link` normalises
 /// a leading `/` against the bundle root).
-// Wired in via `far_end_phrase`, which is itself wired into the association
-// sections in Task 4.
-#[allow(dead_code)]
 fn document_href(key: &str) -> String {
     format!("/{key}.md")
 }
@@ -78,8 +71,6 @@ fn document_href(key: &str) -> String {
 /// ("one or more Wheel") is deliberate. The name is an identifier and must
 /// match the model exactly; an author who wants a plural noun declares a role,
 /// which is their own text.
-// Wired into the association sections in Task 4.
-#[allow(dead_code)]
 fn far_end_phrase(role: Option<&str>, classifier: &str, key: &str) -> String {
     let link = format!("[{classifier}]({})", document_href(key));
     match role {
@@ -92,8 +83,6 @@ fn far_end_phrase(role: Option<&str>, classifier: &str, key: &str) -> String {
 /// subject. `Associates` is the one kind that shifts register: it is not a
 /// transitive verb in ordinary English ("Associates one Customer" reads as a
 /// typo), so its elided form is the participial "Associated with".
-// Wired into the association sections in Task 4.
-#[allow(dead_code)]
 fn outgoing_verb(kind: RelationshipKind) -> &'static str {
     match kind {
         RelationshipKind::Associates => "Associated with",
@@ -114,8 +103,6 @@ fn outgoing_verb(kind: RelationshipKind) -> &'static str {
 
 /// The verb under `## Referenced by`, where the FAR classifier is the named
 /// subject and this one is the object.
-// Wired into the association sections in Task 4.
-#[allow(dead_code)]
 fn incoming_verb(kind: RelationshipKind) -> &'static str {
     match kind {
         RelationshipKind::Associates => "is associated with",
@@ -164,6 +151,12 @@ pub fn classifier_page(model: &Model, key: &str) -> Option<String> {
     }
     if let Some(members) = member_section(node) {
         sections.push(members);
+    }
+    if let Some(associations) = association_section(model, node) {
+        sections.push(associations);
+    }
+    if let Some(referenced_by) = referenced_by_section(model, node) {
+        sections.push(referenced_by);
     }
     // `concept.body` is deliberately not emitted: it is the whole source
     // document, so echoing it would repeat every section above.
@@ -254,6 +247,86 @@ fn visibility_word(visibility: Visibility) -> &'static str {
         Visibility::Protected => "protected",
         Visibility::Package => "package",
     }
+}
+
+/// Both ends navigable — declared reciprocally, or flagged during resolution.
+/// Such an edge renders ONCE, under `## Associations`, whichever side of it
+/// this classifier sits on.
+fn is_bidirectional(edge: &crate::model::Edge) -> bool {
+    edge.bidirectional
+        || (edge.from_end.navigable == Some(true) && edge.to_end.navigable == Some(true))
+}
+
+/// The classifier's title for a key, or the key when it names no node.
+fn node_title(model: &Model, key: &str) -> String {
+    model
+        .node(key)
+        .and_then(|node| node.concept.title.clone())
+        .unwrap_or_else(|| key.to_string())
+}
+
+/// Outgoing relationships, plus every bidirectional edge that touches this
+/// classifier from either side. The subject is this classifier and is elided.
+fn association_section(model: &Model, node: &Node) -> Option<String> {
+    let mut bullets: Vec<String> = Vec::new();
+    for edge in &model.edges {
+        if edge.kind == RelationshipKind::Annotates {
+            continue;
+        }
+        let outgoing = edge.source == node.key;
+        let incoming = edge.target == node.key;
+        if !outgoing && !(incoming && is_bidirectional(edge)) {
+            continue;
+        }
+        let (far_end, far_key) = if outgoing {
+            (&edge.to_end, &edge.target)
+        } else {
+            (&edge.from_end, &edge.source)
+        };
+        let phrase = far_end_phrase(
+            far_end.role.as_deref(),
+            &node_title(model, far_key),
+            far_key,
+        );
+        let count = far_end
+            .multiplicity
+            .as_ref()
+            .and_then(|multiplicity| spell_multiplicity(multiplicity.as_str()));
+        let subject = match count {
+            Some(count) => format!("{count} {phrase}"),
+            None => phrase,
+        };
+        let tail = if is_bidirectional(edge) {
+            " (both ways)"
+        } else {
+            ""
+        };
+        bullets.push(format!("- {} {subject}{tail}.", outgoing_verb(edge.kind)));
+    }
+    (!bullets.is_empty()).then(|| format!("## Associations\n\n{}", bullets.join("\n")))
+}
+
+/// Incoming relationships, with the FAR classifier as the named subject and
+/// this one as the object. A bidirectional edge already rendered under
+/// `## Associations` and must not repeat here.
+fn referenced_by_section(model: &Model, node: &Node) -> Option<String> {
+    let title = node
+        .concept
+        .title
+        .clone()
+        .unwrap_or_else(|| node.key.clone());
+    let mut bullets: Vec<String> = Vec::new();
+    for edge in &model.edges {
+        if edge.kind == RelationshipKind::Annotates || is_bidirectional(edge) {
+            continue;
+        }
+        if edge.target != node.key || edge.source == node.key {
+            continue;
+        }
+        let subject = far_end_phrase(None, &node_title(model, &edge.source), &edge.source);
+        bullets.push(format!("- {subject} {} {title}.", incoming_verb(edge.kind)));
+    }
+    (!bullets.is_empty()).then(|| format!("## Referenced by\n\n{}", bullets.join("\n")))
 }
 
 #[cfg(test)]
@@ -486,6 +559,115 @@ mod tests {
         assert!(
             !page.contains("## Attributes"),
             "the authored UML section must not be pasted back in:\n{page}"
+        );
+    }
+
+    #[test]
+    fn outgoing_relationships_elide_the_subject_and_spell_the_count() {
+        let model = projection(&[
+            (
+                "car.md",
+                "---\ntype: uml.Class\ntitle: Car\n---\n# Car\n\n## Relationships\n- specializes [Vehicle](./vehicle.md)\n- depends [Fuel](./fuel.md)\n- aggregates [Wheel](./wheel.md): 1 to *\n- composes [Engine](./engine.md): 1 to 1 engine\n",
+            ),
+            ("vehicle.md", "---\ntype: uml.Class\ntitle: Vehicle\n---\n"),
+            ("fuel.md", "---\ntype: uml.Class\ntitle: Fuel\n---\n"),
+            ("wheel.md", "---\ntype: uml.Class\ntitle: Wheel\n---\n"),
+            ("engine.md", "---\ntype: uml.Class\ntitle: Engine\n---\n"),
+        ]);
+        let page = classifier_page(&model, "car").expect("the node has a page");
+        assert!(page.contains("## Associations\n\n"), "page was:\n{page}");
+        for expected in [
+            "- Specializes [Vehicle](/vehicle.md).\n",
+            "- Depends on [Fuel](/fuel.md).\n",
+            "- Aggregates zero or more [Wheel](/wheel.md).\n",
+            "- Composes one engine ([Engine](/engine.md)).\n",
+        ] {
+            assert!(page.contains(expected), "missing {expected:?} in:\n{page}");
+        }
+    }
+
+    #[test]
+    fn incoming_relationships_name_the_far_classifier_as_the_subject() {
+        let model = projection(&[
+            ("car.md", "---\ntype: uml.Class\ntitle: Car\n---\n# Car\n"),
+            (
+                "special-order.md",
+                "---\ntype: uml.Class\ntitle: SpecialOrder\n---\n# SpecialOrder\n\n## Relationships\n- specializes [Car](./car.md)\n",
+            ),
+            (
+                "shipping-label.md",
+                "---\ntype: uml.Class\ntitle: ShippingLabel\n---\n# ShippingLabel\n\n## Relationships\n- depends [Car](./car.md)\n",
+            ),
+        ]);
+        let page = classifier_page(&model, "car").expect("the node has a page");
+        assert!(page.contains("## Referenced by\n\n"), "page was:\n{page}");
+        for expected in [
+            "- [SpecialOrder](/special-order.md) specializes Car.\n",
+            "- [ShippingLabel](/shipping-label.md) depends on Car.\n",
+        ] {
+            assert!(page.contains(expected), "missing {expected:?} in:\n{page}");
+        }
+        assert!(
+            !page.contains("## Associations"),
+            "car declares no relationships of its own:\n{page}"
+        );
+    }
+
+    #[test]
+    fn a_note_anchor_is_not_a_relationship() {
+        let model = projection(&[
+            (
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- annotates [Aside](./aside.md)\n",
+            ),
+            ("aside.md", "---\ntype: uml.Note\ntitle: Aside\n---\n"),
+        ]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(
+            !page.contains("## Associations") && !page.contains("## Referenced by"),
+            "an Annotates anchor must produce no association section:\n{page}"
+        );
+    }
+
+    #[test]
+    fn a_bidirectional_edge_renders_once_under_associations() {
+        use crate::model::{Edge, RelEnd};
+        let mut model = projection(&[
+            (
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
+            (
+                "customer.md",
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+            ),
+        ]);
+        // Lowering never sets `bidirectional` today, so build the edge.
+        model.edges.push(Edge {
+            source: "customer".into(),
+            target: "order".into(),
+            kind: RelationshipKind::Associates,
+            name: None,
+            from_end: RelEnd {
+                multiplicity: Multiplicity::parse("1"),
+                role: None,
+                navigable: Some(true),
+            },
+            to_end: RelEnd {
+                multiplicity: Multiplicity::parse("1..*"),
+                role: None,
+                navigable: Some(true),
+            },
+            bidirectional: true,
+        });
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(
+            page.contains("- Associated with one [Customer](/customer.md) (both ways).\n"),
+            "page was:\n{page}"
+        );
+        assert!(
+            !page.contains("## Referenced by"),
+            "a bidirectional edge must not also appear as incoming:\n{page}"
         );
     }
 }
