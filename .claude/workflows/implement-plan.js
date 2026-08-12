@@ -1296,5 +1296,33 @@ if (MODE === 'dry-run') {
   )
 }
 
+// Reclaim the worktree's build cache. A waml `target/` reaches 20-35G (roughly
+// two thirds of it MSVC .pdb debug info, one per linked test binary, and cargo
+// never garbage-collects stranded dependency hashes), and this workflow leaves
+// its worktree in place. Several finished plans therefore used to sit on well
+// over 100G between them, which starves the very builds the next run depends
+// on. `cargo clean` costs only a cold rebuild and touches nothing tracked.
+//
+// Deliberately NOT run when the plan stopped early: a stalled run is exactly
+// the one you relaunch, and a cold target/ makes that relaunch far slower.
+const finished = result.completed || (result.green && MODE === 'dry-run')
+if (result.worktreePath && finished) {
+  const cleaned = await agent(
+    'Run `cargo clean` in the git worktree at ' + result.worktreePath + ' and report what it freed.\n\n' +
+      'Steps:\n' +
+      '1. Measure the current size of ' + result.worktreePath + '/target (e.g. `du -sh`). If there is no target/ directory, report freedBytes 0 and stop.\n' +
+      '2. Run `cargo clean` from ' + result.worktreePath + '.\n' +
+      '3. Confirm target/ is gone or empty.\n\n' +
+      'Do NOT delete the worktree, do NOT touch any tracked file, do NOT run git commands, and do NOT clean any other directory — only this one worktree\'s build cache.',
+    { agentType: 'general-purpose', label: 'clean:' + plan.slug, phase: 'Review', model: MID },
+  )
+  log('cargo clean in ' + result.worktreePath + ': ' + (cleaned ? String(cleaned).slice(0, 200) : 'agent returned null'))
+} else if (result.worktreePath) {
+  log(
+    'NOTE: skipped `cargo clean` in ' + result.worktreePath + ' — the run stopped early and the warm build cache makes a ' +
+      'relaunch much faster. Clean it by hand once you are done with that worktree.',
+  )
+}
+
 // Return the single planResult directly.
 return result
