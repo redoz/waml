@@ -46,13 +46,23 @@ omitted when it would be empty:
    Replaced by `## Values` for `uml.Enum`.
 5. `## Associations` — outgoing edges, subject elided.
 6. `## Referenced by` — incoming edges, far classifier as subject.
-7. `concept.body` verbatim, last, when non-empty.
+
+`concept.body` is deliberately not emitted. It holds the full markdown body
+after the frontmatter, verbatim (`crates/waml/src/okf.rs`) — for
+`sixkind/car.md` that is the whole of `# Car`, `## Attributes` and
+`## Relationships`. Appending it would paste the entire source document under
+every generated page. Surfacing author prose that the structured sections do
+not already carry needs a body splitter that does not exist; that is its own
+design, not a line in `classifier_page`.
 
 ### Properties
 
 One bullet per attribute. Name and type always; multiplicity only when it is
 not `1`; visibility only when declared. `Attribute::description`, when
-present, is an indented continuation line under the bullet.
+present, is an indented continuation line under the bullet. Lowering
+hard-codes `description: None` today (`crates/waml/src/uml/declared.rs`), so
+that line is unreachable from any fixture; the generator still honours the
+field, and its test builds the `Attribute` by hand.
 
 ```markdown
 ## Properties
@@ -144,7 +154,11 @@ role, which is their own text.
 
 A bidirectional edge (`edge.bidirectional`, or both ends navigable) renders
 once, under `## Associations`, with `(both ways)` trailing the sentence. It
-must not also appear under `## Referenced by`.
+must not also appear under `## Referenced by`. Lowering never sets either
+flag today (`analysis.rs` writes `bidirectional: false` at both sites, and
+`RelEnd::navigable` stays `None`), so this rule is reachable only from a
+hand-built `Model` — which is how it is tested, mirroring the inspector's
+existing `classifier_projects_bidirectional_association`.
 
 ## Link navigation
 
