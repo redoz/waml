@@ -90,7 +90,7 @@ pub struct ReadingView {
     #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
     browser_trace_generation: u64,
     #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
-    last_browser_trace: Option<(u64, usize)>,
+    last_browser_trace: Option<(u64, usize, usize, usize)>,
 }
 
 impl ReadingView {
@@ -337,18 +337,43 @@ impl ReadingView {
     fn trace_browser_pending(&mut self) {
         #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
         {
-            let pair = (self.browser_trace_generation, self.states.pending_count());
-            if self.last_browser_trace == Some(pair) {
+            let Some(revision) = self.revision else {
+                return;
+            };
+            let (ready, failed, loading) = extension_state_totals(&self.states, revision);
+            let trace = (self.browser_trace_generation, ready, failed, loading);
+            if self.last_browser_trace == Some(trace) {
                 return;
             }
-            self.last_browser_trace = Some(pair);
+            self.last_browser_trace = Some(trace);
             log!(
-                "WAML_TEST_EXTENSION_PENDING generation={} count={}",
-                pair.0,
-                pair.1
+                "WAML_TEST_EXTENSION_PENDING generation={} count={} ready={} failed={} loading={}",
+                trace.0,
+                trace.3,
+                trace.1,
+                trace.2,
+                trace.3
             );
         }
     }
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", feature = "browser-test-trace")))]
+fn extension_state_totals(
+    states: &BlockExtensionStates,
+    revision: waml_markdown_editor::syntax::DocumentRevision,
+) -> (usize, usize, usize) {
+    let mut ready = 0;
+    let mut failed = 0;
+    let mut loading = 0;
+    for (_, state) in states.frame(revision).items.iter() {
+        match state {
+            waml_markdown_editor::reading::BlockExtensionState::Ready(_) => ready += 1,
+            waml_markdown_editor::reading::BlockExtensionState::Failed(_) => failed += 1,
+            waml_markdown_editor::reading::BlockExtensionState::Loading => loading += 1,
+        }
+    }
+    (ready, failed, loading)
 }
 
 fn configured_appearance() -> BlockExtensionAppearance {
@@ -543,6 +568,11 @@ mod tests {
 
         view.install_snapshot(&mut cx, &body, &snapshot(source));
         assert_eq!(view.states.pending_count(), 2);
+        assert_eq!(
+            extension_state_totals(&view.states, view.revision.unwrap()),
+            (0, 0, 2),
+            "the installed loading frame reports all state totals"
+        );
         assert!(view
             .states
             .frame(view.revision.unwrap())
@@ -553,6 +583,11 @@ mod tests {
         settle_extensions(&mut view, &mut cx, &body);
 
         let frame = view.states.frame(view.revision.unwrap());
+        assert_eq!(
+            extension_state_totals(&view.states, view.revision.unwrap()),
+            (1, 1, 0),
+            "the installed settled frame reports Ready, Failed, and Loading totals"
+        );
         assert_eq!(
             frame
                 .items

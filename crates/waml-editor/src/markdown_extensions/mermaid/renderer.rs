@@ -100,16 +100,39 @@ pub(super) fn render_uncached(request: &BlockExtensionRequest) -> BlockRenderRes
         }
     };
 
-    let normalized =
-        normalize_for_makepad(sealed.into_string()).map_err(MermaidRenderError::viewer_message)?;
+    let normalized = normalize_sealed_svg_with(sealed.into_string(), normalize_for_makepad)
+        .map_err(MermaidRenderError::viewer_message)?;
     validate_svg(normalized).map_err(MermaidRenderError::viewer_message)
 }
 
-fn normalize_for_makepad(svg: String) -> Result<String, MermaidRenderError> {
-    let mut options = usvg::Options {
+fn normalize_sealed_svg_with(
+    svg: String,
+    normalizer: impl FnOnce(String) -> Result<String, MermaidRenderError>,
+) -> Result<String, MermaidRenderError> {
+    if svg.len() > MAX_SVG_BYTES {
+        return Err(MermaidRenderError::SvgTooLarge);
+    }
+    validate_svg_safety(&svg)?;
+    normalizer(svg)
+}
+
+fn usvg_options() -> usvg::Options<'static> {
+    usvg::Options {
         font_family: "IBM Plex Sans".to_string(),
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        font_resolver: usvg::FontResolver {
+            select_font: usvg::FontResolver::default_font_selector(),
+            select_fallback: usvg::FontResolver::default_fallback_selector(),
+        },
         ..usvg::Options::default()
-    };
+    }
+}
+
+fn normalize_for_makepad(svg: String) -> Result<String, MermaidRenderError> {
+    let mut options = usvg_options();
     let fontdb = options.fontdb_mut();
     fontdb.load_font_data(
         include_bytes!("../../../resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf").to_vec(),
@@ -445,8 +468,8 @@ mod tests {
     use waml_syntax::SyntaxIdentity;
 
     use super::{
-        render_uncached, validate_dimensions, validate_svg, MermaidRenderer, MAX_LOGICAL_SIDE,
-        MAX_SOURCE_BYTES, MAX_SVG_BYTES,
+        normalize_sealed_svg_with, render_uncached, usvg_options, validate_dimensions,
+        validate_svg, MermaidRenderer, MAX_LOGICAL_SIDE, MAX_SOURCE_BYTES, MAX_SVG_BYTES,
     };
     use crate::markdown_extensions::mermaid::error::MermaidRenderError;
 
@@ -564,6 +587,67 @@ mod tests {
             validate_svg(oversized),
             Err(MermaidRenderError::SvgTooLarge)
         );
+    }
+
+    #[test]
+    fn raw_svg_is_rejected_before_the_normalizer_runs() {
+        let cases = [
+            (
+                "oversized",
+                "x".repeat(MAX_SVG_BYTES + 1),
+                MermaidRenderError::SvgTooLarge,
+            ),
+            (
+                "external href",
+                r#"<svg width="10" height="10"><image href="https://example.invalid/x.png" /></svg>"#
+                    .to_owned(),
+                MermaidRenderError::UnsafeSvg,
+            ),
+            (
+                "CSS URL",
+                r#"<svg width="10" height="10"><style>.x{fill:url(file:///secret)}</style></svg>"#
+                    .to_owned(),
+                MermaidRenderError::UnsafeSvg,
+            ),
+            (
+                "xml:base",
+                r##"<svg width="10" height="10" xml:base="file:///secret"><use href="#x" /></svg>"##
+                    .to_owned(),
+                MermaidRenderError::UnsafeSvg,
+            ),
+        ];
+
+        for (name, svg, expected) in cases {
+            let mut normalizer_calls = 0;
+            let result = normalize_sealed_svg_with(svg, |_| {
+                normalizer_calls += 1;
+                Ok(String::new())
+            });
+            assert_eq!(result, Err(expected), "wrong result for {name}");
+            assert_eq!(normalizer_calls, 0, "normalizer ran for {name}");
+        }
+    }
+
+    #[test]
+    fn usvg_image_resolvers_reject_data_file_and_network_sources() {
+        let options = usvg_options();
+        assert!((options.image_href_resolver.resolve_data)(
+            "image/png",
+            Arc::new(vec![137, 80, 78, 71]),
+            &options,
+        )
+        .is_none());
+        for href in [
+            "data:image/png;base64,iVBORw0KGgo=",
+            "file:///C:/secret.png",
+            "C:/secret.png",
+            "https://example.invalid/secret.png",
+        ] {
+            assert!(
+                (options.image_href_resolver.resolve_string)(href, &options).is_none(),
+                "resolver accepted {href}"
+            );
+        }
     }
 
     #[test]

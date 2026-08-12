@@ -19,7 +19,9 @@ const PREFIX = 'mermaid-browser-check';
 const COMPLETION_TIMEOUT_MS = 60_000;
 const URL_PATTERN = /(http:\/\/127\.0\.0\.1:\d+\/\?api=\/api#token=[^\s]+)/;
 const TRACE_MARKER = 'WAML_TEST_EXTENSION_PENDING';
-const TRACE_PATTERN = /(?:^| - )WAML_TEST_EXTENSION_PENDING generation=(\d+) count=(\d+)$/;
+const TRACE_PATTERN =
+  /(?:^| - )WAML_TEST_EXTENSION_PENDING generation=(\d+) count=(\d+) ready=(\d+) failed=(\d+) loading=(\d+)$/;
+const EXPECTED_OUTCOMES = Object.freeze({ready: 8, failed: 1, loading: 0});
 
 function usage() {
   console.error(
@@ -341,7 +343,18 @@ try {
       fatalBrowserError ??= new Error(`malformed pending trace: ${text}`);
       return;
     }
-    traces.push({generation: match[1], count: Number(match[2])});
+    const trace = {
+      generation: match[1],
+      count: Number(match[2]),
+      ready: Number(match[3]),
+      failed: Number(match[4]),
+      loading: Number(match[5]),
+    };
+    if (trace.count !== trace.loading) {
+      fatalBrowserError ??= new Error(`pending/loading trace mismatch: ${text}`);
+      return;
+    }
+    traces.push(trace);
   });
   cdp.on('Runtime.exceptionThrown', ({exceptionDetails}) => {
     const detail = exceptionDetails?.exception?.description ?? exceptionDetails?.text ?? 'unknown error';
@@ -362,7 +375,7 @@ try {
   assertHealthy();
 
   const positive = await waitFor('positive pending trace', () => {
-    const index = traces.findIndex((trace) => trace.count > 0);
+    const index = traces.findIndex((trace) => trace.count > 0 && trace.loading > 0);
     return index < 0 ? null : {index, trace: traces[index]};
   });
   const loadingCanvas = await captureCanvas(cdp);
@@ -372,13 +385,19 @@ try {
       `loading canvas ${loadingHash}`,
   );
 
-  await waitFor('same-generation zero pending trace', () =>
+  const settled = await waitFor('same-generation settled outcome trace', () =>
     traces.slice(positive.index + 1).find(
-      (trace) => trace.generation === positive.trace.generation && trace.count === 0,
+      (trace) =>
+        trace.generation === positive.trace.generation &&
+        trace.count === 0 &&
+        trace.ready === EXPECTED_OUTCOMES.ready &&
+        trace.failed === EXPECTED_OUTCOMES.failed &&
+        trace.loading === EXPECTED_OUTCOMES.loading,
     ),
   );
   console.log(
-    `${PREFIX}: generation ${positive.trace.generation} pending 0; no Loading entries remain`,
+    `${PREFIX}: generation ${settled.generation} ready ${settled.ready}, failed ${settled.failed}, ` +
+      `loading ${settled.loading}; fixture contract satisfied`,
   );
 
   let stableCount = 0;
