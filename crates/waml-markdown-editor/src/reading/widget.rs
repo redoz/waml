@@ -342,28 +342,50 @@ impl MarkdownViewer {
         }
     }
 
-    /// Window-space rects of every installed highlight, from the LAST draw's
-    /// recorded run areas. Empty before the first draw of a document.
-    fn highlight_rects(&self, cx: &Cx) -> Vec<Rect> {
+    /// Window-space rects of every drawn run overlapping `source`, from the
+    /// LAST draw. Empty before the first draw of a document.
+    fn source_rects(&self, cx: &Cx, source: TextRange) -> Vec<Rect> {
         let flow_ref = self.flow(cx);
         let Some(flow) = flow_ref.borrow() else {
             return Vec::new();
         };
         let mut rects = Vec::new();
-        for highlight in self.search_highlights.iter() {
-            for slots in self.source_map.area_slots_for_source(*highlight) {
-                for slot in slots {
-                    let Some(area) = flow.areas_tracker.areas.get(slot) else {
-                        continue;
-                    };
-                    let rect = area.rect(cx);
-                    if rect.size.x > 0.0 && rect.size.y > 0.0 {
-                        rects.push(rect);
-                    }
+        for slots in self.source_map.area_slots_for_source(source) {
+            for slot in slots {
+                let Some(area) = flow.areas_tracker.areas.get(slot) else {
+                    continue;
+                };
+                let rect = area.rect(cx);
+                if rect.size.x > 0.0 && rect.size.y > 0.0 {
+                    rects.push(rect);
                 }
             }
         }
         rects
+    }
+
+    /// Window-space rects of every installed highlight, from the LAST draw's
+    /// recorded run areas. Empty before the first draw of a document.
+    fn highlight_rects(&self, cx: &Cx) -> Vec<Rect> {
+        self.search_highlights
+            .iter()
+            .flat_map(|highlight| self.source_rects(cx, *highlight))
+            .collect()
+    }
+
+    /// The link destination under `point`, if any. Window-space point in,
+    /// destination out: the flow maps the point to its own char index, the
+    /// source map maps that back to a source offset, and the document
+    /// answers which link covers it.
+    fn link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
+        let document = self.document.as_ref()?;
+        let flow_ref = self.flow(cx);
+        let index = {
+            let flow = flow_ref.borrow()?;
+            flow.selection_point_to_char_index(cx, point)?
+        };
+        let span = self.source_map.source_span(index..index + 1)?;
+        Some(document.link_at(span.start())?.destination.clone())
     }
 
     /// Top of the drawn document, from the last draw's tracked run rects.
@@ -793,6 +815,22 @@ impl Widget for MarkdownViewer {
                 return;
             }
         }
+        // A tap that lands on a link navigates. Hit-tested against the FLOW's
+        // area, not this widget's: the inner `TextFlow` captures the
+        // `FingerDown` for its own selection, and makepad delivers `FingerUp`
+        // only to the area that captured. A DRAG that ends over the text is a
+        // selection, not a click, which is what `was_tap` screens out.
+        let flow_area = self.flow(cx).area();
+        if let Hit::FingerUp(fu) = event.hits(cx, flow_area) {
+            if fu.is_over && fu.was_tap() {
+                if let Some(destination) = self.link_at_point(cx, fu.abs) {
+                    cx.widget_action(
+                        self.widget_uid(),
+                        MarkdownViewerAction::LinkClicked { destination },
+                    );
+                }
+            }
+        }
         // Selection, copy and point_to_index are TextFlow's, not ours.
         self.view.handle_event(cx, event, scope);
     }
@@ -861,6 +899,10 @@ pub enum MarkdownViewerAction {
     /// A Ctrl/Cmd-held wheel over the viewer; `delta` is the raw
     /// `ScrollEvent::scroll.y` (negative = wheel up = zoom in).
     ZoomWheel { delta: f64 },
+    /// A tap on a rendered markdown link. `destination` is the raw href, NOT
+    /// resolved: resolution needs a bundle this widget has no business
+    /// knowing about.
+    LinkClicked { destination: Arc<str> },
 }
 
 /// The caret a source handoff should carry into the editor: the start of the
@@ -890,6 +932,17 @@ impl MarkdownViewerRef {
         let item = actions.find_widget_action(self.widget_uid())?;
         match item.action.downcast_ref::<MarkdownViewerAction>()? {
             MarkdownViewerAction::ZoomWheel { delta } => Some(*delta),
+            MarkdownViewerAction::LinkClicked { .. } => None,
+        }
+    }
+
+    /// The raw href of a `LinkClicked` action posted by this widget, if
+    /// `actions` carries one.
+    pub fn link_clicked(&self, actions: &Actions) -> Option<Arc<str>> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        match item.action.downcast_ref::<MarkdownViewerAction>()? {
+            MarkdownViewerAction::LinkClicked { destination } => Some(destination.clone()),
+            MarkdownViewerAction::ZoomWheel { .. } => None,
         }
     }
 
@@ -955,5 +1008,18 @@ impl MarkdownViewerRef {
     pub fn test_search_highlights(&self) -> Vec<TextRange> {
         self.borrow()
             .map_or_else(Vec::new, |inner| inner.search_highlights.to_vec())
+    }
+
+    /// Test seam: the link destination under a window-space point, from the
+    /// last draw. The same lookup `handle_event` runs on a tap.
+    pub fn test_link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
+        self.borrow()?.link_at_point(cx, point)
+    }
+
+    /// Test seam: where a source range actually drew, from the last draw.
+    pub fn test_source_rects(&self, cx: &Cx, source: TextRange) -> Vec<Rect> {
+        self.borrow()
+            .map(|inner| inner.source_rects(cx, source))
+            .unwrap_or_default()
     }
 }

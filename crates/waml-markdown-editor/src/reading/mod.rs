@@ -17,7 +17,8 @@ pub use model::{
     ReadingLink, ReadingPiece,
 };
 pub use widget::{
-    caret_for_span, MarkdownViewer, MarkdownViewerRef, MarkdownViewerWidgetRefExt, SourceMap,
+    caret_for_span, MarkdownViewer, MarkdownViewerAction, MarkdownViewerRef,
+    MarkdownViewerWidgetRefExt, SourceMap,
 };
 
 pub fn script_mod(vm: &mut makepad_widgets::ScriptVm) -> makepad_widgets::ScriptValue {

@@ -244,3 +244,77 @@ fn set_zoom_scales_the_flow_from_a_stable_base_without_compounding() {
         "reset returns to the base"
     );
 }
+
+/// A drawn link is clickable: probing the centre of the pixels its text
+/// actually occupied resolves to its destination, and a point well outside
+/// resolves to nothing.
+#[test]
+fn a_point_inside_a_drawn_link_resolves_to_its_destination() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+
+    let source = "See [Customer](./customer.md) for more.\n";
+    let text = SourceText::new(source.to_owned()).expect("valid source text");
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("markdown parses");
+    let styles = Arc::new(PresentationStyles::balanced());
+    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
+        .expect("presentation compiles");
+    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
+    let link = document.links[0].clone();
+    viewer.install_document(&mut cx, document, Arc::from(source));
+
+    {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(&mut cx, "reading-widget-draw-link-test");
+        let mut draw_list = DrawList2d::new(&mut cx);
+        let mut draw_cx = CxDraw::new(&mut cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(dvec2(800.0, 600.0), Layout::default());
+            ui.widget(&cx_2d, ids!(markdown_viewer_surface.viewer))
+                .draw_walk_all(
+                    &mut cx_2d,
+                    &mut Scope::empty(),
+                    Walk::abs_rect(Rect {
+                        pos: dvec2(0.0, 0.0),
+                        size: dvec2(800.0, 600.0),
+                    }),
+                );
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
+        }
+        draw_cx.end_pass(&pass);
+    }
+
+    let rects = viewer.test_source_rects(&cx, link.source_range);
+    assert!(
+        !rects.is_empty(),
+        "the link's text must have drawn somewhere"
+    );
+    let centre = rects[0].pos + rects[0].size * 0.5;
+    assert_eq!(
+        viewer.test_link_at_point(&cx, centre).as_deref(),
+        Some("./customer.md"),
+        "the centre of the drawn link resolves to its destination"
+    );
+    assert!(
+        viewer
+            .test_link_at_point(&cx, dvec2(-100.0, -100.0))
+            .is_none(),
+        "a point outside the document resolves to nothing"
+    );
+}
