@@ -4,7 +4,9 @@
 //! Model in, markdown out. No editor dependency — a CLI subcommand can emit
 //! the identical page.
 
-use crate::model::RelationshipKind;
+use crate::model::{
+    Attribute, ElementType, Model, Node, RelationshipKind, UmlMetaclass, Visibility,
+};
 use crate::multiplicity::Multiplicity;
 
 /// Cardinal numbers spelled out through ten; above ten prose reads worse than
@@ -132,6 +134,128 @@ fn incoming_verb(kind: RelationshipKind) -> &'static str {
     }
 }
 
+/// The classifier's own page, as markdown. `None` when `key` names no node.
+///
+/// Sections emit in a fixed order and each is omitted when it would be empty:
+/// title, dek, description, properties (or values), associations, then
+/// referenced by.
+pub fn classifier_page(model: &Model, key: &str) -> Option<String> {
+    let node = model.node(key)?;
+    let mut sections: Vec<String> = Vec::new();
+
+    let title = node
+        .concept
+        .title
+        .clone()
+        .unwrap_or_else(|| key.to_string());
+    sections.push(format!("# {title}"));
+
+    if let Some(dek) = dek_line(node) {
+        sections.push(dek);
+    }
+    if let Some(description) = node
+        .concept
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+    {
+        sections.push(description.to_string());
+    }
+    if let Some(members) = member_section(node) {
+        sections.push(members);
+    }
+    // `concept.body` is deliberately not emitted: it is the whole source
+    // document, so echoing it would repeat every section above.
+
+    Some(format!("{}\n", sections.join("\n\n")))
+}
+
+/// Kind label, stereotypes as guillemet names, then `abstract`. `None` when a
+/// node somehow carries none of the three.
+fn dek_line(node: &Node) -> Option<String> {
+    let mut parts = vec![kind_label(&node.ty)];
+    parts.extend(
+        node.stereotypes
+            .iter()
+            .map(|stereotype| format!("«{stereotype}»")),
+    );
+    if node.abstract_ {
+        parts.push("abstract".to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// The metaclass' own name (`Class`, `Interface`, `Enum`, `DataType`), without
+/// the `uml.` family prefix. Mirrors the inspector's `kind_label`.
+fn kind_label(ty: &ElementType) -> String {
+    match ty {
+        ElementType::Uml(metaclass) => metaclass.name().to_string(),
+        other => {
+            let text = other.as_str();
+            text.strip_prefix("uml.").unwrap_or(&text).to_string()
+        }
+    }
+}
+
+/// `## Values` for an enum, `## Properties` for every other classifier.
+/// `None` when the node declares neither.
+fn member_section(node: &Node) -> Option<String> {
+    if node.ty == ElementType::Uml(UmlMetaclass::Enum) {
+        if node.values.is_empty() {
+            return None;
+        }
+        let bullets: Vec<String> = node
+            .values
+            .iter()
+            .map(|value| format!("- `{value}`"))
+            .collect();
+        return Some(format!("## Values\n\n{}", bullets.join("\n")));
+    }
+    if node.attributes.is_empty() {
+        return None;
+    }
+    let bullets: Vec<String> = node.attributes.iter().map(property_bullet).collect();
+    Some(format!("## Properties\n\n{}", bullets.join("\n")))
+}
+
+/// One property. Name and type always; multiplicity only when it is not a bare
+/// `1` (a definition list is scanned down a column, where a repeated `1` on
+/// every row is noise); visibility only when declared; a description as an
+/// indented continuation line under the bullet.
+fn property_bullet(attribute: &Attribute) -> String {
+    let mut line = format!("- `{}` · `{}`", attribute.name, attribute.ty.name);
+    if let Some(multiplicity) = attribute
+        .multiplicity
+        .as_ref()
+        .map(|multiplicity| multiplicity.as_str())
+        .filter(|multiplicity| *multiplicity != "1")
+    {
+        line.push_str(&format!(" `{multiplicity}`"));
+    }
+    if let Some(visibility) = attribute.visibility {
+        line.push_str(&format!(" — {}", visibility_word(visibility)));
+    }
+    if let Some(description) = attribute
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+    {
+        line.push_str(&format!("\n  {description}"));
+    }
+    line
+}
+
+fn visibility_word(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Public => "public",
+        Visibility::Private => "private",
+        Visibility::Protected => "protected",
+        Visibility::Package => "package",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +341,151 @@ mod tests {
             assert_eq!(outgoing_verb(kind), out, "{kind:?} outgoing");
             assert_eq!(incoming_verb(kind), incoming, "{kind:?} incoming");
         }
+    }
+
+    use crate::model::{Attribute, Model, Node, TypeRef};
+    use crate::multiplicity::Multiplicity;
+    use crate::source::SourceBundle;
+
+    /// The projection of a small in-test bundle — the same path the editor
+    /// installs (`prepare_candidate` -> `uml().projection`).
+    fn projection(pairs: &[(&str, &str)]) -> Model {
+        let source = SourceBundle::try_from_pairs(
+            pairs
+                .iter()
+                .map(|(path, text)| ((*path).to_string(), (*text).to_string())),
+        )
+        .expect("fixture bundle parses");
+        crate::analysis::prepare_candidate(source, None, 0)
+            .expect("fixture analyses")
+            .uml()
+            .projection
+            .clone()
+    }
+
+    #[test]
+    fn a_missing_key_has_no_page() {
+        let model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        )]);
+        assert_eq!(classifier_page(&model, "nope"), None);
+    }
+
+    #[test]
+    fn the_head_carries_title_kind_stereotypes_abstract_and_description() {
+        let model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Purchase Order\ndescription: One customer order.\nstereotype: [aggregateRoot, entity]\nabstract: true\n---\n# Order\n",
+        )]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert_eq!(
+            page,
+            "# Purchase Order\n\nClass · «aggregateRoot» · «entity» · abstract\n\nOne customer order.\n"
+        );
+    }
+
+    #[test]
+    fn a_title_less_node_falls_back_to_its_key() {
+        let model = projection(&[("order.md", "---\ntype: uml.Class\n---\n")]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(page.starts_with("# order\n"), "page was:\n{page}");
+    }
+
+    #[test]
+    fn properties_show_type_always_and_multiplicity_only_when_it_is_not_one() {
+        let model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n- -total: Decimal\n- lines: OrderLine {1..*}\n",
+        )]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(page.contains("## Properties\n\n"), "page was:\n{page}");
+        assert!(page.contains("- `id` · `OrderId`\n"), "page was:\n{page}");
+        assert!(
+            page.contains("- `total` · `Decimal` — private\n"),
+            "page was:\n{page}"
+        );
+        assert!(
+            page.contains("- `lines` · `OrderLine` `1..*`\n"),
+            "page was:\n{page}"
+        );
+    }
+
+    #[test]
+    fn an_attribute_description_is_an_indented_continuation_line() {
+        // Lowering never sets `Attribute::description` today, so build one.
+        let mut model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        )]);
+        let node: &mut Node = model
+            .nodes
+            .iter_mut()
+            .find(|node| node.key == "order")
+            .expect("the fixture node");
+        node.attributes.push(Attribute {
+            name: "lines".into(),
+            ty: TypeRef {
+                name: "OrderLine".into(),
+                ref_: None,
+            },
+            multiplicity: Multiplicity::parse("1..*"),
+            visibility: None,
+            description: Some("The line items on the order.".into()),
+        });
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(
+            page.contains("- `lines` · `OrderLine` `1..*`\n  The line items on the order.\n"),
+            "page was:\n{page}"
+        );
+    }
+
+    #[test]
+    fn every_visibility_marker_has_a_word() {
+        let model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- +a: A\n- -b: B\n- #c: C\n- ~d: D\n",
+        )]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        for expected in [
+            "- `a` · `A` — public\n",
+            "- `b` · `B` — private\n",
+            "- `c` · `C` — protected\n",
+            "- `d` · `D` — package\n",
+        ] {
+            assert!(page.contains(expected), "missing {expected:?} in:\n{page}");
+        }
+    }
+
+    #[test]
+    fn an_enum_renders_values_in_place_of_properties() {
+        let model = projection(&[(
+            "state.md",
+            "---\ntype: uml.Enum\ntitle: State\n---\n# State\n\n## Values\n- OPEN\n- Ready for use\n",
+        )]);
+        let page = classifier_page(&model, "state").expect("the node has a page");
+        assert!(page.contains("## Values\n\n"), "page was:\n{page}");
+        assert!(page.contains("- `OPEN`\n"), "page was:\n{page}");
+        assert!(page.contains("- `Ready for use`\n"), "page was:\n{page}");
+        assert!(
+            !page.contains("## Properties"),
+            "an enum must not also emit Properties:\n{page}"
+        );
+    }
+
+    /// `concept.body` is the WHOLE markdown body, so echoing it would
+    /// duplicate everything the page just rendered in prose. This guards that
+    /// omission — it is deliberate, not an oversight.
+    #[test]
+    fn the_page_does_not_echo_the_source_document_back() {
+        let model = projection(&[(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n",
+        )]);
+        let page = classifier_page(&model, "order").expect("the node has a page");
+        assert!(
+            !page.contains("## Attributes"),
+            "the authored UML section must not be pasted back in:\n{page}"
+        );
     }
 }
