@@ -1306,12 +1306,44 @@ const NUDGE_GAP: f64 = 8.0;
 /// A single interior segment of a route, keyed by its channel coordinate.
 /// `src`/`tgt` are the route's endpoint ids, looked up (once per route, not
 /// per segment) via the `keys` table passed alongside — see `nudge`.
+///
+/// `lo`/`hi` bound where the sweep may place this segment's channel coordinate.
+/// They are open (`-inf`/`+inf`) for a segment in the middle of a route, and
+/// finite for one that touches `points[1]` or `points[n - 2]`: those points are
+/// the outer end of a mandatory perpendicular stub, so moving them changes the
+/// stub's LENGTH. See `stub_bound`.
 #[derive(Clone)]
 struct Seg {
     ri: usize,
     a: usize,
     b: usize,
     other_mid: f64,
+    lo: f64,
+    hi: f64,
+}
+
+/// How far the channel coordinate of a stub-adjacent segment may travel before
+/// it eats the stub.
+///
+/// `nudge` moves an interior segment perpendicular to its own axis. When that
+/// segment touches `points[1]` (or `points[n - 2]`), that point is also the
+/// outer end of the route's mandatory ROUTE_MARGIN stub, and the stub runs
+/// along the axis the sweep is moving -- so the sweep is directly lengthening
+/// or shortening it. Unclamped it can shrink the stub to nothing (connector
+/// bends right on the border) or push it past the border (connector doubles
+/// back through its own node); both were how the perpendicular-stub rule got
+/// lost in dense scenes.
+///
+/// Returns the half-line of channel coordinates that keep the stub on its
+/// original side of the border and at least ROUTE_MARGIN long. `anchor` is the
+/// on-border endpoint's coordinate on the swept axis and `base` the segment's
+/// current one.
+fn stub_bound(anchor: f64, base: f64) -> (f64, f64) {
+    if base >= anchor {
+        (anchor + ROUTE_MARGIN, f64::INFINITY)
+    } else {
+        (f64::NEG_INFINITY, anchor - ROUTE_MARGIN)
+    }
 }
 
 /// Split parallel segments that share a routing channel (same axis + coincident
@@ -1342,19 +1374,42 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
             }
             let a = route.points[i];
             let b = route.points[i + 1];
+            // A segment touching points[1] / points[n-2] carries that route's
+            // stub bound: the sweep may not shorten the stub past ROUTE_MARGIN.
+            // Both can apply at once on a 4-point route, whose single interior
+            // segment joins BOTH stubs.
+            let bound = |horizontal: bool| {
+                let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+                let axis = |p: P| if horizontal { p.1 } else { p.0 };
+                for (touch, on_border) in [(1usize, 0usize), (n - 2, n - 1)] {
+                    if i != touch && i + 1 != touch {
+                        continue;
+                    }
+                    let (blo, bhi) = stub_bound(axis(route.points[on_border]), axis(a));
+                    lo = lo.max(blo);
+                    hi = hi.min(bhi);
+                }
+                (lo, hi)
+            };
             if (a.1 - b.1).abs() < 1e-9 {
+                let (lo, hi) = bound(true);
                 chan_h.entry(q(a.1)).or_default().push(Seg {
                     ri,
                     a: i,
                     b: i + 1,
                     other_mid: (a.0 + b.0) / 2.0,
+                    lo,
+                    hi,
                 });
             } else if (a.0 - b.0).abs() < 1e-9 {
+                let (lo, hi) = bound(false);
                 chan_v.entry(q(a.0)).or_default().push(Seg {
                     ri,
                     a: i,
                     b: i + 1,
                     other_mid: (a.1 + b.1) / 2.0,
+                    lo,
+                    hi,
                 });
             }
         }
@@ -1381,7 +1436,15 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
             let m = segs.len();
             let start = base - (m as f64 - 1.0) * gap / 2.0;
             for (k, s) in segs.iter().enumerate() {
-                let coord = start + k as f64 * gap;
+                // Clamp into the segment's stub-safe band. When the band is
+                // empty (two stubs pulling opposite ways) the segment stays
+                // put: leaving two channels coincident is a lesser defect than
+                // a connector glued to -- or doubled back through -- a border.
+                let coord = if s.lo > s.hi {
+                    base
+                } else {
+                    (start + k as f64 * gap).clamp(s.lo, s.hi)
+                };
                 if horizontal {
                     routes[s.ri].points[s.a].1 = coord;
                     routes[s.ri].points[s.b].1 = coord;
@@ -1622,6 +1685,19 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
                     bx.x + bx.w
                 },
             )
+        };
+        // Dividing the whole side into m + 1 steps walks the outermost endpoints
+        // into the corners as the fan-in grows, undoing the corner band `attach`
+        // drops grid candidates in (see CORNER_INSET). When the outermost step
+        // would land in that band, spread across the side MINUS its corner bands
+        // instead. Only then: rescaling unconditionally would squeeze every fan
+        // that was already clear of its corners, for no gain. A side shorter than
+        // 2 * CORNER_INSET has no inset band to spread in and keeps the full span.
+        let step = (span_hi - span_lo) / (m as f64 + 1.0);
+        let (span_lo, span_hi) = if step < CORNER_INSET && span_hi - span_lo > 2.0 * CORNER_INSET {
+            (span_lo + CORNER_INSET, span_hi - CORNER_INSET)
+        } else {
+            (span_lo, span_hi)
         };
         for (k, e) in ends.iter().enumerate() {
             let t = (k as f64 + 1.0) / (m as f64 + 1.0); // interior fraction, no corners
@@ -1870,6 +1946,39 @@ mod tests {
         // Endpoints untouched.
         assert_eq!(routes[0].points[0], (0.0, 0.0));
         assert_eq!(routes[0].points[3], (100.0, 0.0));
+    }
+
+    #[test]
+    fn hub_spread_keeps_a_crowded_side_off_its_corners() {
+        // Seven edges attach to the right side of a 90px-tall hub. Spreading
+        // them over the WHOLE side gives 90/8 = 11.25px steps, so the outermost
+        // pair lands inside the CORNER_INSET band. The spread must inset the
+        // span instead of running corner to corner.
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("h".into()), r(0.0, 0.0, 100.0, 90.0));
+        let mut routes = Vec::new();
+        for i in 0..7 {
+            let t = format!("t{i}");
+            rects.insert(
+                BoxId::Node(t.clone()),
+                r(300.0, i as f64 * 40.0, 60.0, 30.0),
+            );
+            routes.push(Route {
+                points: vec![(100.0, 45.0), (300.0, i as f64 * 40.0 + 15.0)],
+                source: "h".into(),
+                target: t,
+                key: None,
+            });
+        }
+        hub_spread(&mut routes, &rects);
+        for rt in &routes {
+            let y = rt.points[0].1;
+            assert!(
+                (CORNER_INSET - 1e-6..=90.0 - CORNER_INSET + 1e-6).contains(&y),
+                "{} endpoint y={y} is inside the corner band of h",
+                rt.target
+            );
+        }
     }
 
     #[test]
@@ -2509,6 +2618,98 @@ mod tests {
                 nearest >= 8.0,
                 "{key} endpoint {ep:?} sits on/near a corner (nearest {nearest})"
             );
+        }
+    }
+
+    #[test]
+    fn dense_scene_keeps_every_stub_perpendicular_and_off_corner() {
+        // A dense-but-ordinary class/ER layout: a 4x3 grid of nodes wired into a
+        // mesh, so many routes share the same interior channel and the post-A*
+        // repair phases (`hub_spread`, then `nudge`) both get to move points.
+        // Every endpoint must STILL leave its border perpendicular for a full
+        // ROUTE_MARGIN and sit at least CORNER_INSET in from both corners of its
+        // side -- those are the two structural connector rules.
+        let cfg = SolveConfig::default();
+        let mut boxes = Vec::new();
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        let mut keys = Vec::new();
+        for col in 0..4 {
+            for row in 0..3 {
+                let k = format!("n{col}{row}");
+                boxes.push(leafbox(&k));
+                rects.insert(
+                    BoxId::Node(k.clone()),
+                    nrect(col as f64 * 260.0, row as f64 * 190.0, 140.0, 90.0),
+                );
+                keys.push(k);
+            }
+        }
+        let mut edges = Vec::new();
+        for (i, from) in keys.iter().enumerate() {
+            for to in keys.iter().skip(i + 1).take(2) {
+                edges.push((BoxId::Node(from.clone()), BoxId::Node(to.clone())));
+            }
+        }
+        let out = route(&boxes, &rects, &edges, &cfg);
+        assert!(
+            out.len() > 10,
+            "expected a dense route set, got {}",
+            out.len()
+        );
+        assert_perp_ends(&out, &rects);
+        assert_off_corner(&out, &rects);
+    }
+
+    #[test]
+    fn a_crowded_side_still_keeps_its_endpoints_off_the_corners() {
+        // Eight edges all funnel into one side of a short node. `hub_spread`
+        // divides the side into m+1 equal steps, so the outermost endpoints
+        // march toward the corners as the fan-in grows; they must stop at
+        // CORNER_INSET instead.
+        let cfg = SolveConfig::default();
+        let mut boxes = vec![leafbox("hub")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("hub".into()), nrect(600.0, 300.0, 140.0, 90.0));
+        let mut edges = Vec::new();
+        for i in 0..8 {
+            let k = format!("s{i}");
+            boxes.push(leafbox(&k));
+            rects.insert(
+                BoxId::Node(k.clone()),
+                nrect(0.0, i as f64 * 110.0, 120.0, 70.0),
+            );
+            edges.push((BoxId::Node(k), BoxId::Node("hub".into())));
+        }
+        let out = route(&boxes, &rects, &edges, &cfg);
+        assert_perp_ends(&out, &rects);
+        assert_off_corner(&out, &rects);
+    }
+
+    /// Assert every endpoint sits at least `CORNER_INSET` in from both corners
+    /// of the side it attaches to.
+    fn assert_off_corner(out: &[Route], rects: &BTreeMap<BoxId, Rect>) {
+        for rt in out {
+            let n = rt.points.len();
+            for (key, ep) in [(&rt.source, rt.points[0]), (&rt.target, rt.points[n - 1])] {
+                let bx = rects[&BoxId::Node(key.clone())];
+                let corners = [
+                    (bx.x, bx.y),
+                    (bx.x + bx.w, bx.y),
+                    (bx.x, bx.y + bx.h),
+                    (bx.x + bx.w, bx.y + bx.h),
+                ];
+                let nearest = corners
+                    .iter()
+                    .map(|c| seg_len(*c, ep))
+                    .fold(f64::INFINITY, f64::min);
+                assert!(
+                    nearest >= CORNER_INSET - 1e-6,
+                    "{}->{} endpoint {ep:?} on {key} is {nearest} from a corner (< {CORNER_INSET}): {:?}",
+                    rt.source,
+                    rt.target,
+                    rt.points
+                );
+            }
         }
     }
 
