@@ -215,8 +215,8 @@ fn displayed_stereotypes(stereotypes: &[String], display: &ResolvedDiagramDispla
 
 /// The card's «stereotype» eyebrow label (raw, no guillemets): the node's own
 /// declared stereotypes if any, else the metaclass-derived label. Shared by the
-/// focus-card sizer (`build_focus_scene`) and its renderer (`draw_focus_card`)
-/// so both measure and draw the same line.
+/// card sizer (`card::card_size`, called from `build_scene`) and its renderer
+/// (`card::class_shape`) so both measure and draw the same line.
 pub fn focus_eyebrow(
     stereotypes: &[String],
     ty: &ElementType,
@@ -1322,79 +1322,6 @@ fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> V
         .collect()
 }
 
-/// Build a single-node `Scene` focused on classifier `key`, sized 1.5x its
-/// natural box. An unknown key yields an empty scene.
-///
-/// The classifier preview no longer calls this (it renders a generated
-/// documentation page instead, Task 7 of the classifier-markdown-page plan);
-/// retained with `#[allow(dead_code)]` until Task 9 deletes it outright, so
-/// this task's own gate stays green without widening into an unrelated
-/// deletion.
-#[allow(dead_code)]
-pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
-    let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
-        return Scene {
-            visual_kind: Default::default(),
-            display: ResolvedDiagramDisplay::default(),
-            nodes: vec![],
-            groups: vec![],
-            use_case_groups: vec![],
-            edges: vec![],
-            relations: Vec::new(),
-            conflicts: Vec::new(),
-            labels: Vec::new(),
-        };
-    };
-    let title = node
-        .concept
-        .title
-        .clone()
-        .unwrap_or_else(|| node.key.clone());
-    let display = ResolvedDiagramDisplay::default();
-    let attributes = attribute_rows(model, key, &display);
-    // The focus card is drawn at zoom 1.0 (world px == screen px). Build the
-    // scene node, then size its rect to the exact hull the card box-tree hugs.
-    let mut scene_node = SceneNode {
-        key: key.to_string(),
-        title,
-        element_type: node.ty.clone(),
-        geometry: Default::default(),
-        stereotypes: displayed_stereotypes(&node.stereotypes, &display),
-        stereotype_visible: display.show_stereotype,
-        attributes,
-        operations: Vec::new(),
-        header: HeaderStyle::Plain,
-        ports: false,
-        rect: Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 0.0,
-            h: 0.0,
-        },
-        emphasized: true,
-        collapsed: false,
-        expanded: false,
-    };
-    let (w, h) = crate::card::card_size(&scene_node, &crate::card::mono_sheet());
-    scene_node.rect = Rect {
-        x: 0.0,
-        y: 0.0,
-        w,
-        h,
-    };
-    Scene {
-        visual_kind: Default::default(),
-        display: ResolvedDiagramDisplay::default(),
-        nodes: vec![scene_node],
-        groups: vec![],
-        use_case_groups: vec![],
-        edges: vec![],
-        relations: Vec::new(),
-        conflicts: Vec::new(),
-        labels: Vec::new(),
-    }
-}
-
 /// The classifier title for a slug (for a `[Title](./slug.md)` operand), or the
 /// slug itself when unknown.
 fn title_for(model: &Model, slug: &str) -> String {
@@ -2411,44 +2338,6 @@ mod tests {
                 ("order", "Order"),
                 ("payment-gateway", "PaymentGateway"),
             ]
-        );
-    }
-
-    #[test]
-    fn focus_scene_node_carries_attribute_rows() {
-        let model = mini();
-        let key = model
-            .nodes
-            .iter()
-            .find(|n| n.concept.title.as_deref() == Some("Order"))
-            .unwrap()
-            .key
-            .clone();
-        let scene = build_focus_scene(&model, &key);
-        let node = &scene.nodes[0];
-        // Mirrors order.md's `## Attributes` block, in order.
-        assert_eq!(node.attributes.len(), 2);
-        assert_eq!(node.attributes[0].name, "id");
-        assert_eq!(node.attributes[0].ty, "OrderId");
-        assert_eq!(node.attributes[1].name, "total");
-        assert_eq!(node.attributes[1].ty, "Decimal");
-    }
-
-    #[test]
-    fn focus_scene_node_carries_declared_stereotypes() {
-        let model = mini();
-        let key = model
-            .nodes
-            .iter()
-            .find(|n| n.concept.title.as_deref() == Some("Order"))
-            .unwrap()
-            .key
-            .clone();
-        let scene = build_focus_scene(&model, &key);
-        // order.md declares `stereotype: [aggregateRoot]`.
-        assert_eq!(
-            scene.nodes[0].stereotypes,
-            vec!["aggregateRoot".to_string()]
         );
     }
 
