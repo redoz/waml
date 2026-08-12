@@ -103,7 +103,7 @@ applicable. Batch changes do not write partial results.
 **When** the author runs `fmt --check`
 **Then** the command returns a non-zero status without formatting the bundle
 
-**Evidence:** `crates/waml-cli/src/main.rs:358` and `crates/waml-cli/src/commands.rs:288`
+**Evidence:** `crates/waml/src/fmt.rs::plan_fmt` and `crates/waml-cli/src/main.rs::is not formatted`
 
 #### CLI-011 — direct commands change nodes, values, and relationships
 
