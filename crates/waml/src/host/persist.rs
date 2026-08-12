@@ -172,6 +172,25 @@ fn write_back_with_ops(
             let target =
                 confine::resolve_under(&root, logical, SymlinkPolicy::FollowWithinRoot, false)
                     .map_err(|error| confine_error_to_io(logical, error))?;
+            // `FollowWithinRoot` dereferences the *final* component too, so an
+            // existing in-root file symlink resolves to its link target and
+            // would be silently overwritten (or deleted) there. This writer
+            // never followed a leaf link: the target was the raw
+            // `root.join(rel)`, and the `symlink_metadata(..).is_file()` screen
+            // below refused a symlink with "bundle target is not a file". Keep
+            // refusing -- `serve`'s `/api/documents` reaches this with a
+            // client-supplied path. Parent components are still followed, as
+            // they always were (`symlink_metadata` resolves everything but the
+            // last component).
+            let unresolved = root.join(logical);
+            if fs::symlink_metadata(&unresolved)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("bundle target is not a file: {}", unresolved.display()),
+                ));
+            }
             // Two logical paths that collide on one filesystem entry would
             // make the transaction overwrite its own work. Fold case only
             // where the platform's filesystems are conventionally
@@ -755,6 +774,78 @@ mod tests {
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{logical}");
         }
         assert_eq!(directory_entries(&temp.0), Vec::<String>::new());
+    }
+
+    /// `confine::resolve_under(.., FollowWithinRoot, ..)` dereferences the
+    /// *final* component as well, but this writer must not: before the shared
+    /// resolver, the target was the raw `root.join(rel)` and an existing file
+    /// symlink failed the `symlink_metadata(..).is_file()` screen with "bundle
+    /// target is not a file". Following it instead would let a bundle path
+    /// overwrite whatever the link points at -- reachable from `serve`'s
+    /// `/api/documents` with a client-supplied path.
+    #[test]
+    fn write_back_refuses_to_write_through_an_in_root_file_symlink() {
+        let temp = TempDir::new();
+        let real = temp.0.join("real.md");
+        fs::write(&real, "original").unwrap();
+        if !make_file_link(&real, &temp.0.join("link.md")) {
+            eprintln!("skipping: this environment cannot create file links");
+            return;
+        }
+
+        let new = vec![("link.md".to_owned(), "overwritten".to_owned())];
+        let error = write_back(&temp.0, &[], &new).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            error.to_string().contains("bundle target is not a file"),
+            "{error}"
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "original");
+    }
+
+    /// The same refusal on the delete side: dropping a bundle path whose
+    /// on-disk entry is a symlink must not delete the link's target.
+    #[test]
+    fn write_back_refuses_to_delete_through_an_in_root_file_symlink() {
+        let temp = TempDir::new();
+        let real = temp.0.join("real.md");
+        fs::write(&real, "original").unwrap();
+        if !make_file_link(&real, &temp.0.join("link.md")) {
+            eprintln!("skipping: this environment cannot create file links");
+            return;
+        }
+
+        let old = vec![("link.md".to_owned(), "original".to_owned())];
+        let error = write_back(&temp.0, &old, &[]).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            error.to_string().contains("bundle target is not a file"),
+            "{error}"
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "original");
+    }
+
+    #[cfg(windows)]
+    fn make_file_link(target: &Path, link: &Path) -> bool {
+        match std::os::windows::fs::symlink_file(target, link) {
+            Ok(()) => true,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    || error.kind() == std::io::ErrorKind::Unsupported
+                    || error.raw_os_error() == Some(1314) =>
+            {
+                false
+            }
+            Err(error) => panic!("failed to create file link: {error}"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn make_file_link(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).unwrap();
+        true
     }
 
     #[cfg(any(windows, target_os = "macos"))]

@@ -471,11 +471,17 @@ mod tests {
         assert_eq!(skipped, [PathBuf::from("skipped")]);
     }
 
+    /// Build the pair with `join` so each platform inserts its own separator:
+    /// on Windows that exercises the `\` -> `/` normalization, on Unix the
+    /// path already uses `/`. A `C:\bundle\...` literal would not do this --
+    /// on Linux `\` is an ordinary filename character, so both paths would be
+    /// single components, `strip_prefix` would fail, and the fallback branch
+    /// would be asserted instead of the strip.
     #[test]
     fn rooted_key_strips_the_root_and_normalizes_separators() {
-        let root = Path::new("C:\\bundle");
-        let file = Path::new("C:\\bundle\\nested\\a.md");
-        assert_eq!(rooted_key(root, file), "nested/a.md");
+        let root = PathBuf::from("bundle");
+        let file = root.join("nested").join("a.md");
+        assert_eq!(rooted_key(&root, &file), "nested/a.md");
     }
 
     #[test]

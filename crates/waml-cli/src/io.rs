@@ -188,6 +188,19 @@ fn escaped_index_path(message: impl Into<String>) -> std::io::Error {
 /// or target is refused categorically, even one that resolves inside the
 /// root -- stricter than the wire-input/persist/native-save writers, which
 /// follow in-root symlinks (`SymlinkPolicy::FollowWithinRoot`, `host::confine`).
+///
+/// Shared confinement also brings `confine::check_rel`, which this writer did
+/// not run before. Only one of its rules actually changes what the index writer
+/// accepts: a segment naming a Windows reserved device (`con/index.md`) is now
+/// refused as `InvalidInput` instead of being opened as a console device --
+/// pinned by `write_indexes_rejects_a_reserved_device_name_segment`, and the
+/// same "no writer may save a device-named path" rule `host::confine` applies to
+/// `persist` and the native save. `check_rel`'s remaining rules (interior `:`,
+/// `.`/`..` segments, absolute/UNC/drive-prefixed paths) cannot reach here:
+/// `IndexChange` paths come from `BundlePath`s, and `BundlePath::parse`
+/// (`waml::source`) already rejects every one of those shapes. The Task 11
+/// table in the `waml-cli-logic-seam` plan records this caller's accepted set
+/// as unchanged, which holds for those rules but not for the device names.
 fn resolve_index_target(
     root: &Path,
     relative: &str,
@@ -500,6 +513,27 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(!temp.0.join("nested").exists());
+    }
+
+    /// `resolve_index_target` runs the shared `confine::check_rel`, which the
+    /// pre-unification index writer did not. A reserved-device-name segment is
+    /// the one shape whose acceptance actually changed here (every other
+    /// `check_rel` rule is already enforced upstream by `BundlePath::parse`),
+    /// so it is pinned rather than left to the resolver's own suite.
+    #[test]
+    fn write_indexes_rejects_a_reserved_device_name_segment() {
+        let temp = TempDir::new();
+        let error = write_indexes(
+            &temp.0,
+            &[waml::index_md::IndexChange::Upsert {
+                path: "con/index.md".into(),
+                rendered: "bad".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!temp.0.join("con").exists());
     }
 
     #[test]
