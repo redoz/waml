@@ -4,6 +4,7 @@ pub mod action;
 pub mod adornment;
 pub mod analysis;
 pub mod bundle_envelope;
+pub mod classifier_page;
 pub mod diagnostic;
 pub mod edit;
 pub mod extension;
