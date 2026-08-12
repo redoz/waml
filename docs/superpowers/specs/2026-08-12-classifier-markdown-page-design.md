@@ -63,6 +63,12 @@ present, is an indented continuation line under the bullet.
   The line items on the order.
 ```
 
+Properties keep UML multiplicity notation and suppress a bare `1`; only the
+association sentences spell multiplicity out in words. The two differ
+deliberately: a definition list is reference material read by scanning down a
+column, where `1..*` is denser and a repeated `1` on every row is noise,
+while a sentence has to be read as English.
+
 A `uml.Enum` renders `## Values` from `node.values` instead — one bullet per
 literal, no type or multiplicity.
 
@@ -71,34 +77,70 @@ literal, no type or multiplicity.
 Every relationship is a sentence. Direction is carried by word order, never
 by passive voice or a glyph: under `## Associations` the subject is this
 classifier and is elided; under `## Referenced by` the far classifier is
-named and takes subject position. One verb per kind covers both.
+named and takes subject position.
 
-| `RelationshipKind` | Verb | Example sentence (outgoing) |
+| `RelationshipKind` | Under `## Associations` | Under `## Referenced by` |
 | --- | --- | --- |
-| `Associates` | associates | Associates Customer as `customer`. |
-| `Aggregates` | aggregates | Aggregates 1..\* Wheel. |
-| `Composes` | composes | Composes Engine. |
-| `Specializes` | specializes | Specializes Vehicle. |
-| `Implements` | implements | Implements Drivable. |
-| `Depends` | depends on | Depends on Fuel. |
-| `Includes` | includes | Includes Checkout. |
-| `Extends` | extends | Extends Order. |
-| `InstanceOf` | is an instance of | Instance of Template. |
-| `Links` | links to | Links to Runbook. |
+| `Associates` | Associated with one or more Foo. | Bar is associated with Foo. |
+| `Aggregates` | Aggregates one or more Wheel. | Bar aggregates Foo. |
+| `Composes` | Composes one engine (Engine). | Bar composes Foo. |
+| `Specializes` | Specializes Vehicle. | Bar specializes Foo. |
+| `Implements` | Implements Drivable. | Bar implements Foo. |
+| `Depends` | Depends on Fuel. | Bar depends on Foo. |
+| `Includes` | Includes Checkout. | Bar includes Foo. |
+| `Extends` | Extends Order. | Bar extends Foo. |
+| `InstanceOf` | Instance of Template. | Bar is an instance of Foo. |
+| `Links` | Links to Runbook. | Bar links to Foo. |
 
-The elided-subject form capitalises the verb and drops the leading `is` where
-one exists; the named-subject form under `## Referenced by` uses the verb
-column verbatim: `Reading is an instance of Template.`
+`Associates` is the one kind that shifts register. It is not a transitive verb
+in ordinary English — "Associates one Customer" reads as a typo — so the
+elided form is the participial "Associated with one Customer", and the
+named-subject form is "Bar is associated with Foo." Every other kind stays a
+plain transitive verb in both forms.
 
 `Annotates` is skipped — it anchors a `uml.Note` and is not a relationship,
 matching `build_classifier_view` and the web renderer.
 
-Multiplicity is read from the far end and printed before the far classifier's
-name, suppressed when it is `1` — the same rule the attribute rows use. A
-role, when the far end declares one, trails as `` as `role` ``.
-
-Under `## Referenced by` the same verb runs with the subject and object
+Under `## Referenced by` the same relationship runs with subject and object
 swapped: `SpecialOrder specializes Car.`, `ShippingLabel depends on Order.`
+
+### Multiplicity in words
+
+Multiplicity is read from the far end and spelled out, never printed as UML
+notation. It is always stated, including `1` — "composes one engine" is
+clearer than a bare name, and suppressing the common case makes its absence
+ambiguous.
+
+| Multiplicity | Prose |
+| --- | --- |
+| `1` | one |
+| `0..1` | zero or one |
+| `1..*` | one or more |
+| `0..*`, `*` | zero or more |
+| `n` (exact) | exactly three |
+| `a..b` | two to five |
+
+Numbers spell out as words through ten and render as digits above that.
+Structural kinds that carry no multiplicity — `Specializes`, `Implements`,
+`Extends`, `InstanceOf` — omit the count entirely.
+
+### Naming the far end
+
+When the far end declares a role, the role leads and the classifier follows
+in parentheses; the classifier name is the link target either way:
+
+```markdown
+Composes one or more lines (OrderLine).
+Associated with one customer (Customer).
+Aggregates one or more Wheel.
+```
+
+Class names are never inflected. A plural count next to a singular name
+(`one or more Wheel`) is deliberate: the name is an identifier and must match
+the model exactly, and pluralising it would need an English inflector that is
+wrong on `Person`, `Analysis`, `Status`, and on any non-English name, with no
+way for an author to correct it. Authors who want a plural noun declare a
+role, which is their own text.
 
 A bidirectional edge (`edge.bidirectional`, or both ends navigable) renders
 once, under `## Associations`, with `(both ways)` trailing the sentence. It
@@ -140,6 +182,11 @@ widget: a far classifier's name is written as a link to its document path.
   association sections are omitted rather than emitted empty.
 - A `uml.Enum` fixture — `## Values` in place of `## Properties`.
 - A missing key returns `None`.
+
+Plus a table-driven unit test over the multiplicity speller covering every
+row of the prose table, both boundaries of the spell-out-through-ten rule,
+and an unparseable multiplicity; and one over far-end naming covering role
+present, role absent, and a role identical to the class name.
 
 **Widget** — a link click in the reading view resolves to the expected
 `NavigationTarget`.
