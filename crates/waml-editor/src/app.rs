@@ -75,6 +75,7 @@ script_mod! {
     use mod.widgets.MarkdownEditor
     use mod.widgets.MarkdownViewer
     use mod.widgets.FolderListView
+    use mod.widgets.BookSurface
     use mod.widgets.SearchResultsListView
     use mod.widgets.FindStrip
 

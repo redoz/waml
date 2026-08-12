@@ -32,7 +32,9 @@ script_mod! {
         width: Fill
         height: Fit
         flow: Right
-        align: Align{y: 0.0}
+        // `y: 0.5`: the 16x16 icon anchor sits on the vertical centre of the
+        // two-line text column, not pinned to the title's cap line.
+        align: Align{y: 0.5}
         padding: Inset{left: 4.0, right: 4.0, top: 6.0, bottom: 6.0}
         spacing: 8.0
         show_bg: true
@@ -62,13 +64,16 @@ script_mod! {
             width: Fill
             height: Fit
             flow: Down
-            spacing: 2.0
+            // No extra gap: each label's own `line_spacing: 1.2` leading
+            // already separates the two lines, and a second gap on top of it
+            // read as a paragraph break rather than a two-line row.
+            spacing: 0.0
             label := Label {
                 width: Fill
                 text: ""
                 draw_text +: {
                     color: atlas.text
-                    text_style: fonts.text_label
+                    text_style: fonts.text_compact_label
                 }
             }
             blurb := Label {
@@ -76,7 +81,7 @@ script_mod! {
                 text: ""
                 visible: false
                 draw_text +: {
-                    color: atlas.text_dim
+                    color: atlas.text_mid
                     text_style: fonts.text_micro
                 }
             }
@@ -191,6 +196,12 @@ pub struct FolderRow {
     /// state so focus survives the pointer moving off the row.
     #[rust]
     focused: bool,
+    /// The owning list's `set_rows` epoch this row was last bound under.
+    /// A bump means the folder re-synced, which is the one moment a stale
+    /// `hovered` (see `set_row`) can be released without racing a live
+    /// hover: the pointer is elsewhere by definition of a re-sync.
+    #[rust]
+    sync_epoch: u64,
 }
 
 impl Widget for FolderRow {
@@ -243,8 +254,24 @@ impl FolderRow {
         cx: &mut Cx,
         row: &FolderRowView,
         focused: bool,
+        sync_epoch: u64,
         label_override: Option<&str>,
     ) {
+        // A row hidden UNDER the pointer never receives `FingerHoverOut`: the
+        // click navigates away, the folder surface hides, and this widget --
+        // cached by the `FlatList` across the whole tab's life -- comes back
+        // still `hovered`, drawing its wash on a row the pointer is nowhere
+        // near (and having leaked the `Hand` cursor with it). Every `set_rows`
+        // bumps the list's epoch, so a re-sync (which is what re-opening the
+        // folder runs) releases the stale hover exactly once. Real hover then
+        // re-arms on the next pointer move.
+        if self.sync_epoch != sync_epoch {
+            self.sync_epoch = sync_epoch;
+            if self.hovered {
+                self.hovered = false;
+                cursor::hover_out(cx);
+            }
+        }
         self.icon = row.icon;
         self.view
             .label(cx, ids!(textcol.label))
@@ -275,10 +302,11 @@ impl FolderRowRef {
         cx: &mut Cx,
         row: &FolderRowView,
         focused: bool,
+        sync_epoch: u64,
         label_override: Option<&str>,
     ) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.set_row(cx, row, focused, label_override);
+            inner.set_row(cx, row, focused, sync_epoch, label_override);
         }
     }
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -332,6 +360,11 @@ pub struct FolderListView {
     /// ignored while some other widget (e.g. a text field) has focus.
     #[rust]
     has_key_focus: bool,
+    /// Incremented by every `set_rows`. Handed to each row so a row cached
+    /// across a hide/show cycle can release a hover the pointer left without
+    /// ever sending `FingerHoverOut` -- see `FolderRow::set_row`.
+    #[rust]
+    sync_epoch: u64,
     /// The row index mid-rename (Task G3's "typing retitles live"), if any.
     /// `Some` while `F2` is held on the focused row; every path that could
     /// leave the list in a stale edit state (`Escape`, `Hit::KeyFocusLost`,
@@ -387,9 +420,14 @@ impl Widget for FolderListView {
             }
             Hit::KeyFocus(_) => {
                 self.has_key_focus = true;
+                // The focus wash is gated on this flag, so both transitions
+                // have to repaint or the highlight lags a frame behind the
+                // focus it is reporting.
+                self.view.redraw(cx);
             }
             Hit::KeyFocusLost(_) => {
                 self.has_key_focus = false;
+                self.view.redraw(cx);
                 // Every armed edit clears on focus loss (correctness.md) --
                 // an unfinished rename must never survive to the next click.
                 self.renaming = None;
@@ -522,7 +560,13 @@ impl Widget for FolderListView {
                     row.as_folder_row().set_row(
                         cx,
                         row_data,
-                        self.focused == Some(i),
+                        // The focus wash is a KEYBOARD affordance: shown only
+                        // while this list actually holds key focus. Drawn
+                        // unconditionally it painted row 0 highlighted on
+                        // every freshly-opened folder, which reads as a
+                        // selection nobody made.
+                        self.has_key_focus && self.focused == Some(i),
+                        self.sync_epoch,
                         label_override,
                     );
                     row.draw_all(cx, &mut Scope::empty());
@@ -605,6 +649,7 @@ impl FolderListView {
     /// resolved chain's projected rows, in order.
     pub fn set_rows(&mut self, cx: &mut Cx, rows: Vec<FolderRowView>) {
         self.rows = rows;
+        self.sync_epoch = self.sync_epoch.wrapping_add(1);
         self.focused = match self.focused {
             Some(index) if index < self.rows.len() => Some(index),
             _ if self.rows.is_empty() => None,
