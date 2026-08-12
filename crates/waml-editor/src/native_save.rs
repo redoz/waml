@@ -438,19 +438,34 @@ mod tests {
         }
     }
 
-    /// New as of the shared `host::confine` module (Task 11 of the
-    /// waml-cli-logic-seam plan): before, `con.md` passed this validation and
-    /// hit whatever platform-dependent behaviour writing to a Windows
-    /// console device produces. It now fails loudly, before any mutation.
+    /// `con.md` is an ordinary file on every platform this runs on -- it is
+    /// written, read back and renamed onto like any other name, not routed to
+    /// a console device (see `waml::host::confine::check_rel` for the probe).
+    /// A save of it must therefore succeed, not be refused by a name table.
     #[test]
-    fn rejects_a_reserved_device_name() {
+    fn saves_a_document_named_after_a_reserved_device() {
         let temp = TempDir::new();
 
-        let error =
-            save_bundle_atomic(temp.path(), &[], &[("con.md".into(), "new".into())]).unwrap_err();
+        save_bundle_atomic(temp.path(), &[], &[("con.md".into(), "new".into())]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("con.md")).unwrap(),
+            "new"
+        );
+    }
+
+    /// The one shape that IS refused, because Windows strips it silently:
+    /// `dir./x.md` and `dir/x.md` would resolve to the same file, so a save
+    /// containing both would lose one with no error from any layer.
+    #[test]
+    fn rejects_a_segment_windows_would_silently_strip() {
+        let temp = TempDir::new();
+
+        let error = save_bundle_atomic(temp.path(), &[], &[("dir./x.md".into(), "new".into())])
+            .unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(!temp.path().join("con.md").exists());
+        assert!(!temp.path().join("dir").exists());
     }
 
     #[test]
@@ -491,14 +506,15 @@ mod tests {
 
     /// `index_bundle` screens *both* bundles, while `resolve_under` only sees
     /// the current one, so the local screen must be the same rule -- not a
-    /// weaker second spelling of it. These shapes (reserved device name, NUL
-    /// byte) survive `BundlePath::parse` and were accepted by the retired
-    /// local checker while `confine::check_rel` rejects them.
+    /// weaker second spelling of it. These shapes (a NUL byte, a segment
+    /// Windows would silently strip) survive `BundlePath::parse` and were
+    /// accepted by the retired local checker while `confine::check_rel`
+    /// rejects them.
     #[test]
     fn index_bundle_applies_the_shared_syntactic_rule() {
         use super::index_bundle;
 
-        for path in ["con.md", "nested/nul.md", "a\0b.md"] {
+        for path in ["dir./x.md", "nested/sub /y.md", "a\0b.md"] {
             let bundle =
                 SourceBundle::try_from_pairs([(path.to_string(), "authored".to_string())]).unwrap();
             let error = index_bundle(&bundle, "current").unwrap_err();

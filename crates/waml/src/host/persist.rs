@@ -733,15 +733,34 @@ mod tests {
         assert_eq!(directory_entries(&temp.0), Vec::<String>::new());
     }
 
-    /// `check_rel`'s reserved-device-name rule is new for `persist` as of the
-    /// shared `host::confine` module (Task 11): before, `con.md` passed
-    /// validation here and hit whatever platform-dependent behaviour writing
-    /// to a Windows console device produces. It now fails loudly, at the
-    /// point of mutation, before the transaction stages anything.
+    /// A document named after a Windows device is an ordinary file, and this
+    /// transaction writes it like any other. `confine::check_rel` deliberately
+    /// carries no device-name table -- see its docs for the probe showing
+    /// `con.md` is written, read back and renamed onto correctly, and that the
+    /// one case which misbehaves (`nul/` as a directory) is reported by the
+    /// filesystem.
     #[test]
-    fn write_back_rejects_reserved_device_names() {
+    fn write_back_writes_a_document_named_after_a_reserved_device() {
         let temp = TempDir::new();
         for logical in ["con.md", "nested/con.md"] {
+            let new = vec![(logical.to_owned(), "streamed".to_owned())];
+            write_back(&temp.0, &[], &new).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(temp.0.join(logical)).unwrap(),
+                "streamed",
+                "{logical}"
+            );
+        }
+    }
+
+    /// The rule that replaced the device table: Win32 strips a trailing dot or
+    /// space from every segment, so `dir./x.md` and `dir/x.md` name the same
+    /// file. A transaction holding both would silently lose one, and no layer
+    /// below reports it -- so this writer refuses the shape before staging.
+    #[test]
+    fn write_back_rejects_a_segment_windows_would_silently_strip() {
+        let temp = TempDir::new();
+        for logical in ["dir./x.md", "dir /x.md", "trailing.md."] {
             let new = vec![(logical.to_owned(), "streamed".to_owned())];
             let error = write_back(&temp.0, &[], &new).unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{logical}");

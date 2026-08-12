@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use waml::bundle_envelope::expand_text;
-use waml::host::confine::{self, ConfineError, DeviceNamePolicy, SymlinkPolicy};
+use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 use waml::host::ingest::{ingest_markdown, rooted_key, triage, IngestError, IngestOptions};
 use waml::index_md::IndexChange;
 
@@ -190,20 +190,11 @@ fn escaped_index_path(message: impl Into<String>) -> std::io::Error {
 /// follow in-root symlinks (`SymlinkPolicy::FollowWithinRoot`, `host::confine`).
 ///
 /// Shared confinement also brings `confine::check_rel`, which this writer did
-/// not run before -- so it is taken with `DeviceNamePolicy::Allow`, keeping
-/// this caller's accepted set exactly as it was. This writer only ever writes
-/// an `index.md` basename (the gate below), so a Windows reserved device name
-/// could only appear as an enclosing *directory* segment (`con/index.md`),
-/// which is an ordinary directory on Linux; rejecting it would fail an entire
-/// `waml index --write` run on a bundle that has always been legal there,
-/// which is not a change the `waml-cli-logic-seam` plan's Task 11 per-caller
-/// table sanctions (it records this caller as **Unchanged**). Document
-/// writers -- `persist`, the native save, `serve`'s wire input -- keep the
-/// default `Reject`: they save author-visible files whose names must be
-/// representable on every platform. `check_rel`'s remaining rules (interior
-/// `:`, `.`/`..` segments, absolute/UNC/drive-prefixed paths) cannot reach
-/// here: `IndexChange` paths come from `BundlePath`s, and `BundlePath::parse`
-/// (`waml::source`) already rejects every one of those shapes.
+/// not run before; it leaves this caller's accepted set unchanged, because
+/// `check_rel`'s rules (interior `:`, `.`/`..` segments, absolute/UNC/
+/// drive-prefixed paths) cannot reach here: `IndexChange` paths come from
+/// `BundlePath`s, and `BundlePath::parse` (`waml::source`) already rejects
+/// every one of those shapes.
 fn resolve_index_target(
     root: &Path,
     relative: &str,
@@ -217,14 +208,8 @@ fn resolve_index_target(
             "not an index document: {relative}"
         )));
     }
-    confine::resolve_under_with(
-        root,
-        relative,
-        SymlinkPolicy::RefuseAny,
-        create_parents,
-        DeviceNamePolicy::Allow,
-    )
-    .map_err(|error| index_confine_error_to_io(relative, error))
+    confine::resolve_under(root, relative, SymlinkPolicy::RefuseAny, create_parents)
+        .map_err(|error| index_confine_error_to_io(relative, error))
 }
 
 fn index_confine_error_to_io(relative: &str, error: ConfineError) -> std::io::Error {
@@ -609,14 +594,11 @@ mod tests {
         assert!(!temp.0.join("nested").exists());
     }
 
-    /// `resolve_index_target` runs the shared `confine::check_rel`, which the
-    /// pre-unification index writer did not -- with `DeviceNamePolicy::Allow`,
-    /// so this writer's accepted set stays exactly what it was. A segment
-    /// naming a Windows device can only be an enclosing *directory* here (the
-    /// basename gate allows nothing but `index.md`), and `con/` is an ordinary
-    /// directory on Linux: refusing it would fail an entire `waml index
-    /// --write` run on a long-legal bundle. Resolution must therefore reach
-    /// the filesystem and report the missing directory, not refuse the path.
+    /// A segment naming a Windows device can only be an enclosing *directory*
+    /// here (the basename gate allows nothing but `index.md`), and `con/` is an
+    /// ordinary directory on BOTH platforms -- see `confine::check_rel`'s docs
+    /// for the probe. Resolution must reach the filesystem and report the
+    /// missing directory, not refuse the path.
     #[test]
     fn index_paths_accept_a_reserved_device_name_directory_segment() {
         let temp = TempDir::new();
@@ -627,9 +609,7 @@ mod tests {
         assert!(!temp.0.join("con").exists());
     }
 
-    /// The same rule end to end, on the platforms where such a directory is
-    /// actually creatable: `waml index --write` writes into it.
-    #[cfg(unix)]
+    /// The same rule end to end: `waml index --write` writes into it.
     #[test]
     fn write_indexes_writes_under_a_reserved_device_name_directory_segment() {
         let temp = TempDir::new();

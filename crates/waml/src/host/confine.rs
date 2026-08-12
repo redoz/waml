@@ -23,39 +23,40 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// Whether [`check_rel`]'s Windows reserved-device-name rule applies.
-///
-/// `Reject` is the rule for every writer that saves *document* content: a
-/// path a Windows host cannot represent must fail at the point of mutation,
-/// on every platform, rather than diverge per OS.
-///
-/// `Allow` exists for one caller -- `waml-cli`'s index writer -- whose
-/// accepted set predates this module and must not shrink: it only ever writes
-/// `index.md` basenames, so a device name can appear only as an enclosing
-/// *directory* segment (`con/index.md`), which is an ordinary directory on
-/// Linux. Rejecting it would make `waml index --write` fail the whole run on a
-/// bundle that has always been legal there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceNamePolicy {
-    Reject,
-    Allow,
-}
-
 /// Syntactic validity, independent of the filesystem: applies to every
 /// *writer* of a bundle-relative path. Rejects: empty, a NUL byte, an
 /// absolute path (`/` or `\` leading), a UNC path, a drive prefix (`C:`),
-/// an empty segment, a `.`/`..` segment, an interior `:` in any segment (an
-/// NTFS alternate-data-stream write, e.g. `a:b.md`, mirroring
-/// `BundlePath::parse`'s rationale), and a Windows reserved device name --
-/// checked on every platform, since a document might be shared to a Windows
-/// machine later.
+/// an empty segment, a `.`/`..` segment, and an interior `:` in any segment
+/// (an NTFS alternate-data-stream write, e.g. `a:b.md`, mirroring
+/// `BundlePath::parse`'s rationale).
+///
+/// The guiding rule: **do not blacklist what the filesystem already refuses.**
+/// A rejection here only earns its keep when the write would otherwise succeed
+/// *and* do the wrong thing silently. Probed on Windows 11 through this
+/// crate's own `std::fs` calls:
+///
+/// - Characters Windows cannot represent (`<`, `>`, `"`, `|`, `?`, `*`,
+///   control bytes) fail loudly with `InvalidFilename`. No rule needed.
+/// - Reserved device names are NOT a hazard here. `BundlePath::parse` forces
+///   every document path to end in `.md`, and `con.md`, `nul.md`, `com1.md`
+///   are ordinary files -- written, read back, and renamed onto correctly. As
+///   *directory* segments, `con/`, `com1/`, `aux/` and `prn/` are real
+///   directories; `nul/` is the one oddity, where `create_dir_all` reports
+///   success while creating nothing -- but the following write and the staged
+///   rename both fail loudly with `NotFound`, so the transaction rolls back.
+///   An earlier revision rejected a 22-name device table on every platform;
+///   it was removed because it blocked legal bundles (`con/` is an ordinary
+///   Linux directory, and one such path aborted an entire transactional save)
+///   while preventing nothing.
+/// - Trailing dots and spaces ARE a hazard, and the only one: Win32 strips
+///   them per segment, silently. That is the rule below.
+///
+/// Bundle *portability* across tools that dislike these names anyway (git
+/// checkout, Explorer) is a real but separate concern; a confinement check
+/// cannot enforce it, and the fix for it is minting safe filenames at the
+/// point documents are created, not refusing them at the point they are
+/// saved.
 pub fn check_rel(rel: &str) -> Result<(), ConfineError> {
-    check_rel_with(rel, DeviceNamePolicy::Reject)
-}
-
-/// [`check_rel`] with an explicit [`DeviceNamePolicy`]; see that enum for the
-/// single caller that opts out of the reserved-device-name rule.
-pub fn check_rel_with(rel: &str, device_names: DeviceNamePolicy) -> Result<(), ConfineError> {
     if rel.is_empty() {
         return Err(ConfineError::Syntactic("path is empty".to_string()));
     }
@@ -100,33 +101,21 @@ pub fn check_rel_with(rel: &str, device_names: DeviceNamePolicy) -> Result<(), C
                 "path segment contains a colon: {segment:?}"
             )));
         }
-        if device_names == DeviceNamePolicy::Reject && is_reserved_device_name(segment) {
+        // Win32 strips trailing dots and spaces from every path segment, and
+        // does it silently: `dir./x.md` and `dir/x.md` are BundlePath-legal,
+        // distinct bundle paths that resolve to the SAME file, so writing both
+        // in one transaction loses one with no error from any layer (probed on
+        // Windows 11: the second write clobbers the first and only `dir` exists
+        // on disk). Unlike every other Windows path quirk, the filesystem never
+        // reports this one, which is why it is worth a rule.
+        if segment.ends_with('.') || segment.ends_with(' ') {
             return Err(ConfineError::Syntactic(format!(
-                "path names a reserved device: {segment:?}"
+                "path segment ends with a dot or space, which Windows silently strips: {segment:?}"
             )));
         }
     }
 
     Ok(())
-}
-
-/// Windows reserved device names are reserved with or without an extension,
-/// and case-insensitively.
-fn is_reserved_device_name(segment: &str) -> bool {
-    let stem = match segment.split_once('.') {
-        Some((stem, _ext)) => stem,
-        None => segment,
-    };
-    let upper = stem.to_ascii_uppercase();
-    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || matches!(
-            upper.as_str(),
-            "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-        )
-        || matches!(
-            upper.as_str(),
-            "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
-        )
 }
 
 /// How a resolver treats a symlink encountered while walking down to a
@@ -212,19 +201,7 @@ pub fn resolve_under(
     policy: SymlinkPolicy,
     create_parents: bool,
 ) -> Result<PathBuf, ConfineError> {
-    resolve_under_with(root, rel, policy, create_parents, DeviceNamePolicy::Reject)
-}
-
-/// [`resolve_under`] with an explicit [`DeviceNamePolicy`]; see that enum for
-/// the single caller that opts out of the reserved-device-name rule.
-pub fn resolve_under_with(
-    root: &Path,
-    rel: &str,
-    policy: SymlinkPolicy,
-    create_parents: bool,
-    device_names: DeviceNamePolicy,
-) -> Result<PathBuf, ConfineError> {
-    check_rel_with(rel, device_names)?;
+    check_rel(rel)?;
     let canonical_root = fs::canonicalize(root)?;
     match policy {
         SymlinkPolicy::RefuseAny => resolve_refuse_any(&canonical_root, rel, create_parents),
@@ -396,14 +373,32 @@ mod tests {
             "a\0b",
             "",
             ".",
-            "con.md",
-            "COM1.md",
-            "lpt3.txt",
-            "nul",
             "ab:c.md",
             "nested/ab:c.md",
+            // Win32 strips these, silently aliasing distinct bundle paths onto
+            // one file; see `check_rel`'s docs.
+            "dir./x.md",
+            "dir /x.md",
+            "trailing.md.",
+            "trailing.md ",
         ] {
             assert!(check_rel(rel).is_err(), "expected {rel:?} to be rejected");
+        }
+    }
+
+    /// The trailing-dot/space rule exists because it is the ONE Windows path
+    /// quirk the filesystem does not report: `dir./x.md` and `dir/x.md` are
+    /// both `BundlePath`-legal and resolve to the same file, so a transaction
+    /// writing both loses one with no error anywhere. Everything Windows
+    /// genuinely refuses (`<`, `|`, control bytes) is left to the filesystem.
+    #[test]
+    fn check_rel_rejects_only_the_silently_normalized_shapes() {
+        assert!(check_rel("dir./x.md").is_err());
+        assert!(check_rel("dir /x.md").is_err());
+        // Interior and leading dots/spaces survive verbatim on disk, so they
+        // are none of this check's business.
+        for rel in ["a.b.md", "dir.name/x.md", "a b.md", " leading.md"] {
+            assert!(check_rel(rel).is_ok(), "expected {rel:?} to be accepted");
         }
     }
 
@@ -422,23 +417,22 @@ mod tests {
         }
     }
 
-    /// `DeviceNamePolicy::Allow` drops the reserved-device-name rule and
-    /// nothing else; see the enum's docs for the one caller that needs it
-    /// (`waml-cli`'s index writer, whose accepted set predates this module).
+    /// Windows reserved device names are NOT rejected; see `check_rel`'s docs
+    /// for the probe results behind that. They are unreachable as file names
+    /// (`BundlePath::parse` forces a `.md` suffix, and `con.md` is an ordinary
+    /// file), and as directory segments the filesystem reports every failure
+    /// it has -- so a blacklist here could only add false rejections.
     #[test]
-    fn allowing_device_names_drops_only_the_device_name_rule() {
-        for rel in ["con.md", "con/index.md", "COM1.md", "nested/nul/index.md"] {
-            assert!(check_rel(rel).is_err(), "expected {rel:?} to be rejected");
-            assert!(
-                check_rel_with(rel, DeviceNamePolicy::Allow).is_ok(),
-                "expected {rel:?} to be accepted when device names are allowed"
-            );
-        }
-        for rel in ["../x", "/abs", "ab:c.md", "a\0b", ""] {
-            assert!(
-                check_rel_with(rel, DeviceNamePolicy::Allow).is_err(),
-                "expected {rel:?} to stay rejected when device names are allowed"
-            );
+    fn check_rel_admits_device_names_and_leaves_them_to_the_filesystem() {
+        for rel in [
+            "con.md",
+            "con/index.md",
+            "COM1.md",
+            "nul.md",
+            "nested/nul/index.md",
+            "lpt3.txt",
+        ] {
+            assert!(check_rel(rel).is_ok(), "expected {rel:?} to be accepted");
         }
     }
 

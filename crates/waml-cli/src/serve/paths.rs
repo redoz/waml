@@ -16,8 +16,9 @@ use std::path::{Path, PathBuf};
 use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 
 /// Syntactic check only: reject anything that could escape the served
-/// directory or name a reserved device, on every platform (a document
-/// authored on one OS can be served from another).
+/// directory, plus the trailing dot/space segments Windows silently strips,
+/// on every platform (a document authored on one OS can be served from
+/// another). See `confine::check_rel` for what is deliberately NOT rejected.
 pub fn is_safe_rel(rel: &str) -> Result<(), String> {
     confine::check_rel(rel).map_err(|error| confine_error_to_string(rel, error))
 }
@@ -73,14 +74,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_nul_and_windows_device_names() {
-        for rel in [
-            "a\0b", "con.md", "CON", "com1", "COM1.md", "lpt3.txt", "nul",
-        ] {
+    fn rejects_a_nul_byte() {
+        assert!(is_safe_rel("a\0b").is_err());
+    }
+
+    /// Windows reserved device names are no longer rejected here: they are
+    /// ordinary files and directories in practice, and the filesystem reports
+    /// the one case that misbehaves. See `confine::check_rel` for the probe.
+    /// What replaced the table is the trailing dot/space rule, the single
+    /// Windows quirk the filesystem performs silently.
+    #[test]
+    fn admits_device_names_and_rejects_silently_stripped_segments() {
+        for rel in ["con.md", "CON", "com1", "COM1.md", "lpt3.txt", "nul"] {
+            assert!(is_safe_rel(rel).is_ok(), "expected {rel:?} to be accepted");
+        }
+        for rel in ["dir./x.md", "dir /x.md"] {
             assert!(is_safe_rel(rel).is_err(), "expected {rel:?} to be rejected");
         }
-        // Negative: a name that merely contains a reserved word is fine.
-        assert!(is_safe_rel("console.md").is_ok());
     }
 
     /// New as of the shared `host::confine` module (Task 11): an interior
