@@ -473,6 +473,13 @@ script_mod! {
                                             width: Fill
                                             height: Fit
                                             draw_bullet +: { color: atlas.text }
+                                            // A link is the only text here
+                                            // that acts when tapped, and the
+                                            // tap hit-test never runs on a
+                                            // mouse move (no hover, no
+                                            // cursor), so the accent plus the
+                                            // underline IS the affordance.
+                                            link_color: atlas.accent
                                             flow_body +: {
                                                 font_color: atlas.text
                                                 draw_block +: {

@@ -74,6 +74,9 @@ script_mod! {
             inline_code_padding: Inset{left: 3, right: 3, top: 1, bottom: 1}
             inline_code_margin: Inset{left: 2, right: 2, top: 0, bottom: 0}
         }
+        // The same blue the raw-markdown surface paints a link destination
+        // in, so one document reads the same through either face.
+        link_color: #2869c7
     }
 }
 
@@ -222,6 +225,13 @@ pub struct MarkdownViewer {
     /// gap, and a wrapped heading must read as one unit.
     #[live(1.1)]
     heading_line_spacing: f32,
+    /// Colour a navigable link's label draws in. Link text is the only text
+    /// on a reading surface that DOES something when tapped, so it says so:
+    /// this colour plus an underline is the whole affordance (the tap
+    /// hit-test deliberately never runs on a mouse move, so there is no hover
+    /// state or cursor change to lean on).
+    #[live]
+    link_color: Vec4,
 
     #[rust]
     document: Option<Arc<ReadingDocument>>,
@@ -400,6 +410,13 @@ impl MarkdownViewer {
     /// destination out: the flow maps the point to its own char index, the
     /// source map maps that back to a source offset, and the document
     /// answers which link covers it.
+    ///
+    /// The candidate is then screened against the pixels the link actually
+    /// drew on. `TextFlow::point_to_index` CLAMPS: a point that lands on no
+    /// run at all resolves to the nearest character, so without this gate a
+    /// click in the reading column's margin, or below the last line, would
+    /// navigate whatever link happens to sit closest -- and every
+    /// "Referenced by" bullet on a generated classifier page starts with one.
     fn link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
         let document = self.document.as_ref()?;
         let flow_ref = self.flow(cx);
@@ -408,7 +425,15 @@ impl MarkdownViewer {
             flow.selection_point_to_char_index(cx, point)?
         };
         let span = self.source_map.source_span(index..index + 1)?;
-        Some(document.link_at(span.start())?.destination.clone())
+        let link = document.link_at(span.start())?;
+        if !self
+            .source_rects(cx, link.source_range)
+            .iter()
+            .any(|rect| rect.contains(point))
+        {
+            return None;
+        }
+        Some(link.destination.clone())
     }
 
     /// Top of the drawn document, from the last draw's tracked run rects.
@@ -440,8 +465,18 @@ impl MarkdownViewer {
         source: &str,
         piece: &ReadingPiece,
         first_on_line: &mut bool,
+        link_color: Vec4,
     ) {
-        Self::draw_piece_wrapped(flow, map, cx, source, piece, first_on_line, true)
+        Self::draw_piece_wrapped(
+            flow,
+            map,
+            cx,
+            source,
+            piece,
+            first_on_line,
+            true,
+            link_color,
+        )
     }
 
     /// `soft_wrap` turns a source newline into a joining space so reflowed
@@ -456,6 +491,7 @@ impl MarkdownViewer {
         piece: &ReadingPiece,
         first_on_line: &mut bool,
         soft_wrap: bool,
+        link_color: Vec4,
     ) {
         if !piece.emit {
             return;
@@ -495,7 +531,16 @@ impl MarkdownViewer {
         // its rect tracker: that is the only public handle on where this
         // source range actually landed in pixels (search-highlight painting).
         flow.areas_tracker.push_tracker();
+        let as_link = draws_as_link(piece.role);
+        if as_link {
+            flow.underline.push();
+            flow.font_colors.push(link_color);
+        }
         flow.draw_text(cx, drawn);
+        if as_link {
+            flow.font_colors.pop();
+            flow.underline.pop();
+        }
         let (area_start, area_end) = flow.areas_tracker.pop_tracker();
         let after = flow.text_len();
         debug_assert_eq!(
@@ -538,6 +583,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
+                        self.link_color,
                     );
                 }
                 flow.bold.pop();
@@ -582,6 +628,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
+                        self.link_color,
                     );
                 }
                 // A nested list must start on its own line inside the item's
@@ -615,6 +662,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
+                        self.link_color,
                     );
                 }
                 // Same as list items: child blocks must not ride the tail of
@@ -653,6 +701,7 @@ impl MarkdownViewer {
                         piece,
                         &mut first_on_line,
                         false,
+                        self.link_color,
                     );
                 }
                 flow.fixed.pop();
@@ -691,6 +740,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
+                        self.link_color,
                     );
                     if strong {
                         flow.bold.pop();
@@ -863,6 +913,19 @@ impl Widget for MarkdownViewer {
         // Selection, copy and point_to_index are TextFlow's, not ours.
         self.view.handle_event(cx, event, scope);
     }
+}
+
+/// Whether a run with this role draws as a navigable link: coloured and
+/// underlined, so a reader can tell before tapping that the text does
+/// something.
+///
+/// `TextRole::LinkLabel` is exactly the set the document's `links` cover --
+/// `compile.rs` assigns it to a link's content range and skips a link whose
+/// owner is an image -- so the affordance and the hit-test agree by
+/// construction. `LinkDestination` (the `(...)` half) is a suppressed marker
+/// in a reading view and never draws at all.
+fn draws_as_link(role: TextRole) -> bool {
+    matches!(role, TextRole::LinkLabel)
 }
 
 /// Whether `event` can carry a `Hit::FingerUp` for a captured area.
