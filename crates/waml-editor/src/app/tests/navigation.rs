@@ -3452,6 +3452,21 @@ fn the_mounted_book_surface_is_a_live_widget() {
     );
 }
 
+/// `BookSurface` builds its prose children from App's `ReadingProse` alias by
+/// NAME, so nothing in the compiler stops the alias from being renamed or
+/// dropped -- the book would silently fall back to the unthemed default and
+/// draw prose in makepad's dark-theme text colour on our light surface.
+/// Asserted against the real App DSL, the only place the alias is declared.
+#[test]
+fn the_reading_prose_alias_is_declared() {
+    let (mut cx, _app) = mounted_production_shell();
+    let declared = cx.with_vm(|vm| !crate::book_surface::reading_prose_value(vm).is_nil());
+    assert!(
+        declared,
+        "mod.widgets.ReadingProse must exist -- BookSurface resolves it by name"
+    );
+}
+
 #[test]
 fn right_clicking_a_concept_row_still_opens_it_before_the_menu() {
     let (mut cx, mut app) = mounted_production_shell();

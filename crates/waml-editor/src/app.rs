@@ -79,6 +79,46 @@ script_mod! {
     use mod.widgets.SearchResultsListView
     use mod.widgets.FindStrip
 
+    // The ONE themed reading-prose viewer. `MarkdownViewer` lives in
+    // `waml-markdown-editor`, a crate below this one, so its own type default
+    // carries no palette -- `atlas` is declared here (`theme_atlas.rs`) and
+    // re-pointed light/dark by `App::script_mod`, and the lower crate must not
+    // acquire a hidden runtime dependency on a module its host defines.
+    //
+    // Every prose surface instantiates THIS alias, not `MarkdownViewer`:
+    // the reading tab mounts it below, and `BookSurface` builds its per-section
+    // children from it by name (`book_surface::reading_prose`). Instantiating
+    // the bare widget instead silently yields makepad's dark-theme default text
+    // colour on our light surface -- legible nowhere, and green in every test.
+    mod.widgets.ReadingProse = mod.widgets.MarkdownViewer{
+        draw_bullet +: { color: atlas.text }
+        // A link is the only text here that acts when tapped, and the tap
+        // hit-test never runs on a mouse move (no hover, no cursor), so the
+        // accent plus the underline IS the affordance.
+        link_color: atlas.accent
+        flow_body +: {
+            font_color: atlas.text
+            draw_block +: {
+                // `text_mid`, not `text_dim`: thin linework (the `---` rule,
+                // the quote bar, table borders) falls below legibility in the
+                // dim grey on the light surface.
+                sep_color: atlas.text_mid
+                quote_fg_color: atlas.text_mid
+                table_border_color: atlas.text_mid
+                // Block tints one step below the surface, so quote/code panels
+                // read as panels instead of vanishing into the page.
+                quote_bg_color: atlas.canvas_ground
+                code_color: atlas.canvas_ground
+                table_header_bg_color: atlas.canvas_ground
+                line_color: atlas.text
+            }
+        }
+    }
+    // AFTER the declaration above, never with the `use` block at the top: a
+    // `use` resolves eagerly, so importing the alias before it exists binds
+    // nothing and the mount below becomes a dead node.
+    use mod.widgets.ReadingProse
+
     startup() do #(App::script_component(vm)){
         ui: Root{
             main_window := Window{
@@ -469,38 +509,9 @@ script_mod! {
                                         // Reading margin: prose should not
                                         // touch the window chrome.
                                         padding: Inset{left: 24.0, right: 24.0, top: 16.0, bottom: 24.0}
-                                        viewer := MarkdownViewer{
+                                        viewer := ReadingProse{
                                             width: Fill
                                             height: Fit
-                                            draw_bullet +: { color: atlas.text }
-                                            // A link is the only text here
-                                            // that acts when tapped, and the
-                                            // tap hit-test never runs on a
-                                            // mouse move (no hover, no
-                                            // cursor), so the accent plus the
-                                            // underline IS the affordance.
-                                            link_color: atlas.accent
-                                            flow_body +: {
-                                                font_color: atlas.text
-                                                draw_block +: {
-                                                    // `text_mid`, not `text_dim`: thin
-                                                    // linework (the `---` rule, the
-                                                    // quote bar, table borders) falls
-                                                    // below legibility in the dim grey
-                                                    // on the light surface.
-                                                    sep_color: atlas.text_mid
-                                                    quote_fg_color: atlas.text_mid
-                                                    table_border_color: atlas.text_mid
-                                                    // Block tints one step below the
-                                                    // surface, so quote/code panels
-                                                    // read as panels instead of
-                                                    // vanishing into the page.
-                                                    quote_bg_color: atlas.canvas_ground
-                                                    code_color: atlas.canvas_ground
-                                                    table_header_bg_color: atlas.canvas_ground
-                                                    line_color: atlas.text
-                                                }
-                                            }
                                         }
                                     }
                                     // The view-source toggle lives in the

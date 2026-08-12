@@ -508,9 +508,7 @@ impl BookSurface {
     fn make_child(&self, cx: &mut Cx, section: &BookSection) -> Option<WidgetRef> {
         match &section.body {
             SectionBody::Prose { document, source } => {
-                let child = WidgetRef::new_with_inner(Box::new(
-                    cx.with_vm(MarkdownViewer::script_new_with_default),
-                ));
+                let child = WidgetRef::new_with_inner(Box::new(cx.with_vm(reading_prose)));
                 child
                     .as_markdown_viewer()
                     .install_document(cx, document.clone(), source.clone());
@@ -857,6 +855,36 @@ fn link_icon(reason: &LinkReason) -> Icon {
 /// The first (index, rect) in `rects` containing `pos`. Shared by hover
 /// hit-testing and click hit-testing so both agree on the exact same
 /// regions.
+/// One themed reading-prose viewer, built from App's `mod.widgets.ReadingProse`
+/// alias -- the same object the reading tab mounts, so a book section and a
+/// reading tab of the same document typeset identically.
+///
+/// Not `MarkdownViewer::script_new_with_default`: `MarkdownViewer` lives in
+/// `waml-markdown-editor`, below this crate, so its type default carries no
+/// palette and the bare widget draws prose in makepad's dark-theme text colour
+/// -- invisible on our light surface, and green in every headless test.
+/// `reading_prose_alias_is_declared` pins the alias's existence.
+///
+/// A missing alias falls back to the bare default and says so: pale prose still
+/// beats no prose, and the log names the cause rather than leaving a surface
+/// that merely looks empty.
+fn reading_prose(vm: &mut ScriptVm) -> MarkdownViewer {
+    let value = reading_prose_value(vm);
+    if value.is_nil() {
+        log!("book surface: mod.widgets.ReadingProse is not declared, falling back to the unthemed MarkdownViewer default");
+        return MarkdownViewer::script_new_with_default(vm);
+    }
+    MarkdownViewer::script_from_value(vm, value)
+}
+
+/// The raw alias lookup, split out so a test can assert the alias resolves
+/// without instantiating a widget.
+pub(crate) fn reading_prose_value(vm: &mut ScriptVm) -> ScriptValue {
+    use makepad_widgets::makepad_script::trap::NoTrap;
+    let widgets = vm.module(id!(widgets));
+    vm.bx.heap.value(widgets, id!(ReadingProse).into(), NoTrap)
+}
+
 fn hit_row(rects: &[(usize, Rect)], pos: DVec2) -> Option<usize> {
     rects.iter().find(|(_, r)| r.contains(pos)).map(|(i, _)| *i)
 }
