@@ -133,8 +133,12 @@ fn save_bundle_atomic_with_commit(
     // Directory creation can expose a concurrent link swap, so re-check the
     // entire pending set before the first file replacement.
     let mut pending = Vec::with_capacity(planned.len());
-    for write in planned {
-        recheck_confinement(&root, &write.relative)?;
+    for mut write in planned {
+        // Adopt the re-resolved target: if a parent was swapped for an in-root
+        // symlink since planning, the path this save will actually touch is the
+        // resolved one, so screening the stale planning-pass target would read a
+        // different file than the transaction writes.
+        write.target = recheck_confinement(&root, &write.relative)?;
         if disk_state(&root, &write.target, write.baseline, write.desired)? == DiskState::NeedsWrite
         {
             pending.push(write);
@@ -168,9 +172,12 @@ fn save_bundle_atomic_with_commit(
     Ok(())
 }
 
-fn recheck_confinement(root: &Path, relative: &str) -> io::Result<()> {
+/// Re-resolve `relative` under `root` after directory creation, returning the
+/// path the save will actually touch. Callers must use the returned target
+/// rather than one resolved at plan time: an in-root link swap between the two
+/// passes changes where the write lands.
+fn recheck_confinement(root: &Path, relative: &str) -> io::Result<PathBuf> {
     confine::resolve_under(root, relative, SymlinkPolicy::FollowWithinRoot, false)
-        .map(|_| ())
         .map_err(|error| confine_error_to_io(relative, error))
 }
 
@@ -333,7 +340,7 @@ fn save_conflict(target: &Path, reason: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_dirty_writes, save_bundle_atomic as save_source_bundle_atomic,
+        commit_dirty_writes, recheck_confinement, save_bundle_atomic as save_source_bundle_atomic,
         save_bundle_atomic_with_commit, save_ticket_atomic,
     };
     use std::path::{Path, PathBuf};
@@ -788,6 +795,26 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(!root.path().join("safe").exists());
         assert!(!outside.path().join("missing").exists());
+    }
+
+    #[test]
+    fn the_pre_transaction_recheck_returns_the_resolved_target() {
+        let root = TempDir::new();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        if !make_dir_link(&real, &root.path().join("linked")) {
+            return;
+        }
+
+        // The conflict screen runs against this path, so it must be the file the
+        // transaction will actually replace -- resolved through the in-root link,
+        // not the lexical join the planning pass started from.
+        let resolved = recheck_confinement(root.path(), "linked/diagram.md").unwrap();
+
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&real).unwrap().join("diagram.md")
+        );
     }
 
     #[test]
