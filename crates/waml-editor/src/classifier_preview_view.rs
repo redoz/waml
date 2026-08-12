@@ -251,7 +251,11 @@ impl DocView for ClassifierPreviewView {
                 right_dock: Some(Icon::PanelRight),
                 emphasis_toggle: None,
                 view_toggle: None,
-                zoom: None,
+                // The body IS the shared reading viewer, so it zooms with the
+                // reading ladder. Declaring `None` hid the `[-][%][+]` control
+                // and left the widget at whatever scale the last reading tab
+                // set on it, with no way to correct it.
+                zoom: Some(crate::zoom::ZoomTarget::Reading),
             },
         }
     }
@@ -483,5 +487,18 @@ mod tests {
         assert!(!chrome.view_bar);
         assert!(chrome.document_header.breadcrumb);
         assert_eq!(chrome.document_header.right_dock, Some(Icon::PanelRight));
+    }
+
+    /// The preview's body is the SHARED reading viewer. Declaring no zoom
+    /// target hides the `[-][%][+]` control and leaves the widget at whatever
+    /// scale the last reading tab left on it, with the persisted reading zoom
+    /// never applied.
+    #[test]
+    fn the_preview_zooms_with_the_reading_surface_it_draws_on() {
+        let view = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Reading)
+        );
     }
 }

@@ -887,7 +887,9 @@ mod tests {
                     right_dock: Some(Icon::PanelRight),
                     emphasis_toggle: None,
                     view_toggle: None,
-                    zoom: None,
+                    // The preview draws on the shared reading viewer, so it
+                    // zooms with it.
+                    zoom: Some(crate::zoom::ZoomTarget::Reading),
                 },
             }
         );
