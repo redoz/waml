@@ -266,6 +266,29 @@ impl MarkdownViewer {
         self.redraw(cx);
     }
 
+    /// Drop the installed document, leaving an empty surface. This widget is
+    /// SHARED between views, so a view whose document has gone away must say
+    /// so: otherwise the previous view's page stays on screen, presented as
+    /// this one's.
+    pub fn clear_document(&mut self, cx: &mut Cx) {
+        if self.document.is_none() && self.source.is_none() {
+            return;
+        }
+        self.document = None;
+        self.source = None;
+        self.source_map.clear();
+        self.content_height = 0.0;
+        self.redraw(cx);
+    }
+
+    /// The source text of the document currently installed, if any. Views
+    /// share one viewer, so this is how a view asks "is the surface still
+    /// showing MINE?" -- compare with `Arc::ptr_eq` against the `Arc` it
+    /// installed.
+    pub fn installed_source(&self) -> Option<Arc<str>> {
+        self.source.clone()
+    }
+
     /// See the `content_height` field: the installed document's drawn height
     /// from the last `draw_walk`, zero before any such draw.
     pub fn content_height(&self) -> f64 {
@@ -820,20 +843,40 @@ impl Widget for MarkdownViewer {
         // `FingerDown` for its own selection, and makepad delivers `FingerUp`
         // only to the area that captured. A DRAG that ends over the text is a
         // selection, not a click, which is what `was_tap` screens out.
-        let flow_area = self.flow(cx).area();
-        if let Hit::FingerUp(fu) = event.hits(cx, flow_area) {
-            if fu.is_over && fu.was_tap() {
-                if let Some(destination) = self.link_at_point(cx, fu.abs) {
-                    cx.widget_action(
-                        self.widget_uid(),
-                        MarkdownViewerAction::LinkClicked { destination },
-                    );
+        //
+        // Gated on `carries_finger_up` so this never hit-tests a mouse move:
+        // hover is one-shot per area, and the `TextFlow` under this widget
+        // hit-tests the SAME area for its I-beam cursor.
+        if carries_finger_up(event) {
+            let flow_area = self.flow(cx).area();
+            if let Hit::FingerUp(fu) = event.hits(cx, flow_area) {
+                if fu.is_over && fu.was_tap() {
+                    if let Some(destination) = self.link_at_point(cx, fu.abs) {
+                        cx.widget_action(
+                            self.widget_uid(),
+                            MarkdownViewerAction::LinkClicked { destination },
+                        );
+                    }
                 }
             }
         }
         // Selection, copy and point_to_index are TextFlow's, not ours.
         self.view.handle_event(cx, event, scope);
     }
+}
+
+/// Whether `event` can carry a `Hit::FingerUp` for a captured area.
+///
+/// `Event::hits` is destructive for hover: makepad's `finger.rs` hands
+/// `FingerHoverIn` to the FIRST caller that hit-tests an area on a
+/// `MouseMove` (it records the area as hovered) and every later caller gets
+/// `FingerHoverOver`. The inner `TextFlow` hit-tests the same flow area to
+/// raise the I-beam on `FingerHoverIn`, so a link hit-test that ran on mouse
+/// moves would silently eat the cursor change on EVERY reading surface. Only
+/// a mouse-up (or a touch update) can produce the `FingerUp` the link tap
+/// needs, so those are the only events this widget reaches for.
+fn carries_finger_up(event: &Event) -> bool {
+    matches!(event, Event::MouseUp(_) | Event::TouchUpdate(_))
 }
 
 /// Whether `event` is a wheel scroll held with the platform's zoom modifier
@@ -863,6 +906,53 @@ fn zoom_wheel_modifier(modifiers: KeyModifiers, macos: bool) -> bool {
         modifiers.logo && !modifiers.control
     } else {
         modifiers.control && !modifiers.logo
+    }
+}
+
+#[cfg(test)]
+mod link_hit_gate_tests {
+    use super::*;
+    use makepad_widgets::event::TouchUpdateEvent;
+    use std::cell::Cell;
+
+    /// The regression this gate exists for: a mouse move must never reach the
+    /// link hit-test, or the `TextFlow` below loses the one-shot
+    /// `FingerHoverIn` that raises the I-beam over reading text.
+    #[test]
+    fn only_a_mouse_up_or_a_touch_update_reaches_the_link_hit_test() {
+        let move_ = Event::MouseMove(MouseMoveEvent {
+            abs: Vec2d::default(),
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.0,
+            handled: Cell::new(Area::default()),
+        });
+        let down = Event::MouseDown(MouseDownEvent {
+            abs: Vec2d::default(),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        });
+        let up = Event::MouseUp(MouseUpEvent {
+            abs: Vec2d::default(),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.0,
+        });
+        let touch = Event::TouchUpdate(TouchUpdateEvent {
+            window_id: WindowId(0, 0),
+            time: 0.0,
+            modifiers: KeyModifiers::default(),
+            touches: Vec::new(),
+        });
+
+        assert!(!carries_finger_up(&move_));
+        assert!(!carries_finger_up(&down));
+        assert!(carries_finger_up(&up));
+        assert!(carries_finger_up(&touch));
     }
 }
 
@@ -918,6 +1008,19 @@ impl MarkdownViewerRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.install_document(cx, document, source);
         }
+    }
+
+    /// See [`MarkdownViewer::clear_document`].
+    pub fn clear_document(&self, cx: &mut Cx) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.clear_document(cx);
+        }
+    }
+
+    /// See [`MarkdownViewer::installed_source`]. `None` for an empty ref,
+    /// which reads the same as "nothing installed".
+    pub fn installed_source(&self) -> Option<Arc<str>> {
+        self.borrow()?.installed_source()
     }
 
     /// See [`MarkdownViewer::content_height`]. Zero for an empty ref, which
