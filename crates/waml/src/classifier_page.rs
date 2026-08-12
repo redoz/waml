@@ -55,12 +55,67 @@ fn spell_multiplicity(raw: &str) -> Option<String> {
     Some(format!("{} to {}", number_word(lo), number_word(hi)))
 }
 
+/// A character no inline link destination can carry in any form: `<` is
+/// rejected outright inside the angle-bracket form (waml-syntax
+/// `inline_destination` scans the RAW slice, so `\<` does not help), `>` ends
+/// that form, and a newline ends the inline itself. All three are illegal in a
+/// filename on every mainstream filesystem, so a key carrying one cannot round
+/// -trip to disk either; percent-encoding at least keeps the link clickable and
+/// lets the resolver report an honest miss instead of the destination silently
+/// swallowing the rest of the sentence.
+fn is_unrepresentable_in_a_destination(ch: char) -> bool {
+    matches!(ch, '<' | '>') || ch.is_control()
+}
+
+/// The bare destination form ends at the first whitespace and needs balanced
+/// parentheses; `BundlePath::parse` permits both, so such a key must take the
+/// angle-bracket form or the link renders as literal text.
+fn needs_angle_brackets(ch: char) -> bool {
+    ch.is_whitespace() || ch == '(' || ch == ')'
+}
+
 /// The link a classifier's page is written to. Absolute from the bundle root:
 /// a node key IS its concept id, so `/{key}.md` resolves the same from any
 /// referring directory (`waml-editor`'s `navigation::resolve_link` normalises
 /// a leading `/` against the bundle root).
+///
+/// The returned text is a complete markdown destination, angle-bracketed when
+/// the key needs it -- a key is a bundle path, and a bundle path may hold
+/// spaces and parentheses.
 fn document_href(key: &str) -> String {
-    format!("/{key}.md")
+    let mut path = String::with_capacity(key.len() + 4);
+    path.push('/');
+    for ch in key.chars() {
+        if is_unrepresentable_in_a_destination(ch) {
+            let mut buffer = [0u8; 4];
+            for byte in ch.encode_utf8(&mut buffer).as_bytes() {
+                path.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            path.push(ch);
+        }
+    }
+    path.push_str(".md");
+    if path.contains(needs_angle_brackets) {
+        format!("<{path}>")
+    } else {
+        path
+    }
+}
+
+/// Link-label text with the punctuation that would corrupt the label escaped.
+/// A stray `]` closes the label early and a stray `[` opens a span the label
+/// never closes; either way the link degrades to literal text. The escape
+/// backslash is a syntax marker, so the reading view never draws it.
+fn escape_label(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// The far end's noun phrase. The classifier name is the link text either way;
@@ -72,9 +127,11 @@ fn document_href(key: &str) -> String {
 /// match the model exactly; an author who wants a plural noun declares a role,
 /// which is their own text.
 fn far_end_phrase(role: Option<&str>, classifier: &str, key: &str) -> String {
-    let link = format!("[{classifier}]({})", document_href(key));
+    let link = format!("[{}]({})", escape_label(classifier), document_href(key));
     match role {
-        Some(role) if !role.is_empty() && role != classifier => format!("{role} ({link})"),
+        Some(role) if !role.is_empty() && role != classifier => {
+            format!("{} ({link})", escape_label(role))
+        }
         _ => link,
     }
 }
@@ -392,6 +449,87 @@ mod tests {
         assert_eq!(
             far_end_phrase(Some("Customer"), "Customer", "customer"),
             "[Customer](/customer.md)"
+        );
+    }
+
+    /// `BundlePath::parse` permits spaces and parentheses, and the bare
+    /// destination form ends at the first whitespace -- so a key that carries
+    /// either must go out angle-bracketed or the whole link renders as
+    /// un-clickable literal text.
+    #[test]
+    fn a_key_the_bare_destination_form_cannot_carry_is_angle_bracketed() {
+        assert_eq!(
+            far_end_phrase(None, "Order", "my order"),
+            "[Order](</my order.md>)"
+        );
+        assert_eq!(
+            far_end_phrase(None, "Order", "orders (draft)"),
+            "[Order](</orders (draft).md>)"
+        );
+        // Nothing special in the key: the plain form stays plain.
+        assert_eq!(far_end_phrase(None, "Order", "order"), "[Order](/order.md)");
+    }
+
+    /// `<` and `>` cannot appear in ANY destination form, so they are
+    /// percent-encoded rather than emitted raw (which would truncate the
+    /// destination and swallow the rest of the sentence).
+    #[test]
+    fn a_key_no_destination_form_can_carry_is_percent_encoded() {
+        assert_eq!(
+            far_end_phrase(None, "Order", "a<b>c"),
+            "[Order](/a%3Cb%3Ec.md)"
+        );
+    }
+
+    /// The one that matters: the emitted page, put back through the markdown
+    /// parser, must still hold a LINK whose destination is the far
+    /// classifier's document. The bare form breaks at the space and then
+    /// demands a `)`, so before angle-bracketing this page parsed with no
+    /// links at all.
+    #[test]
+    fn a_link_to_a_spaced_key_survives_a_round_trip_through_the_parser() {
+        use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
+
+        use crate::model::{Edge, RelEnd};
+
+        let mut model = projection(&[("car.md", "---\ntype: uml.Class\ntitle: Car\n---\n# Car\n")]);
+        // Built by hand: a relationship AUTHORED against a spaced path hits
+        // the same destination-form problem in the source document, which is
+        // the author's own escape to make, not this generator's.
+        model.edges.push(Edge {
+            source: "car".into(),
+            target: "front wheel".into(),
+            kind: RelationshipKind::Aggregates,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            bidirectional: false,
+        });
+        let page = classifier_page(&model, "car").expect("the node has a page");
+        let text = SourceText::new(page.clone()).expect("the page is valid source text");
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            text,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .expect("the generated page parses");
+        let destinations: Vec<String> = snapshot
+            .queries()
+            .links()
+            .map(|link| link.destination.to_string())
+            .collect();
+        assert_eq!(destinations, vec!["/front wheel.md".to_string()], "{page}");
+    }
+
+    #[test]
+    fn brackets_in_a_title_or_role_are_escaped_so_the_label_survives() {
+        assert_eq!(
+            far_end_phrase(None, "Order [draft]", "order"),
+            "[Order \\[draft\\]](/order.md)"
+        );
+        assert_eq!(
+            far_end_phrase(Some("lines ]"), "OrderLine", "order-line"),
+            "lines \\] ([OrderLine](/order-line.md))"
         );
     }
 
