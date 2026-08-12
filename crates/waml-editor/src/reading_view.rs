@@ -87,9 +87,9 @@ pub struct ReadingView {
     lease: MarkdownExtensionLease,
     #[cfg(target_arch = "wasm32")]
     next_frame: DeferredFrameSlot<NextFrame>,
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
     browser_trace_generation: u64,
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
     last_browser_trace: Option<(u64, usize)>,
 }
 
@@ -118,9 +118,9 @@ impl ReadingView {
             lease,
             #[cfg(target_arch = "wasm32")]
             next_frame: DeferredFrameSlot::default(),
-            #[cfg(all(target_arch = "wasm32", debug_assertions))]
+            #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
             browser_trace_generation: 0,
-            #[cfg(all(target_arch = "wasm32", debug_assertions))]
+            #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
             last_browser_trace: None,
         }
     }
@@ -240,7 +240,7 @@ impl ReadingView {
             source,
             self.appearance,
         );
-        #[cfg(all(target_arch = "wasm32", debug_assertions))]
+        #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
         {
             self.browser_trace_generation = self.browser_trace_generation.wrapping_add(1);
         }
@@ -335,7 +335,7 @@ impl ReadingView {
     }
 
     fn trace_browser_pending(&mut self) {
-        #[cfg(all(target_arch = "wasm32", debug_assertions))]
+        #[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]
         {
             let pair = (self.browser_trace_generation, self.states.pending_count());
             if self.last_browser_trace == Some(pair) {

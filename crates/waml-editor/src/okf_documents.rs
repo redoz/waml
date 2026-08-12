@@ -79,6 +79,58 @@ pub fn open_with_asset_host(
     })
 }
 
+pub fn open_markdown_for_target(
+    analysis: &waml::analysis::OkfAnalysis,
+    target: &waml::view::row::RowTarget,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
+) -> Option<OpenDocument> {
+    use waml::view::row::RowTarget;
+    match target {
+        RowTarget::Concept(concept_id) => {
+            open_with_asset_host(analysis, concept_id, assets, emphasis)
+        }
+        RowTarget::Folder(address) => {
+            let key = source_key_for(target)?;
+            if !source_document_exists(analysis, &key) {
+                return None;
+            }
+            let title = analysis
+                .bundle
+                .index(address)
+                .and_then(|index| index.title.clone())
+                .unwrap_or_else(|| {
+                    address
+                        .rsplit('/')
+                        .next()
+                        .filter(|last| !last.is_empty())
+                        .unwrap_or(address)
+                        .to_string()
+                });
+            let locator = DocumentLocator::new(target.clone(), SurfaceId::markdown());
+            Some(OpenDocument {
+                tab_id: crate::documents::tab_id_for(&locator),
+                locator,
+                title,
+                presentation: DocumentPresentation {
+                    icon: Icon::FileText,
+                    accent: generic_okf_accent(),
+                    category: NavCategory::OkfDocument,
+                },
+                view: Box::new(
+                    crate::generic_okf_view::GenericOkfView::new_with_asset_host(
+                        key,
+                        assets.clone(),
+                        markdown_extensions(),
+                        emphasis,
+                    ),
+                ),
+            })
+        }
+        RowTarget::Virtual => None,
+    }
+}
+
 #[cfg(test)]
 pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<OpenDocument> {
     open_with_asset_host(

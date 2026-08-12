@@ -335,6 +335,76 @@ fn opening_a_bundle_rebuilds_the_search_index() {
     );
 }
 
+#[test]
+fn opening_an_index_only_bundle_falls_back_to_its_markdown_reader() {
+    let (mut cx, mut app) = navigation_app();
+    let next = waml::source::SourceBundle::try_from_pairs([(
+        "index.md",
+        "# Mermaid reading view\n\n```mermaid\nflowchart TD\nA --> B\n```\n",
+    )])
+    .unwrap();
+
+    assert!(app.open_bundle(&mut cx, next, "reading".to_string(), None));
+
+    let active = app
+        .documents
+        .active_tab()
+        .expect("the real root index must open as a fallback");
+    assert_eq!(
+        active.locator.target,
+        waml::view::row::RowTarget::Folder("/".to_string())
+    );
+    assert_eq!(
+        active.locator.surface,
+        waml::view::surface::SurfaceId::markdown()
+    );
+}
+
+#[test]
+fn opening_a_typed_bundle_prefers_the_first_concept_over_the_root_index() {
+    let (mut cx, mut app) = navigation_app();
+    let next = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root index\n"),
+        (
+            "incident.md",
+            "---\ntype: Runbook\ntitle: Incident\n---\n# Incident\n",
+        ),
+    ])
+    .unwrap();
+
+    assert!(app.open_bundle(&mut cx, next, "typed".to_string(), None));
+
+    let active = app
+        .documents
+        .active_tab()
+        .expect("the typed concept must keep startup priority");
+    assert_eq!(
+        active.locator.target,
+        waml::view::row::RowTarget::Concept("incident".to_string())
+    );
+    assert_eq!(
+        active.locator.surface,
+        waml::view::surface::SurfaceId::markdown()
+    );
+}
+
+#[test]
+fn opening_an_empty_bundle_keeps_the_workspace_empty() {
+    let (mut cx, mut app) = navigation_app();
+    let next = waml::source::SourceBundle::try_from_pairs(std::iter::empty::<(
+        &'static str,
+        &'static str,
+    )>())
+    .unwrap();
+
+    assert!(app.open_bundle(&mut cx, next, "empty".to_string(), None));
+
+    assert!(
+        app.documents.active_tab().is_none(),
+        "an empty bundle must not create a reading tab"
+    );
+}
+
 fn tree_row_titles(cx: &Cx, app: &App) -> Vec<String> {
     app.ui
         .widget(cx, ids!(project_tree))

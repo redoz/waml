@@ -158,10 +158,7 @@ pub fn surface_table() -> Vec<(&'static str, SurfaceFactory)> {
 // live open path already uses, so a factory produces the exact same tab
 // (wrappers included) as today's provider chain.
 fn open_markdown(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
-    let RowTarget::Concept(id) = target else {
-        return None;
-    };
-    crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets, ctx.emphasis)
+    crate::okf_documents::open_markdown_for_target(ctx.analysis, target, &ctx.assets, ctx.emphasis)
 }
 
 fn open_source(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
@@ -330,12 +327,14 @@ mod tests {
     }
 
     #[test]
-    fn open_markdown_degrades_to_none_for_a_folder_target() {
+    fn open_markdown_opens_the_index_for_a_folder_target() {
         let prepared = prepared();
         let (_, analysis, uml, _) = prepared.into_parts();
         let ctx = ctx_for(&analysis, &uml);
         let folder = RowTarget::Folder("/sales".to_string());
-        assert!(open_markdown(&ctx, &folder).is_none());
+        let document = open_markdown(&ctx, &folder).expect("sales/index.md opens as markdown");
+        assert_eq!(document.locator.target, folder);
+        assert_eq!(document.locator.surface.as_str(), "markdown");
         assert!(open_folder(&ctx, &folder).is_some());
     }
 

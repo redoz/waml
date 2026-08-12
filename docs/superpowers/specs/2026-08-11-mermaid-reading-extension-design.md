@@ -55,7 +55,7 @@ No Merman type can cross the public boundary of this directory.
 `waml-editor` will pin Merman exactly:
 
 ```toml
-merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["complete-svg"] }
+merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["svg"] }
 ```
 
 The exact pin prevents an alpha release from changing the adapter contract on
@@ -152,9 +152,9 @@ cache. It is the only entry visible to the generic registry.
 This file owns all Merman calls and configuration. It will:
 
 1. accept the fence content, WAML theme inputs, and a stable diagram ID;
-2. call the pinned Merman complete-SVG path;
-3. select Merman's resvg-compatible/readable SVG pipeline so Makepad never has
-   to support browser `foreignObject` labels;
+2. call the pinned Merman SVG path;
+3. select Merman's resvg-compatible/readable SVG pipeline, then use usvg with
+   bundled fonts to resolve CSS and convert labels to paths that Makepad can draw;
 4. disable network-dependent behavior and unsafe link/script behavior;
 5. validate the returned SVG root and logical dimensions;
 6. return WAML-owned SVG bytes and dimensions.

@@ -11,7 +11,8 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 waml = { path = "../waml", features = ["serde"] }
 waml-ops-dto = { path = "../waml-ops-dto" }
 waml-markdown-editor = { path = "../waml-markdown-editor" }
-merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["complete-svg"] }
+merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["svg"] }
+usvg = { version = "=0.45.1", default-features = false, features = ["text"] }
 # Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch `waml` -- the
 # single integration line every fork change lands on from here; it was cut at
 # the tip of fix/web-batched-shader-link, the richest lineage, and the other
@@ -64,6 +65,7 @@ waml-syntax = { path = "../waml-syntax" }
 waml-ui-test = { path = "../waml-ui-test" }
 
 [features]
+browser-test-trace = []
 ui-tests = []
 
 [[test]]

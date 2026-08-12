@@ -131,10 +131,13 @@ pub fn locator_opens(
         0,
     );
     match (surface.as_str(), &locator.target) {
-        // `open_markdown`/`open_canvas` both bottom out in a bundle concept
-        // lookup (the uml provider's own gate is the same lookup, and its
-        // generic fallback covers every concept it declines).
+        // Concept markdown and canvas surfaces bottom out in a bundle concept
+        // lookup. Folder markdown opens only when that folder has an index
+        // document, which is the same gate as `open_markdown_for_target`.
         ("markdown" | "canvas", RowTarget::Concept(id)) => okf.bundle.concept(id).is_some(),
+        ("markdown", target @ RowTarget::Folder(_)) => {
+            crate::okf_documents::source_opens_for_target(okf, target)
+        }
         // `open_folder` -> `folder_documents::open`, whose only `None` is a
         // directory that is not in the bundle (`FolderView::build` fails on
         // exactly the same missing directory).

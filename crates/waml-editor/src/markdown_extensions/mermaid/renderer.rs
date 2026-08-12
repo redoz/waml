@@ -100,7 +100,41 @@ pub(super) fn render_uncached(request: &BlockExtensionRequest) -> BlockRenderRes
         }
     };
 
-    validate_svg(sealed.into_string()).map_err(MermaidRenderError::viewer_message)
+    let normalized =
+        normalize_for_makepad(sealed.into_string()).map_err(MermaidRenderError::viewer_message)?;
+    validate_svg(normalized).map_err(MermaidRenderError::viewer_message)
+}
+
+fn normalize_for_makepad(svg: String) -> Result<String, MermaidRenderError> {
+    let mut options = usvg::Options {
+        font_family: "IBM Plex Sans".to_string(),
+        ..usvg::Options::default()
+    };
+    let fontdb = options.fontdb_mut();
+    fontdb.load_font_data(
+        include_bytes!("../../../resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf").to_vec(),
+    );
+    fontdb.load_font_data(
+        include_bytes!("../../../resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBold.ttf").to_vec(),
+    );
+    fontdb.set_sans_serif_family("IBM Plex Sans");
+
+    let tree = usvg::Tree::from_str(&svg, &options).map_err(|error| {
+        tracing::warn!(?error, "could not normalize Mermaid SVG for Makepad");
+        MermaidRenderError::InvalidSvg
+    })?;
+    let normalized = tree.to_string(&usvg::WriteOptions {
+        preserve_text: false,
+        ..usvg::WriteOptions::default()
+    });
+    if normalized.contains("<style")
+        || normalized.contains("<text")
+        || normalized.contains("foreignObject")
+    {
+        tracing::warn!("normalized Mermaid SVG retained unsupported Makepad content");
+        return Err(MermaidRenderError::InvalidSvg);
+    }
+    Ok(normalized)
 }
 
 fn validate_svg(svg: String) -> Result<RenderedBlockSvg, MermaidRenderError> {
@@ -455,6 +489,44 @@ mod tests {
             let (width, height) = parse_svg(text).logical_size();
             let size = (f64::from(width), f64::from(height));
             assert_eq!(size, rendered.logical_size);
+        }
+    }
+
+    #[test]
+    fn required_families_emit_makepad_self_painted_paths() {
+        let fixtures = [
+            (
+                "flowchart",
+                "flowchart TD\nDraft --> Review\nReview -->|change| Draft\nReview -->|approve| Done",
+            ),
+            ("sequence", "sequenceDiagram\nAlice->>Bob: Hello"),
+            ("class", "classDiagram\nclass Animal"),
+            ("state", "stateDiagram-v2\n[*] --> Still\nStill --> [*]"),
+        ];
+
+        for (name, source) in fixtures {
+            let rendered = render_uncached(&request(source, BlockExtensionAppearance::Light))
+                .unwrap_or_else(|message| panic!("fixture failed: {name}: {message}"));
+            let text = str::from_utf8(&rendered.data).expect("rendered SVG must be UTF-8");
+            assert!(!text.contains("<style"), "{name} retained class CSS");
+            assert!(!text.contains("<text"), "{name} retained unsupported text");
+            assert!(
+                !text.contains("foreignObject"),
+                "{name} retained unsupported HTML labels"
+            );
+            assert!(text.contains("<path"), "{name} has no path geometry");
+            assert!(
+                text.match_indices("<path").any(|(start, _)| {
+                    text[start..]
+                        .find('>')
+                        .is_some_and(|end| text[start..start + end].contains("fill=\"#0f172a\""))
+                }),
+                "{name} has no dark label path geometry"
+            );
+            assert!(
+                text.contains("#64748b") || text.contains("#94a3b8"),
+                "{name} has no explicit visible edge paint"
+            );
         }
     }
 

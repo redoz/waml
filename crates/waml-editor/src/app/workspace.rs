@@ -671,20 +671,39 @@ impl App {
                 self.transition_document(cx, &concept_id, false);
             }
             crate::cli::InitialDocument::None => {
-                tracing::info!(
-                    bundle = %self.open_name,
-                    "no documents in bundle; opening with an empty canvas"
+                let root = waml::view::row::RowTarget::Folder("/".to_string());
+                let root_index = crate::view_history::DocumentLocator::new(
+                    root,
+                    waml::view::surface::SurfaceId::markdown(),
                 );
-                // Empty scene draws nothing and `bounding_box` returns `None`, so
-                // the fit path leaves the camera untouched (no divide-by-zero). No
-                // diagram tab; the project tree was already populated by
-                // `refresh_nav` above.
-                if let Some(mut canvas) = self
-                    .ui
-                    .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-                {
-                    canvas.clear(cx);
+                let opened_root_index = crate::okf_documents::source_document_exists(
+                    self.session.okf_analysis(),
+                    "index",
+                ) && self.transition_to_location(
+                    cx,
+                    ViewLocation {
+                        document: root_index,
+                        anchor: ViewAnchor::None,
+                    },
+                    TransitionCause::UserNavigation,
+                );
+                if !opened_root_index {
+                    tracing::info!(
+                        bundle = %self.open_name,
+                        "no documents in bundle; opening with an empty canvas"
+                    );
+
+                    // Empty scene draws nothing and `bounding_box` returns `None`, so
+                    // the fit path leaves the camera untouched (no divide-by-zero). No
+                    // diagram tab; the project tree was already populated by
+                    // `refresh_nav` above.
+                    if let Some(mut canvas) = self
+                        .ui
+                        .widget(cx, ids!(canvas))
+                        .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                    {
+                        canvas.clear(cx);
+                    }
                 }
             }
         }

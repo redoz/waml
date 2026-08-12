@@ -6,7 +6,7 @@
 
 **Architecture:** Keep Markdown parsing generic: the presentation model preserves fenced-code metadata, and the reading model routes only registered language keys to a generic block-extension lifecycle. `waml-editor` owns the registry and platform scheduler; all Mermaid grammar, Merman calls, error translation, and cache policy stay below `markdown_extensions/mermaid/`. Native builds use worker threads, while every `wasm32` build uses a one-cache-miss-per-deferred-turn cooperative queue so non-atomics WASM never depends on Makepad's no-op thread spawn.
 
-**Tech Stack:** Rust, Makepad `Image`/`DrawSvg`, Merman `=0.8.0-alpha.5` with `complete-svg`, native `std::thread` plus `SignalToUI`, cooperative Makepad `NextFrame` scheduling on WASM.
+**Tech Stack:** Rust, Makepad `Image`/`DrawSvg`, Merman `=0.8.0-alpha.5` with `svg`, usvg with bundled fonts for Makepad-compatible paint and label paths, native `std::thread` plus `SignalToUI`, cooperative Makepad `NextFrame` scheduling on WASM.
 
 ## Global Constraints
 
@@ -14,7 +14,7 @@
 - Prefix every shell command with `rtk`.
 - Use ASD-STE100 Simplified Technical English in code comments, diagnostics, fixture copy, and documentation.
 - Keep the workspace Rust version at `1.80`; set only `crates/waml-editor/Cargo.toml` to `rust-version = "1.95"`.
-- Pin Merman exactly as `merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["complete-svg"] }`.
+- Pin Merman exactly as `merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["svg"] }`.
 - Only Rust files below `crates/waml-editor/src/markdown_extensions/mermaid/` may import `merman` or name a Merman type.
 - Do not add Mermaid grammar, family detection, aliases, authoring support, completion, hover, linting, formatting, or refactoring to WAML.
 - Route `mermaid`, `MERMAID`, and other ASCII case variants; leave all other fenced languages as normal code blocks.
@@ -36,7 +36,7 @@
 - `crates/waml-markdown-editor/tests/reading_extensions.rs` — generic routing, state, cancellation, and stale-event tests.
 - `crates/waml-editor/src/markdown_extensions/mod.rs` — generic renderer registry, lease isolation, native worker scheduler, cooperative WASM queue, and test seams.
 - `crates/waml-editor/src/markdown_extensions/mermaid/mod.rs` — the only registry entry point for the Mermaid adapter.
-- `crates/waml-editor/src/markdown_extensions/mermaid/renderer.rs` — Merman configuration, complete-SVG call, output security checks, Makepad SVG validation, and dimensions.
+- `crates/waml-editor/src/markdown_extensions/mermaid/renderer.rs` — Merman configuration, SVG call, usvg normalization with bundled fonts, output security checks, Makepad SVG validation, and dimensions.
 - `crates/waml-editor/src/markdown_extensions/mermaid/cache.rs` — bounded result/failure cache and exact cache key.
 - `crates/waml-editor/src/markdown_extensions/mermaid/error.rs` — stable adapter errors and safe viewer messages.
 - `crates/waml-editor/tests/fixtures/mermaid-reading/index.md` — native and browser acceptance fixture with flowchart, sequence, class, state, invalid, and wide diagrams.
@@ -501,7 +501,7 @@ Use a small `MermaidRenderError` enum with stable messages: `SourceTooLarge`, `D
 
 Choose `HostThemePreset::EditorLight` or `EditorDark` from `request.appearance`. Use `Presentation`, `RenderResourceProfile::Constrained`, Merman's default compatibility parsing, vendored text measurement, a stable diagram ID derived from `item.owner.get()` plus `fragment_ordinal`, and `render_resvg_compatible_svg_sync`. Convert `ResvgCompatibleSvg` with `into_string()`.
 
-After Merman returns, enforce output size, reject active SVG/XML constructs and external URI-bearing attributes while allowing same-document fragment references, then call Makepad `looks_like_svg` and `parse_svg(svg).logical_size()`. Validate dimensions before converting the string to `Arc<[u8]>`. This is a validation pass over Merman's sealed SVG contract, not a Mermaid parser or second renderer.
+After Merman returns, enforce output size and reject active SVG/XML constructs and external URI-bearing attributes while allowing same-document fragment references. Parse the sealed result with usvg, load only the bundled IBM Plex Sans fonts, resolve CSS paint, and serialize labels as paths. Reject normalized output that still contains `<style>`, `<text>`, or `foreignObject`, then call Makepad `looks_like_svg` and `parse_svg(svg).logical_size()`. Validate dimensions before converting the string to `Arc<[u8]>`. This is an adapter normalization and validation pass over Merman's sealed SVG contract, not a Mermaid parser or second renderer.
 
 - [ ] **Step 5: Implement the bounded cache**
 
@@ -667,7 +667,7 @@ pub fn handle_event(&mut self, cx: &mut Cx, body: &BodyWidgets, event: &Event)
 
 On every routed event, drain admitted events, apply them, install a new frame, and redraw only if state changed. On WASM, if the stored `NextFrame` matches, run exactly one deferred miss, drain its event, and arm one more `cx.new_next_frame()` only when work remains. After reconciliation, arm the first frame when `has_deferred_work()` is true. Native work relies on `SignalToUI` and does not arm a polling frame.
 
-Add a WASM debug-build trace for the browser acceptance check. Under `#[cfg(all(target_arch = "wasm32", debug_assertions))]`, store `browser_trace_generation: u64` and the last traced `(generation, pending_count)` in `ReadingView`. Increment the generation after each document reconciliation. After each extension frame is installed, emit exactly `WAML_TEST_EXTENSION_PENDING generation=<u64> count=<usize>` through Makepad's browser console log only when that pair changes. Compute the count with `BlockExtensionStates::pending_count()`. Emit the zero count only after the ready/failed frame is installed. Do not compile this trace or its state fields into release builds. The fixture starts with a positive count and reaches zero after every valid or invalid Mermaid block leaves `Loading`.
+Add an opt-in WASM trace for the browser acceptance check. Under `#[cfg(all(target_arch = "wasm32", feature = "browser-test-trace"))]`, store `browser_trace_generation: u64` and the last traced `(generation, pending_count)` in `ReadingView`. Increment the generation after each document reconciliation. After each extension frame is installed, emit exactly `WAML_TEST_EXTENSION_PENDING generation=<u64> count=<usize>` through Makepad's browser console log only when that pair changes. Compute the count with `BlockExtensionStates::pending_count()`. Emit the zero count only after the ready/failed frame is installed. Do not compile this trace or its state fields unless `browser-test-trace` is enabled. The fixture starts with a positive count and reaches zero after every valid or invalid Mermaid block leaves `Loading`.
 
 - [ ] **Step 5: Preserve source handoff**
 
