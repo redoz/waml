@@ -14,7 +14,7 @@ pub mod widget;
 pub use bullet::{bullet_shape_for_level, BulletShape, DrawReadingBullet};
 pub use model::{
     build_reading_document, ReadingBlock, ReadingBlockKind, ReadingDocument, ReadingError,
-    ReadingPiece,
+    ReadingLink, ReadingPiece,
 };
 pub use widget::{
     caret_for_span, MarkdownViewer, MarkdownViewerRef, MarkdownViewerWidgetRefExt, SourceMap,

@@ -260,3 +260,38 @@ fn a_thematic_break_becomes_a_thematic_break_block() {
         "expected a ThematicBreak block, got {all:?}"
     );
 }
+
+#[test]
+fn the_reading_model_carries_the_plans_links() {
+    let doc = document("See [Customer](./customer.md) for more.\n");
+    assert_eq!(doc.links.len(), 1, "one inline link");
+    assert_eq!(&*doc.links[0].destination, "./customer.md");
+}
+
+#[test]
+fn a_link_is_found_by_any_offset_inside_its_source_range() {
+    use waml_markdown_editor::syntax::TextSize;
+
+    let doc = document("See [Customer](./customer.md) for more.\n");
+    let link = doc.links[0].clone();
+    let start = link.source_range.start().to_usize();
+    let end = link.source_range.end().to_usize();
+
+    for offset in [start, start + 1, end - 1] {
+        let found = doc
+            .link_at(TextSize::try_from_usize(offset).unwrap())
+            .unwrap_or_else(|| panic!("offset {offset} is inside the link"));
+        assert_eq!(found.destination, link.destination);
+    }
+    // The end boundary is exclusive, and the leading "See " is outside.
+    assert!(doc
+        .link_at(TextSize::try_from_usize(end).unwrap())
+        .is_none());
+    assert!(doc.link_at(TextSize::try_from_usize(0).unwrap()).is_none());
+}
+
+#[test]
+fn a_document_without_links_carries_none() {
+    let doc = document("# Title\n\nJust prose.\n");
+    assert!(doc.links.is_empty());
+}

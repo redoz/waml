@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 
 use waml_syntax::{TextRange, TextSize};
 
@@ -50,10 +51,22 @@ pub struct ReadingBlock {
     pub children: Vec<ReadingBlock>,
 }
 
+/// A link the reading view can navigate to, keyed by the SOURCE range its
+/// text occupies. The widget maps a click to a source offset through its own
+/// flow-to-source map, so nothing here needs to know about pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadingLink {
+    pub source_range: TextRange,
+    pub destination: Arc<str>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReadingDocument {
     pub roots: Vec<ReadingBlock>,
     pub source_len: TextSize,
+    /// Every navigable link in the plan, in source order. Images are already
+    /// excluded upstream (`compile.rs` skips a link whose owner is an image).
+    pub links: Vec<ReadingLink>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,6 +124,14 @@ impl ReadingDocument {
             });
         }
         Ok(())
+    }
+
+    /// The link covering `offset`, if any. Half-open: the end boundary belongs
+    /// to whatever follows.
+    pub fn link_at(&self, offset: TextSize) -> Option<&ReadingLink> {
+        self.links
+            .iter()
+            .find(|link| link.source_range.start() <= offset && offset < link.source_range.end())
     }
 }
 
@@ -291,6 +312,14 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
     let document = ReadingDocument {
         roots: assembled,
         source_len: plan.source_len,
+        links: plan
+            .links
+            .iter()
+            .map(|link| ReadingLink {
+                source_range: link.source_range,
+                destination: link.destination.clone(),
+            })
+            .collect(),
     };
     document.validate_source_partition()?;
     Ok(document)
