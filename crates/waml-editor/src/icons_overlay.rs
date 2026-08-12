@@ -62,6 +62,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(Search, "Find in diagrams"),
             ie!(PackageOpen, "Open package (radial)"),
             ie!(Scroll, "Read as scroll (folder context menu)"),
+            ie!(Type, "Code/layout emphasis (header toggle, lit on layout)"),
         ],
     ),
     (

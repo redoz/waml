@@ -162,7 +162,7 @@ impl SourceView {
     /// the user somewhere that looked like another source view instead.
     pub(crate) fn emphasis_action(&self) -> HeaderViewAction {
         HeaderViewAction {
-            icon: Icon::Paintbrush,
+            icon: Icon::Type,
             tooltip: match self.emphasis {
                 EditorEmphasis::Code => "Use layout emphasis",
                 EditorEmphasis::Layout => "Use code emphasis",
@@ -901,7 +901,7 @@ mod tests {
         assert_eq!(
             view.chrome().document_header.emphasis_toggle,
             Some(HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use layout emphasis",
                 active: false,
             })
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(
             view.chrome().document_header.emphasis_toggle,
             Some(HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use code emphasis",
                 active: true,
             })
@@ -996,7 +996,7 @@ mod tests {
         assert_eq!(
             view.chrome().document_header.emphasis_toggle,
             Some(HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use layout emphasis",
                 active: false,
             })

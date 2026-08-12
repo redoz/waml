@@ -365,7 +365,7 @@ mod tests {
                 view_toggle: Some(HeaderViewAction::destination(Icon::Eye, "View rendered")),
                 // The emphasis button rides along with the source face only.
                 emphasis_toggle: Some(HeaderViewAction {
-                    icon: Icon::Paintbrush,
+                    icon: Icon::Type,
                     tooltip: "Use layout emphasis",
                     active: false,
                 }),

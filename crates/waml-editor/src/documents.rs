@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(
             direct.view.chrome().document_header.emphasis_toggle,
             Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use code emphasis",
                 active: true,
             })
@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(
             reopened.view.chrome().document_header.emphasis_toggle,
             Some(crate::doc_view::HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use code emphasis",
                 active: true,
             })

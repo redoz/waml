@@ -4365,6 +4365,29 @@ script_mod! {
         }
     }
 
+    // Type: the document header's presentation-emphasis toggle -- typography,
+    // not paint. Faithful port of resources/icons/type.svg via
+    // scripts/gen-icon.py.
+    mod.draw.IconType = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.1667, s * 0.2917)
+            sdf.line_to(s * 0.1667, s * 0.1667)
+            sdf.line_to(s * 0.8333, s * 0.1667)
+            sdf.line_to(s * 0.8333, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.8333)
+            sdf.line_to(s * 0.6250, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.1667)
+            sdf.line_to(s * 0.5000, s * 0.8333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4505,6 +4528,7 @@ script_mod! {
         a_arrow_up: mod.draw.IconAArrowUp{ color: atlas.accent }
         a_arrow_down: mod.draw.IconAArrowDown{ color: atlas.accent }
         scroll: mod.draw.IconScroll{ color: atlas.accent }
+        type_: mod.draw.IconType{ color: atlas.accent }
     }
 }
 
@@ -4785,6 +4809,10 @@ pub struct IconSet {
     pub a_arrow_down: DrawColor,
     #[live]
     pub scroll: DrawColor,
+    /// `type` is a Rust keyword and the DSL also rejects the raw identifier
+    /// `r#type`, so this field is `type_` (same escape as `box_`).
+    #[live]
+    pub type_: DrawColor,
 }
 
 impl IconSet {
@@ -4927,6 +4955,7 @@ impl IconSet {
             Icon::AArrowUp => &mut self.a_arrow_up,
             Icon::AArrowDown => &mut self.a_arrow_down,
             Icon::Scroll => &mut self.scroll,
+            Icon::Type => &mut self.type_,
         }
     }
 
@@ -5083,12 +5112,13 @@ pub enum Icon {
     AArrowUp,
     AArrowDown,
     Scroll,
+    Type,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 135] = [
+    pub const ALL: [Icon; 136] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -5224,6 +5254,7 @@ impl Icon {
         Icon::AArrowUp,
         Icon::AArrowDown,
         Icon::Scroll,
+        Icon::Type,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5365,6 +5396,7 @@ impl Icon {
             Icon::AArrowUp => "a-arrow-up",
             Icon::AArrowDown => "a-arrow-down",
             Icon::Scroll => "scroll",
+            Icon::Type => "type",
         }
     }
 }
@@ -5374,8 +5406,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_135_entries() {
-        assert_eq!(Icon::ALL.len(), 135);
+    fn icon_all_has_136_entries() {
+        assert_eq!(Icon::ALL.len(), 136);
     }
 
     // ------------------------------------------------------------------
@@ -5411,8 +5443,10 @@ mod tests {
     /// `#[live]` derive backing `IconSet` rejects the raw identifier
     /// `r#box`, so its field carries a trailing underscore instead.
     fn snake(name: &str) -> String {
-        if name == "Box" {
-            return "box_".to_string();
+        // Rust keywords cannot name a field (and the DSL rejects the raw
+        // `r#` form), so those glyphs take a trailing underscore.
+        if matches!(name, "Box" | "Type") {
+            return format!("{}_", name.to_ascii_lowercase());
         }
         let mut out = String::new();
         for (i, ch) in name.chars().enumerate() {
@@ -5605,12 +5639,18 @@ mod tests {
         assert_eq!(Icon::AArrowDown.label(), "a-arrow-down");
     }
 
-    /// The folder menu's "Read as scroll" glyph, appended last on the same
-    /// rule.
+    /// The folder menu's "Read as scroll" glyph, appended on the same rule.
     #[test]
-    fn the_scroll_glyph_closes_the_catalog_with_its_lucide_slug() {
+    fn the_scroll_glyph_keeps_its_index_and_lucide_slug() {
         assert_eq!(Icon::ALL[134], Icon::Scroll);
         assert_eq!(Icon::Scroll.label(), "scroll");
+    }
+
+    /// The document header's emphasis toggle, appended last on the same rule.
+    #[test]
+    fn the_type_glyph_closes_the_catalog_with_its_lucide_slug() {
+        assert_eq!(Icon::ALL[135], Icon::Type);
+        assert_eq!(Icon::Type.label(), "type");
     }
 
     #[test]
@@ -5632,7 +5672,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 135);
+        assert_eq!(seen.len(), 136);
     }
 
     #[test]

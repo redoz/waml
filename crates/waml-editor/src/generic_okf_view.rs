@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(
             view.chrome().document_header.emphasis_toggle,
             Some(HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use code emphasis",
                 active: true,
             })
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(
             header.test_emphasis_toggle(),
             Some(HeaderViewAction {
-                icon: Icon::Paintbrush,
+                icon: Icon::Type,
                 tooltip: "Use layout emphasis",
                 active: false,
             })

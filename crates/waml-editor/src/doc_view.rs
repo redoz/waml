@@ -902,7 +902,7 @@ mod tests {
                     right_dock: Some(Icon::PanelRight),
                     view_toggle: None,
                     emphasis_toggle: Some(HeaderViewAction {
-                        icon: Icon::Paintbrush,
+                        icon: Icon::Type,
                         tooltip: "Use layout emphasis",
                         active: false,
                     }),
