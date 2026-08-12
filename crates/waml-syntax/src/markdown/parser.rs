@@ -578,12 +578,12 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             break;
         }
         match byte {
-            b'[' => {
+            b'[' | b'{' => {
                 depth += 1;
                 at_item_start = true;
                 at += 1;
             }
-            b']' => {
+            b']' | b'}' => {
                 depth -= 1;
                 at_item_start = false;
                 at += 1;
@@ -596,7 +596,13 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
                 if depth == 0 && at + 1 < limit && bytes[at + 1] == b' ' {
                     malformed = true;
                 }
-                at_item_start = false;
+                // Inside a flow collection a `: ` opens a mapping VALUE, which
+                // may itself be a quoted scalar (`{ id: "a, b" }`) — that is
+                // an item start for the quote bookkeeping above, exactly like
+                // the position after a `,` or an opening bracket. The trailing
+                // space is required, per YAML: a `:` not followed by one
+                // (`:'`) is an ordinary character of a plain scalar.
+                at_item_start = depth > 0 && at + 1 < limit && bytes[at + 1] == b' ';
                 at += 1;
             }
             _ => {
@@ -663,10 +669,11 @@ fn parse_mapping_key(source: &str, start: usize, limit: usize) -> Option<FmKeyMa
         }
         return None;
     }
-    // A `[` opens a flow sequence — never a plain key (YAML forbids an
-    // indicator there). Scanning on would find a `:` inside a quoted flow
-    // item and misread `- [": "]` as a `- key: value` entry.
-    if bytes[start] == b'[' {
+    // A `[` opens a flow sequence and a `{` a flow mapping — never a plain
+    // key (YAML forbids an indicator there). Scanning on would find a `:`
+    // inside the flow value and misread `- [": "]` as a `- key: value` entry,
+    // or split `- { id: a, title: b }` into a key `{ id` and the rest.
+    if bytes[start] == b'[' || bytes[start] == b'{' {
         return None;
     }
     let mut at = start;

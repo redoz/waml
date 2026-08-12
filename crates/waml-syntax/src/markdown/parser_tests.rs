@@ -724,3 +724,50 @@ fn leading_frontmatter_slice_bails_out_where_the_classifier_could_disagree() {
     assert!(!has_leading_frontmatter_fence("# Order\n"));
     assert!(!has_leading_frontmatter_fence("  ---\na: 1\n---\n"));
 }
+
+/// Collects every token of `kind` in the tree, in document order.
+fn tokens_of_kind(
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+    kind: OkfMarkdownSyntaxKind,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for element in node.children() {
+        match element {
+            SyntaxElement::Node(child) => out.extend(tokens_of_kind(&child, kind)),
+            SyntaxElement::Token(token) if token.kind() == kind => {
+                out.push(token.text().write_to_string());
+            }
+            SyntaxElement::Token(_) => {}
+        }
+    }
+    out
+}
+
+/// A `{...}` flow mapping is a VALUE, never a plain key: YAML forbids `{` at
+/// the head of a plain scalar, so the key scan must stop there the way it
+/// already does for `[`. Without the guard, `- { id: a, title: b }` split at
+/// its first `: ` and read as a mapping keyed `{ id` — the frontmatter model
+/// then lost the entry, and the formatter wrote the mangled split back into
+/// the document.
+#[test]
+fn a_flow_mapping_is_a_value_not_a_plain_key() {
+    for source in [
+        "---\nsources:\n  - { id: a, title: b }\n---\n",
+        "---\nmeta: { id: a, title: b }\n---\n",
+    ] {
+        let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
+        let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
+
+        assert_eq!(shell.tree.write_to_string(), source);
+        assert!(
+            shell.tree.diagnostics().is_empty(),
+            "expected no diagnostics for {source:?}, got {:?}",
+            shell.tree.diagnostics()
+        );
+        let keys = tokens_of_kind(&shell.tree.root(), OkfMarkdownSyntaxKind::FrontmatterKey);
+        assert!(
+            keys.iter().all(|key| !key.contains('{')),
+            "a flow mapping opened a key in {source:?}: {keys:?}"
+        );
+    }
+}
