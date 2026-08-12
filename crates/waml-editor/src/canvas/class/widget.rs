@@ -867,7 +867,6 @@ impl Widget for ClassDiagramSurface {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CameraPolicy {
     Refit,
-    Focus,
     Retain,
 }
 
@@ -884,11 +883,6 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
             clear_placement: true,
             selection: SelectionPolicy::Clear,
             camera: CameraPolicy::Refit,
-        },
-        SceneUpdate::Focus { .. } => ReconciliationPolicy {
-            clear_placement: true,
-            selection: SelectionPolicy::Clear,
-            camera: CameraPolicy::Focus,
         },
         SceneUpdate::PreserveViewport => ReconciliationPolicy {
             clear_placement: true,
@@ -961,15 +955,6 @@ impl ClassDiagramSurface {
                     None => InitialFit::ScenePending,
                 });
             }
-            (SceneUpdate::Focus { key }, CameraPolicy::Focus) => {
-                let focus = scene
-                    .nodes
-                    .iter()
-                    .find(|node| &node.key == key)
-                    .map(|node| InitialFit::Focus(node.rect))
-                    .unwrap_or(InitialFit::FocusPending);
-                self.viewport.request_initial_fit(focus);
-            }
             (SceneUpdate::PreserveViewport, CameraPolicy::Retain) => {
                 viewport_effects = self.viewport.retain_for_scene_update(bounds);
             }
@@ -1006,23 +991,6 @@ impl ClassDiagramSurface {
     pub fn context_items(&self, subject: &Subject) -> Vec<PopupItem> {
         let _ = subject;
         vec![]
-    }
-
-    /// Like `set_scene`, but pins the camera at 1.5x zoom centered on the
-    /// node instead of fitting the whole scene to the view.
-    ///
-    /// No current production caller (the classifier preview renders a
-    /// generated page instead, Task 7 of the classifier-markdown-page plan)
-    /// but exercised by this widget's own reconciliation tests and kept
-    /// intentionally per that plan's Task 9.
-    #[allow(dead_code)]
-    pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
-        let key = scene
-            .nodes
-            .first()
-            .map(|node| node.key.clone())
-            .unwrap_or_default();
-        self.reconcile_scene(cx, scene, SceneUpdate::Focus { key });
     }
 
     /// Swap the scene for a same-diagram re-solve (e.g. an expand toggle). Unlike
@@ -1675,7 +1643,6 @@ mod tests {
 
             match update {
                 SceneUpdate::Replace => surface.set_scene(vm.cx_mut(), Scene::default()),
-                SceneUpdate::Focus { .. } => surface.set_focus(vm.cx_mut(), Scene::default()),
                 SceneUpdate::PreserveViewport => {
                     surface.update_scene(vm.cx_mut(), Scene::default())
                 }
@@ -1948,7 +1915,6 @@ mod tests {
 
             match update {
                 SceneUpdate::Replace => surface.set_scene(vm.cx_mut(), Scene::default()),
-                SceneUpdate::Focus { .. } => surface.set_focus(vm.cx_mut(), Scene::default()),
                 SceneUpdate::PreserveViewport => {
                     surface.update_scene(vm.cx_mut(), Scene::default())
                 }
@@ -1977,21 +1943,9 @@ mod tests {
         #[test]
         fn every_scene_reconciliation_starts_matching_touch_ids_as_a_new_pinch() {
             assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(SceneUpdate::Replace);
-            assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(SceneUpdate::Focus {
-                key: "ignored-by-public-set-focus".into(),
-            });
             assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(
                 SceneUpdate::PreserveViewport,
             );
-        }
-
-        #[test]
-        fn focus_preserves_the_unselected_preview_behavior() {
-            let policy = reconciliation_policy(&SceneUpdate::Focus {
-                key: "order".into(),
-            });
-            assert_eq!(policy.selection, SelectionPolicy::Clear);
-            assert_eq!(policy.camera, CameraPolicy::Focus);
         }
 
         #[test]
@@ -2020,9 +1974,6 @@ mod tests {
         #[test]
         fn every_scene_update_invalidates_the_old_dial_identity() {
             assert_scene_update_invalidates_old_dial_identity(SceneUpdate::Replace);
-            assert_scene_update_invalidates_old_dial_identity(SceneUpdate::Focus {
-                key: "ignored-by-public-set-focus".into(),
-            });
             assert_scene_update_invalidates_old_dial_identity(SceneUpdate::PreserveViewport);
         }
     }
