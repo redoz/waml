@@ -114,9 +114,9 @@ fn draw_and_settle_focus(cx: &mut Cx, app: &App, size: DVec2) {
 
 /// A production shell with one `uml.Class` concept, indexed and opened as
 /// the active tab -- `documents::default_surface_for` puts a claimed UML
-/// concept on the canvas (as a `ClassifierPreviewView` focus scene, since
-/// "order.md" is a bare classifier, not a named diagram document). Drawn
-/// once so the rest of the tree has real areas before the strip itself
+/// concept on its own generated documentation page (a `ClassifierPreviewView`,
+/// since "order.md" is a bare classifier, not a named diagram document).
+/// Drawn once so the rest of the tree has real areas before the strip itself
 /// opens (see `draw_and_settle_focus`).
 fn production_app_with_order_classifier() -> (Cx, App) {
     let (mut cx, mut app) = mounted_production_shell();

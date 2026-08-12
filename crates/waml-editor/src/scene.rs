@@ -1323,8 +1323,14 @@ fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> V
 }
 
 /// Build a single-node `Scene` focused on classifier `key`, sized 1.5x its
-/// natural box. Used by the classifier focus view (double/single-click a class
-/// in the tree). An unknown key yields an empty scene.
+/// natural box. An unknown key yields an empty scene.
+///
+/// The classifier preview no longer calls this (it renders a generated
+/// documentation page instead, Task 7 of the classifier-markdown-page plan);
+/// retained with `#[allow(dead_code)]` until Task 9 deletes it outright, so
+/// this task's own gate stays green without widening into an unrelated
+/// deletion.
+#[allow(dead_code)]
 pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
     let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
         return Scene {

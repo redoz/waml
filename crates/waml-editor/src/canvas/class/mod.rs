@@ -80,7 +80,14 @@ impl Default for InteractionEffects {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum SceneUpdate {
     Replace,
-    Focus { key: String },
+    // No current production caller (the classifier preview renders a
+    // generated page instead, Task 7 of the classifier-markdown-page plan)
+    // but exercised by this widget's own reconciliation tests and kept
+    // intentionally per that plan's Task 9.
+    #[allow(dead_code)]
+    Focus {
+        key: String,
+    },
     PreserveViewport,
 }
 

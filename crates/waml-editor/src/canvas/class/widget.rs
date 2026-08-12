@@ -1009,8 +1009,13 @@ impl ClassDiagramSurface {
     }
 
     /// Like `set_scene`, but pins the camera at 1.5x zoom centered on the
-    /// node instead of fitting the whole scene to the view. Used for the
-    /// classifier-focus doc tab.
+    /// node instead of fitting the whole scene to the view.
+    ///
+    /// No current production caller (the classifier preview renders a
+    /// generated page instead, Task 7 of the classifier-markdown-page plan)
+    /// but exercised by this widget's own reconciliation tests and kept
+    /// intentionally per that plan's Task 9.
+    #[allow(dead_code)]
     pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
         let key = scene
             .nodes
