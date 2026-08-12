@@ -160,6 +160,28 @@ impl DocView for ClassifierPreviewView {
             return out;
         }
 
+        // A tap on a classifier name in the page. Resolved here, against this
+        // classifier's own concept id, because a node key IS its concept id.
+        // An unresolvable href is handed to the app instead: only its
+        // `handle_navigation_intent` puts `NavigationError::status_message`
+        // on the status bar, and a silent drop reads as a dead click.
+        if let Some(href) = body.markdown_viewer().link_clicked(actions) {
+            let href = href.to_string();
+            out.navigation = Some(
+                match crate::navigation::resolve_link(&data.okf_analysis.bundle, &self.key, &href) {
+                    Ok(target) => crate::navigation::NavigationIntent::Resolved {
+                        target,
+                        disposition: crate::navigation::OpenDisposition::Preview,
+                    },
+                    Err(_) => crate::navigation::NavigationIntent::MarkdownLink {
+                        current_concept_id: self.key.clone(),
+                        href,
+                    },
+                },
+            );
+            return out;
+        }
+
         // Selection toolbar: Delete closes this preview tab (in-memory only).
         if let Some(action) = body
             .selection_toolbar(cx)
@@ -285,6 +307,71 @@ mod tests {
             .borrow::<crate::inspector_panel::Inspector>()
             .expect("the inspector is mounted");
         assert_eq!(inspector.subject_key_for_test().as_deref(), Some("order"));
+    }
+
+    use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
+
+    /// Synthesize the action the viewer posts on a tap, without a live pointer.
+    fn link_click(body: &BodyWidgets, href: &str) -> ActionsBuf {
+        let viewer = body.markdown_viewer();
+        vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(
+                waml_markdown_editor::reading::MarkdownViewerAction::LinkClicked {
+                    destination: Arc::from(href),
+                },
+            ),
+            widget_uid: viewer.widget_uid(),
+            group: None,
+        })]
+    }
+
+    #[test]
+    fn a_link_click_resolves_to_the_target_document() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = session_with_order();
+        let snapshot = session.snapshot();
+        let mut view = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        let actions = link_click(&body, "/customer.md");
+        let outcome = view.handle(&mut cx, &body, &actions, snapshot.borrowed().into());
+
+        assert_eq!(
+            outcome.navigation,
+            Some(NavigationIntent::Resolved {
+                target: NavigationTarget::Document {
+                    concept_id: "customer".into(),
+                    surface: None,
+                    fragment: None,
+                },
+                disposition: OpenDisposition::Preview,
+            })
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_link_defers_to_the_app_so_the_reader_is_told() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = session_with_order();
+        let snapshot = session.snapshot();
+        let mut view = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        let actions = link_click(&body, "/missing.md");
+        let outcome = view.handle(&mut cx, &body, &actions, snapshot.borrowed().into());
+
+        assert_eq!(
+            outcome.navigation,
+            Some(NavigationIntent::MarkdownLink {
+                current_concept_id: "order".into(),
+                href: "/missing.md".into(),
+            })
+        );
     }
 
     #[test]
