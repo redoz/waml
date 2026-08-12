@@ -240,8 +240,7 @@ impl EditorMarkdownAssetHost {
     fn cancel_retired_requests(&mut self, lease: MarkdownAssetLeaseId) {
         let documents = self.documents.get(&lease);
         for ((pending_lease, request_id), item) in self.pending.iter() {
-            if *pending_lease == lease && documents.map_or(true, |items| !items.contains_key(item))
-            {
+            if *pending_lease == lease && documents.is_none_or(|items| !items.contains_key(item)) {
                 self.canceled.insert((lease, *request_id));
             }
         }
@@ -756,7 +755,7 @@ mod tests {
         assert!(host
             .documents
             .get(&DIRECT_LEASE)
-            .map_or(true, BTreeMap::is_empty));
+            .is_none_or(BTreeMap::is_empty));
         assert!(host.pending.is_empty());
         assert!(host.canceled.is_empty());
     }

@@ -519,9 +519,11 @@ impl App {
         let Some(pending) = self.pending_fragment.as_ref() else {
             return;
         };
-        if self.documents.active_tab().map_or(true, |tab| {
-            tab.concept_id() != Some(pending.concept_id.as_str())
-        }) {
+        if self
+            .documents
+            .active_tab()
+            .is_none_or(|tab| tab.concept_id() != Some(pending.concept_id.as_str()))
+        {
             return;
         }
         let fragment = pending.fragment.clone();
@@ -549,9 +551,11 @@ impl App {
         let Some(pending) = self.pending_reveal.take() else {
             return;
         };
-        if self.documents.active_tab().map_or(true, |tab| {
-            tab.concept_id() != Some(pending.concept_id.as_str())
-        }) {
+        if self
+            .documents
+            .active_tab()
+            .is_none_or(|tab| tab.concept_id() != Some(pending.concept_id.as_str()))
+        {
             return;
         }
         if self.documents.reveal_active(cx, &self.ui, &pending.target) {
@@ -569,7 +573,7 @@ impl App {
         if self
             .documents
             .active_tab()
-            .map_or(true, |tab| tab.locator() != pending.document)
+            .is_none_or(|tab| tab.locator() != pending.document)
         {
             return;
         }
@@ -684,7 +688,7 @@ impl App {
         // this transition (`apply_view_outcome`).
         if departing
             .as_ref()
-            .map_or(true, |current| current.document != location.document)
+            .is_none_or(|current| current.document != location.document)
         {
             self.clear_search_highlights(cx);
         }

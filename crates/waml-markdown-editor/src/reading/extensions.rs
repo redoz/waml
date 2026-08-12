@@ -224,14 +224,14 @@ impl BlockExtensionStates {
     }
 
     pub fn frame(&self, revision: DocumentRevision) -> Arc<BlockExtensionFrame> {
-        let items = (self.revision == Some(revision))
-            .then(|| {
-                self.entries
-                    .iter()
-                    .map(|(id, entry)| (*id, entry.state.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let items = if self.revision == Some(revision) {
+            self.entries
+                .iter()
+                .map(|(id, entry)| (*id, entry.state.clone()))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         Arc::new(BlockExtensionFrame {
             revision,
             items: items.into(),

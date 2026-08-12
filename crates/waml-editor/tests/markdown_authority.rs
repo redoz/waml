@@ -38,7 +38,7 @@ fn markdown_editor_mount_count(source: &str) -> usize {
                 && source[*start + WIDGET.len()..]
                     .chars()
                     .next()
-                    .map_or(true, |next| !(next.is_ascii_alphanumeric() || next == '_'))
+                    .is_none_or(|next| !(next.is_ascii_alphanumeric() || next == '_'))
         })
         .count()
 }

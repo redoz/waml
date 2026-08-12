@@ -616,22 +616,14 @@ impl MarkdownExtensionLease {
         RegisteredBlockExtensions::from_languages(self.shared.borrow().renderers.keys().cloned())
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
     pub fn has_deferred_work(&self) -> bool {
-        #[cfg(any(target_arch = "wasm32", test))]
-        {
-            return !self.shared.borrow().deferred.is_empty();
-        }
-        #[cfg(not(any(target_arch = "wasm32", test)))]
-        false
+        !self.shared.borrow().deferred.is_empty()
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
     pub fn run_one_deferred(&mut self) -> bool {
-        #[cfg(any(target_arch = "wasm32", test))]
-        {
-            return self.shared.borrow_mut().run_one_deferred_render();
-        }
-        #[cfg(not(any(target_arch = "wasm32", test)))]
-        false
+        self.shared.borrow_mut().run_one_deferred_render()
     }
 }
 

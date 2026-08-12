@@ -1022,7 +1022,7 @@ fn changed_documents(
                     .documents()
                     .iter()
                     .find(|previous| previous.path() == document.path())
-                    .map_or(true, |previous| previous.text() != document.text());
+                    .is_none_or(|previous| previous.text() != document.text());
                 changed.then_some(id)
             })
             .collect::<Vec<_>>(),
