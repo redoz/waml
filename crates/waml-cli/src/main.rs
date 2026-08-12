@@ -6,7 +6,6 @@ use waml::bundle_envelope::{
     encode_bundle_envelope, is_ts_export_name, render_bundle_json, render_bundle_ts,
 };
 use waml::edit::{EditBatch, EditContext};
-use waml::host::persist;
 use waml::multiplicity::Multiplicity;
 use waml::uml::FieldEdit;
 
@@ -485,7 +484,7 @@ fn main() {
                     .iter()
                     .map(|result| (result.path.clone(), result.formatted.clone()))
                     .collect::<Vec<_>>();
-                if let Err(error) = persist::write_back(&bundle.root, &bundle.files, &formatted) {
+                if let Err(error) = io::write_back(&bundle.root, &bundle.files, &formatted) {
                     eprintln!("waml: {error}");
                     std::process::exit(2);
                 }
@@ -561,7 +560,7 @@ fn run_upgrade(path: &Path, check: bool) -> i32 {
         return 0;
     }
 
-    let touched = match persist::write_back(&bundle.root, &bundle.files, &plan.files) {
+    let touched = match io::write_back(&bundle.root, &bundle.files, &plan.files) {
         Ok(touched) => touched,
         Err(error) => {
             eprintln!("waml: could not write upgrade: {error}");
@@ -904,7 +903,7 @@ fn run_batch(common: &Common, batch: waml::edit::Batch) -> i32 {
                 print!("{}", commands::render_diff(&old, &new));
                 0
             } else {
-                match persist::write_back(&common.dir, &old, &new) {
+                match io::write_back(&common.dir, &old, &new) {
                     Ok(touched) => {
                         for t in touched {
                             println!("waml: {t}");

@@ -15,11 +15,22 @@ pub(crate) fn save_bundle_atomic(
     save_bundle_atomic_with_commit(root, baseline, current, commit_dirty_writes)
 }
 
-/// The real commit step: `DeletePolicy::Refuse` -- the editor never intends
-/// deletions here (the full-bundle check in `save_bundle_atomic_with_commit`
-/// already refused any dropped path before planning even starts), but this
-/// keeps that guarantee enforced at the point of mutation too, not just at
-/// the top of the function.
+/// The real commit step, pinned to `DeletePolicy::Refuse`.
+///
+/// Be precise about what that buys, because it is easy to overstate: the
+/// deletion refusal users actually hit is the full-bundle check at the top of
+/// [`save_bundle_atomic_with_commit`], which fails before any planning. By the
+/// time control reaches here, `old` has been rebuilt from the *pending* set,
+/// so every one of its keys is present in `new` by construction and the
+/// `Refuse` branch inside `host::persist` cannot fire from this call.
+///
+/// `Refuse` is passed anyway as a standing declaration of intent, not as an
+/// active second check: it is what makes "the editor's save never deletes"
+/// true of the shared transaction itself rather than only of this crate's
+/// planning code, so any future caller that hands this function a broader
+/// `old` set fails loudly instead of quietly deleting a user's file.
+/// `commit_dirty_writes_refuses_a_dropped_path` pins that, since no
+/// production save path can reach it.
 fn commit_dirty_writes(
     root: &Path,
     old: &[(String, String)],
@@ -338,8 +349,8 @@ fn save_conflict(target: &Path, reason: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        save_bundle_atomic as save_source_bundle_atomic, save_bundle_atomic_with_commit,
-        save_ticket_atomic,
+        commit_dirty_writes, save_bundle_atomic as save_source_bundle_atomic,
+        save_bundle_atomic_with_commit, save_ticket_atomic,
     };
     use std::path::{Path, PathBuf};
     use std::sync::{
@@ -678,6 +689,38 @@ mod tests {
             std::fs::read(temp.path().join("order.md")).unwrap(),
             invalid.as_bytes()
         );
+    }
+
+    /// The user-facing refusal of a dropped path is
+    /// `removed_bundle_path_is_rejected_before_earlier_mutation` below, which
+    /// never reaches the transaction. This pins the other half of the
+    /// guarantee: the commit step itself hands `host::persist`
+    /// `DeletePolicy::Refuse`, so the shared transaction would refuse rather
+    /// than delete if it were ever handed an `old` set with a dropped key.
+    /// Swapping the policy for `Transact` (or calling the 3-arg `write_back`)
+    /// deletes `gone.md` here instead of erroring.
+    #[test]
+    fn commit_dirty_writes_refuses_a_dropped_path() {
+        let temp = TempDir::new();
+        std::fs::write(temp.path().join("gone.md"), "loaded").unwrap();
+
+        let error = commit_dirty_writes(
+            temp.path(),
+            &[("gone.md".into(), "loaded".into())],
+            &[("kept.md".into(), "new".into())],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "removing bundle files is not supported by atomic save"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("gone.md")).unwrap(),
+            "loaded"
+        );
+        assert!(!temp.path().join("kept.md").exists());
     }
 
     #[test]

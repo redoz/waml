@@ -23,6 +23,24 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// Whether [`check_rel`]'s Windows reserved-device-name rule applies.
+///
+/// `Reject` is the rule for every writer that saves *document* content: a
+/// path a Windows host cannot represent must fail at the point of mutation,
+/// on every platform, rather than diverge per OS.
+///
+/// `Allow` exists for one caller -- `waml-cli`'s index writer -- whose
+/// accepted set predates this module and must not shrink: it only ever writes
+/// `index.md` basenames, so a device name can appear only as an enclosing
+/// *directory* segment (`con/index.md`), which is an ordinary directory on
+/// Linux. Rejecting it would make `waml index --write` fail the whole run on a
+/// bundle that has always been legal there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceNamePolicy {
+    Reject,
+    Allow,
+}
+
 /// Syntactic validity, independent of the filesystem: applies to every
 /// *writer* of a bundle-relative path. Rejects: empty, a NUL byte, an
 /// absolute path (`/` or `\` leading), a UNC path, a drive prefix (`C:`),
@@ -32,6 +50,12 @@ use std::path::{Component, Path, PathBuf};
 /// checked on every platform, since a document might be shared to a Windows
 /// machine later.
 pub fn check_rel(rel: &str) -> Result<(), ConfineError> {
+    check_rel_with(rel, DeviceNamePolicy::Reject)
+}
+
+/// [`check_rel`] with an explicit [`DeviceNamePolicy`]; see that enum for the
+/// single caller that opts out of the reserved-device-name rule.
+pub fn check_rel_with(rel: &str, device_names: DeviceNamePolicy) -> Result<(), ConfineError> {
     if rel.is_empty() {
         return Err(ConfineError::Syntactic("path is empty".to_string()));
     }
@@ -76,7 +100,7 @@ pub fn check_rel(rel: &str) -> Result<(), ConfineError> {
                 "path segment contains a colon: {segment:?}"
             )));
         }
-        if is_reserved_device_name(segment) {
+        if device_names == DeviceNamePolicy::Reject && is_reserved_device_name(segment) {
             return Err(ConfineError::Syntactic(format!(
                 "path names a reserved device: {segment:?}"
             )));
@@ -188,7 +212,19 @@ pub fn resolve_under(
     policy: SymlinkPolicy,
     create_parents: bool,
 ) -> Result<PathBuf, ConfineError> {
-    check_rel(rel)?;
+    resolve_under_with(root, rel, policy, create_parents, DeviceNamePolicy::Reject)
+}
+
+/// [`resolve_under`] with an explicit [`DeviceNamePolicy`]; see that enum for
+/// the single caller that opts out of the reserved-device-name rule.
+pub fn resolve_under_with(
+    root: &Path,
+    rel: &str,
+    policy: SymlinkPolicy,
+    create_parents: bool,
+    device_names: DeviceNamePolicy,
+) -> Result<PathBuf, ConfineError> {
+    check_rel_with(rel, device_names)?;
     let canonical_root = fs::canonicalize(root)?;
     match policy {
         SymlinkPolicy::RefuseAny => resolve_refuse_any(&canonical_root, rel, create_parents),
@@ -383,6 +419,26 @@ mod tests {
             "nested/abc.md",
         ] {
             assert!(check_rel(rel).is_ok(), "expected {rel:?} to be accepted");
+        }
+    }
+
+    /// `DeviceNamePolicy::Allow` drops the reserved-device-name rule and
+    /// nothing else; see the enum's docs for the one caller that needs it
+    /// (`waml-cli`'s index writer, whose accepted set predates this module).
+    #[test]
+    fn allowing_device_names_drops_only_the_device_name_rule() {
+        for rel in ["con.md", "con/index.md", "COM1.md", "nested/nul/index.md"] {
+            assert!(check_rel(rel).is_err(), "expected {rel:?} to be rejected");
+            assert!(
+                check_rel_with(rel, DeviceNamePolicy::Allow).is_ok(),
+                "expected {rel:?} to be accepted when device names are allowed"
+            );
+        }
+        for rel in ["../x", "/abs", "ab:c.md", "a\0b", ""] {
+            assert!(
+                check_rel_with(rel, DeviceNamePolicy::Allow).is_err(),
+                "expected {rel:?} to stay rejected when device names are allowed"
+            );
         }
     }
 

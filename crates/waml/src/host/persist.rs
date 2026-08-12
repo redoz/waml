@@ -44,11 +44,34 @@ pub fn write_back_with_policy(
     new: &[(String, String)],
     policy: DeletePolicy,
 ) -> std::io::Result<Vec<String>> {
-    #[cfg(debug_assertions)]
-    if let Some(ops) = DebugFaultFs::from_env()? {
-        return write_back_with_ops(root, old, new, policy, &ops);
-    }
     write_back_with_ops(root, old, new, policy, &RealFs)
+}
+
+/// Fault-injection seam for an in-tree frontend that supplies its own
+/// [`FsOps`] -- today the `waml` CLI binary, whose `WAML_CLI_TEST_FAIL_*`
+/// end-to-end backdoor lives in `waml-cli`'s `io::write_back` and is gated
+/// there on `debug_assertions`.
+///
+/// That backdoor deliberately does NOT live in this library. `write_back*` is
+/// also the native editor's save path and `serve`'s write path, and both are
+/// routinely built with debug assertions on (`run.ps1`), so an env var
+/// exported for a CLI test would otherwise silently sabotage an editor save.
+/// A library takes its fault injection as an argument; it does not read the
+/// process environment.
+///
+/// The `test_support` module below carries the same seam for consumers of the
+/// `test-support` feature (`waml-editor`'s dev-dependency); this one is
+/// unconditional because `waml-cli`'s *binary* needs it, and a binary cannot
+/// rely on dev-dependency feature unification to compile.
+#[doc(hidden)]
+pub fn write_back_injecting_ops(
+    root: &Path,
+    old: &[(String, String)],
+    new: &[(String, String)],
+    policy: DeletePolicy,
+    ops: &impl FsOps,
+) -> std::io::Result<Vec<String>> {
+    write_back_with_ops(root, old, new, policy, ops)
 }
 
 #[doc(hidden)]
@@ -65,56 +88,6 @@ struct RealFs;
 impl FsOps for RealFs {
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         fs::rename(from, to)
-    }
-}
-
-#[cfg(debug_assertions)]
-struct DebugFaultFs {
-    fail_rename_at: Option<u64>,
-    rename_calls: AtomicU64,
-    fail_cleanup: bool,
-}
-
-#[cfg(debug_assertions)]
-impl DebugFaultFs {
-    fn from_env() -> std::io::Result<Option<Self>> {
-        let fail_rename_at = std::env::var("WAML_CLI_TEST_FAIL_RENAME_AT")
-            .ok()
-            .map(|value| {
-                value.parse::<u64>().map_err(|error| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!("invalid WAML_CLI_TEST_FAIL_RENAME_AT: {error}"),
-                    )
-                })
-            })
-            .transpose()?;
-        let fail_cleanup = std::env::var_os("WAML_CLI_TEST_FAIL_CLEANUP").is_some();
-        Ok((fail_rename_at.is_some() || fail_cleanup).then(|| Self {
-            fail_rename_at,
-            rename_calls: AtomicU64::new(0),
-            fail_cleanup,
-        }))
-    }
-}
-
-#[cfg(debug_assertions)]
-impl FsOps for DebugFaultFs {
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        let call = self.rename_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.fail_rename_at == Some(call) {
-            return Err(std::io::Error::other(format!(
-                "injected rename failure at call {call}"
-            )));
-        }
-        fs::rename(from, to)
-    }
-
-    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if self.fail_cleanup {
-            return Err(std::io::Error::other("injected cleanup failure"));
-        }
-        fs::remove_dir_all(path)
     }
 }
 

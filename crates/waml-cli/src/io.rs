@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use waml::bundle_envelope::expand_text;
-use waml::host::confine::{self, ConfineError, SymlinkPolicy};
+use waml::host::confine::{self, ConfineError, DeviceNamePolicy, SymlinkPolicy};
 use waml::host::ingest::{ingest_markdown, rooted_key, triage, IngestError, IngestOptions};
 use waml::index_md::IndexChange;
 
@@ -190,17 +190,20 @@ fn escaped_index_path(message: impl Into<String>) -> std::io::Error {
 /// follow in-root symlinks (`SymlinkPolicy::FollowWithinRoot`, `host::confine`).
 ///
 /// Shared confinement also brings `confine::check_rel`, which this writer did
-/// not run before. Only one of its rules actually changes what the index writer
-/// accepts: a segment naming a Windows reserved device (`con/index.md`) is now
-/// refused as `InvalidInput` instead of being opened as a console device --
-/// pinned by `write_indexes_rejects_a_reserved_device_name_segment`, and the
-/// same "no writer may save a device-named path" rule `host::confine` applies to
-/// `persist` and the native save. `check_rel`'s remaining rules (interior `:`,
-/// `.`/`..` segments, absolute/UNC/drive-prefixed paths) cannot reach here:
-/// `IndexChange` paths come from `BundlePath`s, and `BundlePath::parse`
-/// (`waml::source`) already rejects every one of those shapes. The Task 11
-/// table in the `waml-cli-logic-seam` plan records this caller's accepted set
-/// as unchanged, which holds for those rules but not for the device names.
+/// not run before -- so it is taken with `DeviceNamePolicy::Allow`, keeping
+/// this caller's accepted set exactly as it was. This writer only ever writes
+/// an `index.md` basename (the gate below), so a Windows reserved device name
+/// could only appear as an enclosing *directory* segment (`con/index.md`),
+/// which is an ordinary directory on Linux; rejecting it would fail an entire
+/// `waml index --write` run on a bundle that has always been legal there,
+/// which is not a change the `waml-cli-logic-seam` plan's Task 11 per-caller
+/// table sanctions (it records this caller as **Unchanged**). Document
+/// writers -- `persist`, the native save, `serve`'s wire input -- keep the
+/// default `Reject`: they save author-visible files whose names must be
+/// representable on every platform. `check_rel`'s remaining rules (interior
+/// `:`, `.`/`..` segments, absolute/UNC/drive-prefixed paths) cannot reach
+/// here: `IndexChange` paths come from `BundlePath`s, and `BundlePath::parse`
+/// (`waml::source`) already rejects every one of those shapes.
 fn resolve_index_target(
     root: &Path,
     relative: &str,
@@ -214,8 +217,14 @@ fn resolve_index_target(
             "not an index document: {relative}"
         )));
     }
-    confine::resolve_under(root, relative, SymlinkPolicy::RefuseAny, create_parents)
-        .map_err(|error| index_confine_error_to_io(relative, error))
+    confine::resolve_under_with(
+        root,
+        relative,
+        SymlinkPolicy::RefuseAny,
+        create_parents,
+        DeviceNamePolicy::Allow,
+    )
+    .map_err(|error| index_confine_error_to_io(relative, error))
 }
 
 fn index_confine_error_to_io(relative: &str, error: ConfineError) -> std::io::Error {
@@ -272,6 +281,91 @@ pub fn write_indexes(root: &Path, changes: &[IndexChange]) -> std::io::Result<()
         }
     }
     Ok(())
+}
+
+/// Every CLI-side bundle write -- `fmt --write`, `index --write`, `apply`,
+/// and `serve`'s write path -- goes through here rather than calling
+/// [`waml::host::persist::write_back`] directly, so that the
+/// `WAML_CLI_TEST_FAIL_*` fault-injection backdoor `cli_e2e.rs` drives stays
+/// scoped to *this binary*, exactly as it was before the transaction moved
+/// into `waml::host::persist`.
+///
+/// It must not live in the shared library: `write_back` is also the native
+/// editor's save path, and the editor is routinely run as a debug build
+/// (`run.ps1`), so a library-side env-var backdoor would let a variable
+/// exported for a CLI test silently sabotage an editor save.
+pub fn write_back(
+    root: &Path,
+    old: &[(String, String)],
+    new: &[(String, String)],
+) -> std::io::Result<Vec<String>> {
+    #[cfg(debug_assertions)]
+    if let Some(ops) = DebugFaultFs::from_env()? {
+        return waml::host::persist::write_back_injecting_ops(
+            root,
+            old,
+            new,
+            waml::host::persist::DeletePolicy::Transact,
+            &ops,
+        );
+    }
+    waml::host::persist::write_back(root, old, new)
+}
+
+/// The `WAML_CLI_TEST_FAIL_*` end-to-end fault injector: `cli_e2e.rs` cannot
+/// pass an [`FsOps`](waml::host::persist::FsOps) into a spawned process, so it
+/// asks for the fault through the environment instead. Debug builds only.
+#[cfg(debug_assertions)]
+struct DebugFaultFs {
+    fail_rename_at: Option<u64>,
+    rename_calls: std::sync::atomic::AtomicU64,
+    fail_cleanup: bool,
+}
+
+#[cfg(debug_assertions)]
+impl DebugFaultFs {
+    fn from_env() -> std::io::Result<Option<Self>> {
+        let fail_rename_at = std::env::var("WAML_CLI_TEST_FAIL_RENAME_AT")
+            .ok()
+            .map(|value| {
+                value.parse::<u64>().map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("invalid WAML_CLI_TEST_FAIL_RENAME_AT: {error}"),
+                    )
+                })
+            })
+            .transpose()?;
+        let fail_cleanup = std::env::var_os("WAML_CLI_TEST_FAIL_CLEANUP").is_some();
+        Ok((fail_rename_at.is_some() || fail_cleanup).then(|| Self {
+            fail_rename_at,
+            rename_calls: std::sync::atomic::AtomicU64::new(0),
+            fail_cleanup,
+        }))
+    }
+}
+
+#[cfg(debug_assertions)]
+impl waml::host::persist::FsOps for DebugFaultFs {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        let call = self
+            .rename_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if self.fail_rename_at == Some(call) {
+            return Err(std::io::Error::other(format!(
+                "injected rename failure at call {call}"
+            )));
+        }
+        fs::rename(from, to)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if self.fail_cleanup {
+            return Err(std::io::Error::other("injected cleanup failure"));
+        }
+        fs::remove_dir_all(path)
+    }
 }
 
 /// Read an NDJSON op-log: `(line_number, trimmed_line)` per non-blank line.
@@ -516,24 +610,43 @@ mod tests {
     }
 
     /// `resolve_index_target` runs the shared `confine::check_rel`, which the
-    /// pre-unification index writer did not. A reserved-device-name segment is
-    /// the one shape whose acceptance actually changed here (every other
-    /// `check_rel` rule is already enforced upstream by `BundlePath::parse`),
-    /// so it is pinned rather than left to the resolver's own suite.
+    /// pre-unification index writer did not -- with `DeviceNamePolicy::Allow`,
+    /// so this writer's accepted set stays exactly what it was. A segment
+    /// naming a Windows device can only be an enclosing *directory* here (the
+    /// basename gate allows nothing but `index.md`), and `con/` is an ordinary
+    /// directory on Linux: refusing it would fail an entire `waml index
+    /// --write` run on a long-legal bundle. Resolution must therefore reach
+    /// the filesystem and report the missing directory, not refuse the path.
     #[test]
-    fn write_indexes_rejects_a_reserved_device_name_segment() {
+    fn index_paths_accept_a_reserved_device_name_directory_segment() {
         let temp = TempDir::new();
-        let error = write_indexes(
+
+        let error = resolve_index_target(&temp.0, "con/index.md", false).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(!temp.0.join("con").exists());
+    }
+
+    /// The same rule end to end, on the platforms where such a directory is
+    /// actually creatable: `waml index --write` writes into it.
+    #[cfg(unix)]
+    #[test]
+    fn write_indexes_writes_under_a_reserved_device_name_directory_segment() {
+        let temp = TempDir::new();
+
+        write_indexes(
             &temp.0,
             &[waml::index_md::IndexChange::Upsert {
                 path: "con/index.md".into(),
-                rendered: "bad".into(),
+                rendered: "generated".into(),
             }],
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(!temp.0.join("con").exists());
+        assert_eq!(
+            fs::read_to_string(temp.0.join("con/index.md")).unwrap(),
+            "generated"
+        );
     }
 
     #[test]
