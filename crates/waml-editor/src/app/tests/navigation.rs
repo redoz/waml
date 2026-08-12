@@ -3433,6 +3433,25 @@ fn committing_read_as_scroll_opens_the_armed_folders_book() {
     );
 }
 
+/// The book tab's surface must be a LIVE `BookSurface`, not a dead node.
+/// `book := BookSurface{ .. }` only resolves if App's own DSL imports the
+/// widget (`use mod.widgets.BookSurface`); registering `script_mod` is not
+/// enough. Without the import the node silently becomes dead and invisible --
+/// every `set_model` no-ops and the book tab renders blank -- while every
+/// model-level book test above stays green. Asserted through
+/// `mounted_production_shell`, the only fixture that evaluates the real App
+/// DSL.
+#[test]
+fn the_mounted_book_surface_is_a_live_widget() {
+    let (cx, app) = mounted_production_shell();
+    let book = app.ui.widget(&cx, ids!(book_surface.book));
+    assert!(
+        book.borrow::<crate::book_surface::BookSurface>().is_some(),
+        "book_surface.book must resolve to a real BookSurface -- \
+         a missing `use mod.widgets.BookSurface` leaves a dead, invisible node"
+    );
+}
+
 #[test]
 fn right_clicking_a_concept_row_still_opens_it_before_the_menu() {
     let (mut cx, mut app) = mounted_production_shell();
