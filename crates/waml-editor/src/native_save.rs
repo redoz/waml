@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 use waml::source::SourceBundle;
 
@@ -216,10 +216,16 @@ fn index_bundle<'a>(
 ) -> io::Result<BTreeMap<String, &'a str>> {
     let mut indexed = BTreeMap::new();
     for document in bundle.documents() {
-        let relative = Path::new(document.path().as_str());
-        validate_relative_path(relative)?;
+        let relative = document.path().as_str();
+        // The one syntactic rule, shared with `resolve_under` below and with
+        // every other bundle-path writer (Task 11 of the waml-cli-logic-seam
+        // plan). This screen exists because `index_bundle` also sees the
+        // *baseline* bundle, which `resolve_under` never resolves; keeping a
+        // second, local spelling of the rule here would be a defense layer
+        // that silently disagrees with the layer above it.
+        confine::check_rel(relative).map_err(|error| confine_error_to_io(relative, error))?;
         if indexed
-            .insert(bundle_path_key(relative), document.text())
+            .insert(bundle_path_key(Path::new(relative)), document.text())
             .is_some()
         {
             return Err(io::Error::new(
@@ -229,28 +235,6 @@ fn index_bundle<'a>(
         }
     }
     Ok(indexed)
-}
-
-fn validate_relative_path(relative: &Path) -> io::Result<()> {
-    if relative.as_os_str().is_empty()
-        || relative.components().any(|component| match component {
-            // A colon inside a name is an NTFS alternate-data-stream write
-            // (`a:b.md`), not a file the user can see; reject it everywhere
-            // so bundles behave identically across platforms. This mirrors
-            // `BundlePath::parse` (the authoritative upper layer, which
-            // already rejects any colon) and the CLI's `validate_relative`
-            // (`waml-cli/src/io.rs`) — a defense layer that silently
-            // disagreed with the layer above it would be worse than none.
-            Component::Normal(name) => name.to_string_lossy().contains(':'),
-            _ => true,
-        })
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("bundle path must be relative and traversal-free: {relative:?}"),
-        ));
-    }
-    Ok(())
 }
 
 fn bundle_path_key(path: &Path) -> String {
@@ -498,30 +482,30 @@ mod tests {
         );
     }
 
+    /// `index_bundle` screens *both* bundles, while `resolve_under` only sees
+    /// the current one, so the local screen must be the same rule -- not a
+    /// weaker second spelling of it. These shapes (reserved device name, NUL
+    /// byte) survive `BundlePath::parse` and were accepted by the retired
+    /// local checker while `confine::check_rel` rejects them.
     #[test]
-    fn colon_segments_are_rejected_by_validate_relative_path() {
-        use super::validate_relative_path;
+    fn index_bundle_applies_the_shared_syntactic_rule() {
+        use super::index_bundle;
 
-        assert_eq!(
-            validate_relative_path(Path::new("ab:c.md"))
-                .unwrap_err()
-                .kind(),
-            std::io::ErrorKind::InvalidInput
-        );
-        assert_eq!(
-            validate_relative_path(Path::new("nested/ab:c.md"))
-                .unwrap_err()
-                .kind(),
-            std::io::ErrorKind::InvalidInput
-        );
-    }
+        for path in ["con.md", "nested/nul.md", "a\0b.md"] {
+            let bundle =
+                SourceBundle::try_from_pairs([(path.to_string(), "authored".to_string())]).unwrap();
+            let error = index_bundle(&bundle, "current").unwrap_err();
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "expected {path:?} to be rejected"
+            );
+        }
 
-    #[test]
-    fn colon_free_segments_still_pass_validate_relative_path() {
-        use super::validate_relative_path;
-
-        assert!(validate_relative_path(Path::new("abc.md")).is_ok());
-        assert!(validate_relative_path(Path::new("nested/abc.md")).is_ok());
+        let accepted =
+            SourceBundle::try_from_pairs([("nested/abc.md".to_string(), "authored".to_string())])
+                .unwrap();
+        assert!(index_bundle(&accepted, "current").is_ok());
     }
 
     #[test]
