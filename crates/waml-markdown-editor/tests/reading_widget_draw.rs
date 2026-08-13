@@ -157,6 +157,27 @@ fn draw_ui(cx: &mut Cx, ui: &WidgetRef, width: f64, height: f64, name: &str) {
     draw_cx.end_pass(&pass);
 }
 
+fn install_and_draw(cx: &mut Cx, ui: &WidgetRef, source: &str, pass_name: &str) {
+    let text = SourceText::new(source.to_owned()).expect("valid source text");
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("markdown parses");
+    let styles = Arc::new(PresentationStyles::balanced());
+    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
+        .expect("presentation compiles");
+    let document = Arc::new(
+        build_reading_document(&plan, &RegisteredBlockExtensions::default())
+            .expect("reading model builds"),
+    );
+    ui.widget(cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer()
+        .install_document(cx, document, Arc::from(source), empty_frame());
+    draw_ui(cx, ui, 800.0, 600.0, pass_name);
+}
+
 fn mouse_down(abs: DVec2) -> Event {
     Event::MouseDown(MouseDownEvent {
         abs,
@@ -617,4 +638,121 @@ fn a_failed_extension_keeps_the_source_and_adds_one_safe_error_line() {
             .count(),
         1
     );
+}
+
+#[test]
+fn set_zoom_scales_the_flow_from_a_stable_base_without_compounding() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let flow = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
+        .as_text_flow();
+    let base = flow.borrow().expect("the flow exists").font_size;
+
+    viewer.set_zoom(&mut cx, 1.5);
+    assert_eq!(flow.borrow().unwrap().font_size, base * 1.5);
+    viewer.set_zoom(&mut cx, 1.5);
+    assert_eq!(flow.borrow().unwrap().font_size, base * 1.5);
+    viewer.set_zoom(&mut cx, 1.0);
+    assert_eq!(flow.borrow().unwrap().font_size, base);
+}
+
+fn drawn_link_fixture(source: &str, pass_name: &str) -> (Cx, WidgetRef, TextRange) {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    install_and_draw(&mut cx, &ui, source, pass_name);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let text = SourceText::new(source.to_owned()).unwrap();
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let plan = compile_presentation(
+        &syntax,
+        &Arc::new(PresentationStyles::balanced()),
+        &HighlighterRegistry::default(),
+    )
+    .unwrap();
+    let document = build_reading_document(&plan, &RegisteredBlockExtensions::default()).unwrap();
+    let range = document.links[0].source_range;
+    assert!(!viewer.test_source_rects(&cx, range).is_empty());
+    (cx, ui, range)
+}
+
+#[test]
+fn a_point_inside_a_drawn_link_resolves_to_its_destination() {
+    let (cx, ui, range) = drawn_link_fixture(
+        "See [Customer](./customer.md) for more.\n",
+        "reading-widget-draw-link-test",
+    );
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let rect = viewer.test_source_rects(&cx, range)[0];
+    assert_eq!(
+        viewer
+            .test_link_at_point(&cx, rect.pos + rect.size * 0.5)
+            .as_deref(),
+        Some("./customer.md")
+    );
+    assert!(viewer
+        .test_link_at_point(&cx, dvec2(-100.0, -100.0))
+        .is_none());
+}
+
+#[test]
+fn a_point_beside_a_drawn_link_resolves_to_nothing() {
+    let (cx, ui, range) = drawn_link_fixture(
+        "[Customer](./customer.md) owns the account.\n",
+        "reading-widget-draw-link-margin-test",
+    );
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let rect = viewer.test_source_rects(&cx, range)[0];
+    let middle_y = rect.pos.y + rect.size.y * 0.5;
+    assert!(viewer
+        .test_link_at_point(&cx, dvec2(rect.pos.x - 20.0, middle_y))
+        .is_none());
+    assert!(viewer
+        .test_link_at_point(&cx, dvec2(rect.pos.x + rect.size.x * 0.5, middle_y + 200.0))
+        .is_none());
+}
+
+#[test]
+fn a_link_label_draws_in_its_own_colour() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    install_and_draw(
+        &mut cx,
+        &ui,
+        "Owned by Customer.\n",
+        "reading-widget-draw-plain-colour",
+    );
+    let flow = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
+        .as_text_flow();
+    let body_colour = flow.borrow().unwrap().draw_text.color;
+
+    install_and_draw(
+        &mut cx,
+        &ui,
+        "Owned by [Customer](./customer.md)\n",
+        "reading-widget-draw-link-colour",
+    );
+    let flow = flow.borrow().unwrap();
+    assert_ne!(flow.draw_text.color, body_colour);
+    assert!(flow.draw_text.color.w > 0.0);
+    assert_eq!(flow.underline.value(), 0);
+    assert!(flow.font_colors.is_empty());
 }

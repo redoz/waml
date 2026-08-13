@@ -73,8 +73,7 @@ impl<T> DeferredFrameSlot<T> {
 
 pub struct ReadingView {
     key: String,
-    /// `true` once the reader has asked to see the markdown source. The
-    /// editor side stays read-only: this toggles RENDERING, not writability.
+    /// `true` once the reader has asked to see the editable markdown source.
     showing_source: bool,
     plan: Option<Arc<PresentationPlan>>,
     source: Option<Arc<str>>,
@@ -129,6 +128,12 @@ impl ReadingView {
         self.showing_source
     }
 
+    /// The concept this view renders. A link tapped on the reading surface is
+    /// resolved relative to it.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
     pub fn set_showing_source(&mut self, showing: bool) {
         self.showing_source = showing;
     }
@@ -145,6 +150,14 @@ impl ReadingView {
         let revision = syntax.revision();
         if self.revision == Some(revision) {
             self.reconcile_appearance(cx, body, configured_appearance());
+            let mine_is_up = self.source.as_ref().is_some_and(|source| {
+                body.markdown_viewer()
+                    .installed_source()
+                    .is_some_and(|installed| Arc::ptr_eq(&installed, source))
+            });
+            if !mine_is_up {
+                self.install_extension_frame(cx, body, true);
+            }
             return;
         }
         let styles = Arc::new(PresentationStyles::balanced());
@@ -296,16 +309,19 @@ impl ReadingView {
             return;
         };
         debug_assert_eq!(plan.revision, revision);
-        self.handoff_source = if preserve_handoff {
-            body.markdown_viewer()
-                .selected_source_span(cx)
-                .or(self.handoff_source)
+        let viewer = body.markdown_viewer();
+        let mine_is_up = viewer
+            .installed_source()
+            .is_some_and(|installed| Arc::ptr_eq(&installed, &source));
+        self.handoff_source = if preserve_handoff && mine_is_up {
+            viewer.selected_source_span(cx).or(self.handoff_source)
+        } else if preserve_handoff {
+            self.handoff_source
         } else {
             None
         };
         let frame = self.states.frame(revision);
-        body.markdown_viewer()
-            .install_document(cx, document, source, frame);
+        viewer.install_document(cx, document, source, frame);
         self.trace_browser_pending();
     }
 
@@ -730,5 +746,57 @@ mod tests {
             [(_, BlockExtensionState::Failed(_))]
         ));
         assert_eq!(view.source.as_deref(), Some(new_source));
+    }
+
+    #[test]
+    fn reactivating_an_unchanged_tab_reinstalls_its_own_document() {
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([
+                    ("runbook.md", "# Runbook\n\nStep one.\n"),
+                    ("glossary.md", "# Glossary\n\nTerms.\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        let snapshot = session.snapshot();
+        let extensions = crate::markdown_extensions::EditorMarkdownExtensionHost::shared();
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let mut runbook =
+            ReadingView::new_with_extension_host("runbook".into(), assets(), extensions.clone());
+        let mut glossary =
+            ReadingView::new_with_extension_host("glossary".into(), assets(), extensions);
+
+        runbook.install_snapshot(&mut cx, &body, &snapshot);
+        glossary.install_snapshot(&mut cx, &body, &snapshot);
+        runbook.install_snapshot(&mut cx, &body, &snapshot);
+
+        assert!(body
+            .markdown_viewer()
+            .installed_source()
+            .expect("the first tab reinstalled its document")
+            .starts_with("# Runbook\n"));
+    }
+
+    #[test]
+    fn a_cleared_shared_surface_is_repopulated_on_reactivation() {
+        let source = "# Runbook\n\nStep one.\n";
+        let extensions = crate::markdown_extensions::EditorMarkdownExtensionHost::shared();
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let mut view = ReadingView::new_with_extension_host("runbook".into(), assets(), extensions);
+
+        view.install_snapshot(&mut cx, &body, &snapshot(source));
+        body.markdown_viewer().clear_document(&mut cx);
+        view.install_snapshot(&mut cx, &body, &snapshot(source));
+
+        assert_eq!(
+            body.markdown_viewer().installed_source().as_deref(),
+            Some(source)
+        );
     }
 }

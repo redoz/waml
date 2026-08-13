@@ -171,6 +171,7 @@ pub fn open_source_with_asset_host(
             crate::generic_okf_view::GenericOkfView::new_source_with_asset_host(
                 concept_id.to_string(),
                 assets.clone(),
+                markdown_extensions(),
                 emphasis,
             ),
         ),
@@ -292,6 +293,7 @@ pub fn open_source_for_target(
                     crate::generic_okf_view::GenericOkfView::new_source_with_asset_host(
                         key.clone(),
                         assets.clone(),
+                        markdown_extensions(),
                         emphasis,
                     ),
                 ),

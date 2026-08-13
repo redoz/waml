@@ -75,7 +75,15 @@ impl ClassifierPreviewView {
                     .installed_source()
                     .is_some_and(|installed| Arc::ptr_eq(&installed, &source));
                 if !mine_is_up {
-                    viewer.install_document(cx, document, source);
+                    viewer.install_document(
+                        cx,
+                        document,
+                        source,
+                        Arc::new(waml_markdown_editor::reading::BlockExtensionFrame {
+                            revision: DocumentRevision::INITIAL,
+                            items: Arc::from([]),
+                        }),
+                    );
                 }
             }
             // No page of our own: a package preview, an unknown key, or a
@@ -130,7 +138,10 @@ impl ClassifierPreviewView {
                 return;
             }
         };
-        let document = match build_reading_document(&plan) {
+        let document = match build_reading_document(
+            &plan,
+            &waml_markdown_editor::reading::RegisteredBlockExtensions::default(),
+        ) {
             Ok(document) => document,
             Err(error) => {
                 log!(

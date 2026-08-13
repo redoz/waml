@@ -309,8 +309,11 @@ fn compile_prose(
     let highlighters = WamlCodeHighlightHost::registry(Arc::new(snapshot.clone()));
     let plan = compile_presentation(&syntax, &styles, &highlighters)
         .map_err(|error| format!("presentation compile failed: {error:?}"))?;
-    let document = build_reading_document(&plan)
-        .map_err(|error| format!("reading model build failed: {error:?}"))?;
+    let document = build_reading_document(
+        &plan,
+        &waml_markdown_editor::reading::RegisteredBlockExtensions::default(),
+    )
+    .map_err(|error| format!("reading model build failed: {error:?}"))?;
     let source: Arc<str> = Arc::from(syntax.text().shared().as_str());
     Ok((Arc::new(document), source))
 }

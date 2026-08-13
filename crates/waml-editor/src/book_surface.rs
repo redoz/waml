@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use makepad_widgets::*;
 use waml_markdown_editor::reading::{MarkdownViewer, MarkdownViewerWidgetRefExt};
@@ -509,9 +510,15 @@ impl BookSurface {
         match &section.body {
             SectionBody::Prose { document, source } => {
                 let child = WidgetRef::new_with_inner(Box::new(cx.with_vm(reading_prose)));
-                child
-                    .as_markdown_viewer()
-                    .install_document(cx, document.clone(), source.clone());
+                child.as_markdown_viewer().install_document(
+                    cx,
+                    document.clone(),
+                    source.clone(),
+                    Arc::new(waml_markdown_editor::reading::BlockExtensionFrame {
+                        revision: waml_markdown_editor::syntax::DocumentRevision::INITIAL,
+                        items: Arc::from([]),
+                    }),
+                );
                 Some(child)
             }
             SectionBody::Diagram { scene, .. } => {
