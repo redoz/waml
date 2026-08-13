@@ -55,16 +55,26 @@ fn spell_multiplicity(raw: &str) -> Option<String> {
     Some(format!("{} to {}", number_word(lo), number_word(hi)))
 }
 
-/// A character no inline link destination can carry in any form: `<` is
-/// rejected outright inside the angle-bracket form (waml-syntax
+/// A character no destination can carry raw, whichever form it takes.
+///
+/// `<` is rejected outright inside the angle-bracket form (waml-syntax
 /// `inline_destination` scans the RAW slice, so `\<` does not help), `>` ends
 /// that form, and a newline ends the inline itself. All three are illegal in a
-/// filename on every mainstream filesystem, so a key carrying one cannot round
-/// -trip to disk either; percent-encoding at least keeps the link clickable and
-/// lets the resolver report an honest miss instead of the destination silently
-/// swallowing the rest of the sentence.
+/// filename on every mainstream filesystem, so a key carrying one cannot
+/// round-trip to disk either.
+///
+/// `#` and `?` are different: they parse fine and reach the resolver intact,
+/// and that is the problem. `navigation::resolve_link` rejects any href holding
+/// a `?`, and splits the href at the first `#` into path + fragment -- so a raw
+/// one truncates the path the destination was built to carry. A key like
+/// `foo.md#bar` is the bad case: `/foo.md#bar.md` splits to the path `/foo.md`,
+/// which strips to the UNRELATED concept `foo` and navigates there silently.
+///
+/// Percent-encoding keeps the destination whole in every case: the link stays
+/// clickable and the resolver reports an honest miss instead of swallowing the
+/// rest of the sentence or opening the wrong document.
 fn is_unrepresentable_in_a_destination(ch: char) -> bool {
-    matches!(ch, '<' | '>') || ch.is_control()
+    matches!(ch, '<' | '>' | '#' | '?') || ch.is_control()
 }
 
 /// The bare destination form ends at the first whitespace and needs balanced
@@ -478,6 +488,25 @@ mod tests {
         assert_eq!(
             far_end_phrase(None, "Order", "a<b>c"),
             "[Order](/a%3Cb%3Ec.md)"
+        );
+    }
+
+    /// `#` and `?` reach the resolver intact, and that is the problem: it
+    /// rejects any href holding a `?`, and splits the href at the first `#`
+    /// into path + fragment. A raw one therefore truncates the path -- and a
+    /// key like `foo.md#bar` truncates it to a DIFFERENT document that exists.
+    #[test]
+    fn a_key_the_resolver_would_read_structurally_is_percent_encoded() {
+        assert_eq!(
+            far_end_phrase(None, "Note", "notes#1"),
+            "[Note](/notes%231.md)"
+        );
+        assert_eq!(far_end_phrase(None, "Query", "q?x"), "[Query](/q%3Fx.md)");
+        // The silent mis-navigation: `/foo.md#bar.md` splits to the path
+        // `/foo.md`, which strips to the unrelated concept `foo`.
+        assert_eq!(
+            far_end_phrase(None, "Foo", "foo.md#bar"),
+            "[Foo](/foo.md%23bar.md)"
         );
     }
 
