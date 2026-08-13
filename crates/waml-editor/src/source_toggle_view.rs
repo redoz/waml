@@ -211,11 +211,15 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         // Emphasis restyles the raw markdown, so it exists only on that face.
         chrome.document_header.emphasis_toggle =
             self.showing_source.then(|| self.source.emphasis_action());
-        // The diagram face keeps its own zoom (none, per spec §Scope); the
-        // source face is the shared markdown editor, same as SourceView.
-        chrome.document_header.zoom = self
-            .showing_source
-            .then_some(crate::zoom::ZoomTarget::Source);
+        // The source face is the shared markdown editor, same as SourceView.
+        // The rendered face keeps whatever the WRAPPED view declares: a canvas
+        // has no zoom of its own (spec §Scope), but the classifier preview
+        // draws on the shared reading viewer and zooms with it -- and previews
+        // are only ever constructed wrapped, so overwriting here is the only
+        // value production would ever see.
+        if self.showing_source {
+            chrome.document_header.zoom = Some(crate::zoom::ZoomTarget::Source);
+        }
         chrome
     }
 
@@ -379,6 +383,27 @@ mod tests {
         );
         assert_eq!(view.chrome().document_header.emphasis_toggle, None);
         assert_eq!(view.chrome().document_header.zoom, None);
+    }
+
+    /// Every classifier preview is constructed WRAPPED, so the wrapper's
+    /// rendered face is the only face production ever shows. Its body is the
+    /// shared reading viewer, and overwriting the inner view's zoom target hid
+    /// the `[-][%][+]` control and left the page at whatever scale the last
+    /// reading tab set.
+    #[test]
+    fn the_rendered_face_keeps_the_wrapped_views_own_zoom_target() {
+        let mut view = wrapped_preview();
+        assert!(!view.showing_source());
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Reading)
+        );
+        // The source face is the shared markdown editor either way.
+        view.toggle_for_test();
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Source)
+        );
     }
 
     #[test]
