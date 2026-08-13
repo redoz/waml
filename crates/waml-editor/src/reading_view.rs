@@ -44,6 +44,12 @@ impl ReadingView {
         }
     }
 
+    /// The concept this view renders. A link tapped on the reading surface is
+    /// resolved RELATIVE to it.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
     pub fn showing_source(&self) -> bool {
         self.showing_source
     }

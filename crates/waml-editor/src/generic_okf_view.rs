@@ -157,6 +157,21 @@ impl DocView for GenericOkfView {
             self.sync(cx, body, data);
             return ViewOutcome::default();
         }
+        // A tap on a link in the rendered prose. The reading surface paints
+        // every link coloured and underlined, so the affordance is already
+        // there; dropping the tap would make it a lie. Handed to the app as a
+        // raw href: `handle_navigation_intent` resolves it against this
+        // concept and is the only place that puts an unresolvable one on the
+        // status bar, where a silent drop reads as a dead click.
+        if let Some(href) = body.markdown_viewer().link_clicked(actions) {
+            return ViewOutcome {
+                navigation: Some(crate::navigation::NavigationIntent::MarkdownLink {
+                    current_concept_id: self.reading.key().to_string(),
+                    href: href.to_string(),
+                }),
+                ..ViewOutcome::default()
+            };
+        }
         // The emphasis button belongs to the source face only; `sync` re-pushes
         // the chrome so the button's lit state follows the new emphasis.
         if self.reading.showing_source() && self.source.handle_emphasis_action(cx, body, actions) {
@@ -396,6 +411,62 @@ mod tests {
                 tooltip: "Use code emphasis",
                 active: true,
             })
+        );
+    }
+
+    fn session_with_a_linked_concept() -> crate::editor_session::EditorSession {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "runbook.md",
+                "# Runbook\n\nSee the [Glossary](./glossary.md).\n",
+            ),
+            ("glossary.md", "# Glossary\n"),
+        ])
+        .unwrap();
+        let mut session = crate::editor_session::EditorSession::default();
+        session.replace(source).unwrap();
+        session
+    }
+
+    /// Synthesize the action the reading viewer posts on a link tap, without a
+    /// live pointer.
+    fn link_click(body: &BodyWidgets, href: &str) -> ActionsBuf {
+        let viewer = body.markdown_viewer();
+        vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(
+                waml_markdown_editor::reading::MarkdownViewerAction::LinkClicked {
+                    destination: std::sync::Arc::from(href),
+                },
+            ),
+            widget_uid: viewer.widget_uid(),
+            group: None,
+        })]
+    }
+
+    /// The reading surface paints every link coloured and underlined, so a
+    /// concept tab advertises its links as clickable. Dropping the tap makes
+    /// that a lie: no navigation, and not even a status message.
+    #[test]
+    fn a_link_tap_on_a_concept_navigates() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let session = session_with_a_linked_concept();
+        let snapshot = session.snapshot();
+        let mut view = generic_view();
+        view.sync_from_session(&mut cx, &body, &snapshot);
+
+        let actions = link_click(&body, "./glossary.md");
+        let outcome = view.handle(&mut cx, &body, &actions, snapshot.borrowed().into());
+
+        assert_eq!(
+            outcome.navigation,
+            Some(crate::navigation::NavigationIntent::MarkdownLink {
+                current_concept_id: "runbook".into(),
+                href: "./glossary.md".into(),
+            }),
+            "the app resolves the href and reports an unresolvable one"
         );
     }
 
