@@ -569,10 +569,11 @@ fn pressing_a_visual_unit_hands_off_its_full_fenced_source_range() {
 }
 
 #[test]
-fn ready_extensions_scale_down_to_the_column_and_never_scale_up() {
+fn ready_extensions_scale_down_and_modestly_enlarge_small_diagrams() {
     for (logical_size, expected_size, name) in [
         ((1000.0, 500.0), dvec2(400.0, 200.0), "scaled-down-svg"),
-        ((200.0, 100.0), dvec2(200.0, 100.0), "natural-size-svg"),
+        ((200.0, 100.0), dvec2(300.0, 150.0), "enlarged-svg"),
+        ((350.0, 175.0), dvec2(400.0, 200.0), "column-width-svg"),
     ] {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.init_cx_os();

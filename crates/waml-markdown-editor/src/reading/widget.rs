@@ -725,7 +725,10 @@ impl MarkdownViewer {
             .load_svg_from_shared_data(cx, svg.data.clone())
             .map_err(|_| ())?;
 
-        let scale = (available_width / logical_width).min(1.0);
+        // Keep intrinsically small diagrams readable without letting their
+        // labels become poster-sized. Wide diagrams still shrink to the
+        // column, and every diagram preserves its aspect ratio.
+        let scale = (available_width / logical_width).min(1.5);
         let width = logical_width * scale;
         let height = logical_height * scale;
         let walk = Walk {

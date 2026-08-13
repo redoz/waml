@@ -8,7 +8,7 @@ use makepad_widgets::{
 };
 use merman::svg::{
     HeadlessError, HeadlessRenderer, HostTheme, HostThemePreset, Presentation,
-    RenderResourceProfile,
+    RenderResourceProfile, RootBackgroundPostprocessor, SvgPipeline,
 };
 use waml_markdown_editor::reading::{
     BlockExtensionAppearance, BlockExtensionRequest, RenderedBlockSvg,
@@ -87,7 +87,11 @@ pub(super) fn render_uncached(request: &BlockExtensionRequest) -> BlockRenderRes
         .with_vendored_text_measurer()
         .with_diagram_id(&diagram_id);
 
-    let sealed = match renderer.render_resvg_compatible_svg_sync(&request.content) {
+    let mut pipeline = SvgPipeline::resvg_safe();
+    pipeline.push_postprocessor(RootBackgroundPostprocessor::new("transparent"));
+    let sealed = match renderer
+        .render_resvg_compatible_svg_with_pipeline_sync(&request.content, &pipeline)
+    {
         Ok(Some(sealed)) => sealed,
         Ok(None) => return Err(MermaidRenderError::DiagramNotDetected.viewer_message()),
         Err(error @ HeadlessError::Parse(merman::Error::DetectType(_))) => {
@@ -551,6 +555,37 @@ mod tests {
                 "{name} has no explicit visible edge paint"
             );
         }
+    }
+
+    #[test]
+    fn normalized_svg_has_no_opaque_canvas_background() {
+        fn has_canvas_cover(group: &usvg::Group, width: f32, height: f32) -> bool {
+            group.children().iter().any(|node| match node {
+                usvg::Node::Group(group) => has_canvas_cover(group, width, height),
+                usvg::Node::Path(path) => {
+                    let rect = path.abs_bounding_box();
+                    path.fill().is_some_and(|fill| fill.opacity().get() > 0.0)
+                        && rect.x().abs() < 0.01
+                        && rect.y().abs() < 0.01
+                        && (rect.width() - width).abs() < 0.01
+                        && (rect.height() - height).abs() < 0.01
+                }
+                _ => false,
+            })
+        }
+
+        let rendered = render_uncached(&request(
+            "flowchart TD\nDraft --> Review\nReview --> Done",
+            BlockExtensionAppearance::Light,
+        ))
+        .expect("flowchart renders");
+        let svg = str::from_utf8(&rendered.data).expect("rendered SVG is UTF-8");
+        let tree = usvg::Tree::from_str(svg, &usvg_options()).expect("normalized SVG parses");
+
+        assert!(
+            !has_canvas_cover(tree.root(), tree.size().width(), tree.size().height()),
+            "the diagram canvas must be transparent so the reading surface shows through"
+        );
     }
 
     #[test]
