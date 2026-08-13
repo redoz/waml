@@ -61,6 +61,13 @@ impl ClassifierPreviewView {
             self.installed_revision = Some(data.revision);
             self.rebuild_page(data);
         }
+        self.put_page_up(cx, body);
+    }
+
+    /// Put this tab's already-built page on the shared reading surface. Split
+    /// out of `install_page` because `on_activate` needs exactly this half and
+    /// has no `ViewData` to regenerate from.
+    fn put_page_up(&self, cx: &mut Cx, body: &BodyWidgets) {
         let viewer = body.markdown_viewer();
         match (self.page.clone(), self.document.clone()) {
             (Some(source), Some(document)) => {
@@ -141,6 +148,17 @@ impl ClassifierPreviewView {
 impl DocView for ClassifierPreviewView {
     fn identity(&self) -> DocViewIdentity {
         DocViewIdentity::ClassifierPreview(self.category)
+    }
+
+    /// Escaping out of the source face runs `SourceToggleView::
+    /// restore_inner_surface`, which shows the CANVAS and then delegates here.
+    /// That makes this hook the whole recovery: unlike the toggle-button path,
+    /// `on_escape` carries no `ViewData`, so it cannot follow with `sync`.
+    /// This view draws no canvas, so claim the reading surface back and put
+    /// this tab's own page up from the pair `sync` already built.
+    fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        body.show_markdown_viewer(cx);
+        self.put_page_up(cx, body);
     }
 
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
@@ -295,9 +313,12 @@ mod tests {
         let inspector = WidgetRef::new_with_inner(Box::new(
             cx.with_vm(crate::inspector_panel::Inspector::script_new_with_default),
         ));
+        let canvas_wrap =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(View::script_new_with_default)));
         let mut root = cx.with_vm(View::script_new_with_default);
         root.children
             .push((live_id!(markdown_viewer_surface), viewer_surface));
+        root.children.push((live_id!(canvas_wrap), canvas_wrap));
         root.children.push((live_id!(inspector), inspector));
         let ui = WidgetRef::new_with_inner(Box::new(root));
         let body = BodyWidgets::new(cx, &ui);
@@ -319,6 +340,41 @@ mod tests {
         let mut session = EditorSession::default();
         session.replace(source).unwrap();
         session
+    }
+
+    /// Escaping out of the source face runs `SourceToggleView::
+    /// restore_inner_surface`, which shows the canvas and then hands over to
+    /// `on_activate`. That hook is the ONLY one that runs on the escape path:
+    /// unlike the toggle-button path, `on_escape` carries no `ViewData`, so it
+    /// cannot follow with `sync`. This view draws no canvas, so `on_activate`
+    /// has to claim the reading surface back or the tab is left blank.
+    #[test]
+    fn on_activate_claims_the_reading_surface_back_from_the_canvas() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (ui, body) = mounted_body(&mut cx);
+        let session = session_with_order();
+        let snapshot = session.snapshot();
+        let mut view = ClassifierPreviewView::new("order".into(), NavCategory::Class);
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        // What `restore_inner_surface` does before it delegates.
+        body.show_canvas(&mut cx);
+        assert!(
+            ui.widget(&cx, ids!(canvas_wrap)).visible(),
+            "the generic restore shows the canvas first"
+        );
+
+        view.on_activate(&mut cx, &body);
+
+        assert!(
+            ui.widget(&cx, ids!(markdown_viewer_surface)).visible(),
+            "escaping back to the page must show the reading surface"
+        );
+        assert!(
+            !ui.widget(&cx, ids!(canvas_wrap)).visible(),
+            "this view draws no canvas; leaving it up is a blank tab"
+        );
     }
 
     #[test]
