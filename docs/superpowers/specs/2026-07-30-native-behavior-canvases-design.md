@@ -272,11 +272,13 @@ affordance in its footer; the drill-in navigation itself is out of scope here.
 
 ### 2.4 Partitions (swimlanes)
 
-Each distinct `ActivityNode.partition` becomes a vertical lane band, ordered by first
-appearance in document order. A node's x is clamped to its lane's interval; ranks remain
+Each distinct named `ActivityNode.partition` becomes a vertical lane band, ordered by first
+appearance in document order. A named node's x is clamped to its lane's interval; ranks remain
 global so rows read straight across lanes. Lane bands are emitted as `SolvedGroup`
 (rect + title + depth), which the existing group renderer already understands. Nodes with
-`partition: None` occupy an implicit unlabelled lane placed after the named ones.
+`partition: None` create no band: they float toward their graph neighbours and take the
+nearest clear horizontal slot when they share a rank with lane members. This keeps initial,
+final, and other control-flow glue aligned without implying membership in a fake lane.
 
 ### 2.5 Route
 

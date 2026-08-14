@@ -537,9 +537,10 @@ fn refine_x<'a>(
     bounds_of: &dyn Fn(&str) -> (f64, f64),
     group_of: &dyn Fn(&str) -> usize,
     x: &mut BTreeMap<&'a str, f64>,
+    passes: usize,
 ) {
     let width = |k: &str| sizes.get(k).map(|s| s.w).unwrap_or(0.0);
-    for pass in 0..X_REFINE_PASSES {
+    for pass in 0..passes {
         let down = pass % 2 == 0;
         let indices: Vec<usize> = if down {
             (1..rows.len()).collect()
@@ -619,6 +620,7 @@ fn place_x<'a>(
         &|_| (0.0, f64::INFINITY),
         &|_| 0,
         &mut x,
+        X_REFINE_PASSES,
     );
     x
 }
@@ -773,34 +775,36 @@ pub fn solve_flow(
         }
     }
 
-    // Partitions: first-appearance order lanes; None -> trailing implicit
-    // unlabelled lane. Node x clamped into its lane.
-    let mut lane_order: Vec<Option<String>> = Vec::new();
+    // Partitions: first-appearance order named lanes. Nodes without a
+    // partition are control-flow glue, not members of a fake trailing lane;
+    // they may float across the named lane stack toward their neighbours.
+    let mut lane_order: Vec<String> = Vec::new();
     for n in &rf.nodes {
-        if !lane_order.contains(&n.partition) {
-            lane_order.push(n.partition.clone());
+        if let Some(partition) = &n.partition {
+            if !lane_order.contains(partition) {
+                lane_order.push(partition.clone());
+            }
         }
-    }
-    if lane_order.iter().any(|p| p.is_none()) {
-        lane_order.retain(|p| p.is_some());
-        lane_order.push(None);
     }
 
     let mut groups = Vec::new();
-    // A single NAMED partition still gets its band (and its per-lane x clamp);
-    // only the all-implicit case (one unnamed lane) draws no lane at all.
-    if lane_order.len() > 1 || lane_order.iter().any(|p| p.is_some()) {
+    // A single named partition still gets its band and x clamp. An all-
+    // unpartitioned activity keeps the ordinary unbanded placement above.
+    if !lane_order.is_empty() {
         // Each lane's band width is the widest a single row ever needs for
         // that lane's members (packed left-to-right within the row); node x
         // is repacked per (row, lane) so members sharing a rank never
         // overlap. Lanes are laid out as contiguous bands left to right in
         // `lane_order`.
-        let lane_of: BTreeMap<&str, usize> = rf
+        let lane_of: BTreeMap<&str, Option<usize>> = rf
             .nodes
             .iter()
             .map(|n| {
-                let idx = lane_order.iter().position(|l| l == &n.partition).unwrap();
-                (n.key.as_str(), idx)
+                let index = n
+                    .partition
+                    .as_ref()
+                    .and_then(|partition| lane_order.iter().position(|lane| lane == partition));
+                (n.key.as_str(), index)
             })
             .collect();
 
@@ -809,7 +813,9 @@ pub fn solve_flow(
         for row in &rows {
             let mut row_lane_w = vec![0.0_f64; lane_order.len()];
             for k in row {
-                let li = lane_of[k];
+                let Some(li) = lane_of[k] else {
+                    continue;
+                };
                 let w = sizes.get(*k).map(|s| s.w).unwrap_or(0.0);
                 if row_lane_w[li] > 0.0 {
                     row_lane_w[li] += cfg.node_gap;
@@ -836,20 +842,32 @@ pub fn solve_flow(
         for row in &rows {
             let mut cursor_per_lane = vec![0.0_f64; lane_order.len()];
             for k in row {
-                let li = lane_of[k];
-                let local = cursor_per_lane[li];
-                let w = sizes.get(*k).map(|s| s.w).unwrap_or(0.0);
-                lane_x.insert(k, lane_x_offset[li] + cfg.lane_pad + local);
-                cursor_per_lane[li] = local + w + cfg.node_gap;
+                if let Some(li) = lane_of[k] {
+                    let local = cursor_per_lane[li];
+                    let w = sizes.get(*k).map(|s| s.w).unwrap_or(0.0);
+                    lane_x.insert(k, lane_x_offset[li] + cfg.lane_pad + local);
+                    cursor_per_lane[li] = local + w + cfg.node_gap;
+                } else {
+                    lane_x.insert(k, x.get(k).copied().unwrap_or(0.0));
+                }
             }
         }
-        // Same bounded priority passes as the unbanded case, but each node is
-        // clamped into (and shares a cursor with) its own lane band.
+        let stack_width = lane_band_w
+            .iter()
+            .map(|width| width + cfg.lane_pad * 2.0)
+            .sum::<f64>();
+        // Named nodes stay in their lane. Partition-less nodes share the whole
+        // stack and are pulled toward their neighbours by the same bounded
+        // priority passes, which keeps initial/final chains straight.
         let lane_bounds = |k: &str| {
-            let li = lane_of[k];
-            let lo = lane_x_offset[li] + cfg.lane_pad;
-            (lo, lo + lane_band_w[li])
+            if let Some(li) = lane_of[k] {
+                let lo = lane_x_offset[li] + cfg.lane_pad;
+                (lo, lo + lane_band_w[li])
+            } else {
+                (0.0, stack_width)
+            }
         };
+        let free_group = lane_order.len();
         refine_x(
             &rows,
             sizes,
@@ -857,9 +875,60 @@ pub fn solve_flow(
             &adj_ranking,
             &rev_ranking,
             &lane_bounds,
-            &|k| lane_of[k],
+            &|k| lane_of[k].unwrap_or(free_group),
             &mut lane_x,
+            X_REFINE_PASSES + 1,
         );
+        // `refine_x` separates nodes inside one lane. A partition-less node
+        // deliberately has no lane, so give it the nearest clear horizontal
+        // slot after refinement. This keeps it visually free of the named
+        // bands without allowing a mixed rank to overlap.
+        for row in &rows {
+            let mut occupied = row
+                .iter()
+                .filter(|key| lane_of[*key].is_some())
+                .map(|key| {
+                    let left = lane_x.get(key).copied().unwrap_or(0.0);
+                    let width = sizes.get(*key).map(|size| size.w).unwrap_or(0.0);
+                    (left, left + width)
+                })
+                .collect::<Vec<_>>();
+            for key in row.iter().filter(|key| lane_of[**key].is_none()) {
+                let width = sizes.get(*key).map(|size| size.w).unwrap_or(0.0);
+                let desired = lane_x.get(key).copied().unwrap_or(0.0).max(0.0);
+                let mut candidates = vec![desired, 0.0];
+                for &(left, right) in &occupied {
+                    candidates.push(right + cfg.node_gap);
+                    if left >= width + cfg.node_gap {
+                        candidates.push(left - cfg.node_gap - width);
+                    }
+                }
+                candidates.sort_by(f64::total_cmp);
+                candidates.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
+                let left = candidates
+                    .into_iter()
+                    .filter(|candidate| {
+                        occupied.iter().all(|&(other_left, other_right)| {
+                            candidate + width + cfg.node_gap <= other_left
+                                || *candidate >= other_right + cfg.node_gap
+                        })
+                    })
+                    .min_by(|a, b| {
+                        (a - desired)
+                            .abs()
+                            .total_cmp(&(b - desired).abs())
+                            .then(a.total_cmp(b))
+                    })
+                    .unwrap_or_else(|| {
+                        occupied
+                            .iter()
+                            .map(|(_, right)| right + cfg.node_gap)
+                            .fold(0.0_f64, f64::max)
+                    });
+                lane_x.insert(key, left);
+                occupied.push((left, left + width));
+            }
+        }
         for (k, xv) in &lane_x {
             if let Some(rect) = node_rects.get_mut(*k) {
                 rect.x = *xv;
@@ -881,7 +950,7 @@ pub fn solve_flow(
                     h: max_bottom + cfg.lane_pad,
                 },
                 shape: Shape::Frame,
-                title: lane.clone(),
+                title: Some(lane.clone()),
                 depth: 0,
             });
             lane_x_start += band_w;
@@ -938,11 +1007,24 @@ fn self_edge_route(rect: Rect, cfg: &FlowConfig) -> Vec<(f64, f64)> {
 /// Route a reversed (loop) back-edge outside the whole rank-stack's bounding
 /// column via a side channel, biased toward whichever side the source sits
 /// closer to (spec §2.5). `Route.source`/`target` stay the TRUE direction.
+fn back_edge_uses_right(src: Rect, all_rects: &BTreeMap<String, Rect>) -> bool {
+    let min_left = all_rects
+        .values()
+        .map(|rect| rect.x)
+        .fold(f64::INFINITY, f64::min);
+    let max_right = all_rects
+        .values()
+        .map(|rect| rect.x + rect.w)
+        .fold(f64::NEG_INFINITY, f64::max);
+    src.x + src.w / 2.0 >= (min_left + max_right) / 2.0
+}
+
 fn back_edge_route(
     src: Rect,
     tgt: Rect,
     all_rects: &BTreeMap<String, Rect>,
     cfg: &FlowConfig,
+    channel_index: usize,
 ) -> Vec<(f64, f64)> {
     let min_left = all_rects
         .values()
@@ -952,13 +1034,12 @@ fn back_edge_route(
         .values()
         .map(|r| r.x + r.w)
         .fold(f64::NEG_INFINITY, f64::max);
-    let center_x = (min_left + max_right) / 2.0;
-    let src_center = src.x + src.w / 2.0;
-    let use_right = src_center >= center_x;
+    let use_right = back_edge_uses_right(src, all_rects);
+    let channel_step = cfg.node_gap / 2.0;
     let channel_x = if use_right {
-        max_right + cfg.node_gap
+        max_right + cfg.node_gap + channel_step * channel_index as f64
     } else {
-        min_left - cfg.node_gap
+        min_left - cfg.node_gap - channel_step * channel_index as f64
     };
     let (_, sy) = border_mid(src, use_right);
     let (_, ty) = border_mid(tgt, use_right);
@@ -981,6 +1062,8 @@ fn route_edges(
 ) -> Vec<Route> {
     let mut routes = Vec::new();
     let mut normal_pairs: Vec<(BoxId, BoxId, Option<String>)> = Vec::new();
+    let mut left_back_edges = 0usize;
+    let mut right_back_edges = 0usize;
 
     for e in &rf.edges {
         if e.from == e.to {
@@ -996,8 +1079,18 @@ fn route_edges(
         }
         if reversed.contains(&e.key) {
             if let (Some(&src), Some(&tgt)) = (node_rects.get(&e.from), node_rects.get(&e.to)) {
+                let use_right = back_edge_uses_right(src, node_rects);
+                let channel_index = if use_right {
+                    let index = right_back_edges;
+                    right_back_edges += 1;
+                    index
+                } else {
+                    let index = left_back_edges;
+                    left_back_edges += 1;
+                    index
+                };
                 routes.push(Route {
-                    points: back_edge_route(src, tgt, node_rects, cfg),
+                    points: back_edge_route(src, tgt, node_rects, cfg, channel_index),
                     source: e.from.clone(),
                     target: e.to.clone(),
                     key: Some(e.key.clone()),

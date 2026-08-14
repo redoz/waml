@@ -279,6 +279,167 @@ fn nodes_lie_inside_their_partition_band() {
 }
 
 #[test]
+fn partitionless_nodes_do_not_create_a_fake_swimlane() {
+    let sol = solve("activity", FlowFlavor::Activity);
+
+    assert!(
+        sol.solved.groups.iter().all(|group| group.title.is_some()),
+        "partition-less control nodes must float across the named lanes: {:?}",
+        sol.solved.groups
+    );
+}
+
+#[test]
+fn partitionless_chain_stays_aligned_with_its_partitioned_neighbor() {
+    let sol = solve("activity", FlowFlavor::Activity);
+    let (_, nodes, _) = load("activity");
+    let key = |id: &str| {
+        nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap_or_else(|| panic!("fixture has no node {id}"))
+            .key
+            .as_str()
+    };
+    let center = |id: &str| {
+        let rect = sol.solved.nodes[key(id)];
+        rect.x + rect.w / 2.0
+    };
+
+    assert!(
+        (center("Start") - center("Validate")).abs() < 1.0,
+        "the initial node should sit over its first action: Start={}, Validate={}",
+        center("Start"),
+        center("Validate")
+    );
+    for pair in [["Merge", "Archive"], ["Archive", "Order"], ["Order", "End"]] {
+        assert!(
+            (center(pair[0]) - center(pair[1])).abs() < 1.0,
+            "the terminal chain should stay straight at {} -> {}: {} vs {}",
+            pair[0],
+            pair[1],
+            center(pair[0]),
+            center(pair[1])
+        );
+    }
+}
+
+#[test]
+fn mixed_partitioned_and_partitionless_rank_does_not_overlap() {
+    let mut start = plain("mixed#Start", "Start", FlowNodeKind::Initial);
+    start.behavior = "mixed".into();
+    let mut named = plain("mixed#Named", "Named action", FlowNodeKind::Plain);
+    named.behavior = "mixed".into();
+    named.partition = Some("Lane".into());
+    let mut floating = plain("mixed#Floating", "Floating action", FlowNodeKind::Plain);
+    floating.behavior = "mixed".into();
+    let nodes = vec![start, named, floating];
+    let edges = ["Named", "Floating"]
+        .iter()
+        .enumerate()
+        .map(|(index, target)| FlowEdge {
+            key: format!("mixed#e{index}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "mixed".into(),
+            from: "mixed#Start".into(),
+            source_occurrence: index,
+            to: format!("mixed#{target}"),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+            traces: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let doc = FlowDoc {
+        key: "mixed".into(),
+        title: "Mixed".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: nodes.iter().map(|node| node.key.clone()).collect(),
+        edges: edges.iter().map(|edge| edge.key.clone()).collect(),
+    };
+    let cfg = FlowConfig::default();
+    let (resolved, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&resolved.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    let named = sol.solved.nodes["mixed#Named"];
+    let floating = sol.solved.nodes["mixed#Floating"];
+
+    assert!(
+        named.x + named.w + cfg.node_gap <= floating.x
+            || floating.x + floating.w + cfg.node_gap <= named.x,
+        "mixed rank nodes overlap: named={named:?}, floating={floating:?}"
+    );
+}
+
+#[test]
+fn aligned_activity_chain_edges_route_without_side_detours() {
+    let sol = solve("activity", FlowFlavor::Activity);
+    let (_, nodes, edges) = load("activity");
+    let edge_key = |from: &str, to: &str| {
+        let from_key = &nodes.iter().find(|node| node.id == from).unwrap().key;
+        let to_key = &nodes.iter().find(|node| node.id == to).unwrap().key;
+        edges
+            .iter()
+            .find(|edge| &edge.from == from_key && &edge.to == to_key)
+            .unwrap()
+            .key
+            .as_str()
+    };
+
+    for (from, to) in [
+        ("Start", "Validate"),
+        ("Archive", "Order"),
+        ("Order", "End"),
+    ] {
+        let route = sol
+            .solved
+            .routes
+            .iter()
+            .find(|route| route.key.as_deref() == Some(edge_key(from, to)))
+            .unwrap_or_else(|| panic!("fixture has no route {from} -> {to}"));
+        let x = route.points[0].0;
+        assert!(
+            route.points.iter().all(|point| (point.0 - x).abs() < 0.5),
+            "{from} -> {to} should be a straight vertical route: {:?}",
+            route.points
+        );
+    }
+}
+
+#[test]
+fn same_lane_decision_branch_leaves_through_a_direct_channel() {
+    let sol = solve("activity", FlowFlavor::Activity);
+    let (_, nodes, edges) = load("activity");
+    let node_key = |id: &str| {
+        &nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap_or_else(|| panic!("fixture has no node {id}"))
+            .key
+    };
+
+    let edge = edges
+        .iter()
+        .find(|edge| edge.from == *node_key("Check") && edge.to == *node_key("Review"))
+        .expect("fixture has a Check -> Review edge");
+    let route = sol
+        .solved
+        .routes
+        .iter()
+        .find(|route| route.key.as_deref() == Some(edge.key.as_str()))
+        .expect("fixture has a Check -> Review route");
+    assert!(
+        route.points.len() <= 3,
+        "same-lane Check -> Review should need at most one bend: {:?}",
+        route.points
+    );
+}
+
+#[test]
 fn no_overlapping_node_rects_within_a_rank() {
     let sol = solve("activity", FlowFlavor::Activity);
     let mut by_y: std::collections::BTreeMap<i64, Vec<(f64, f64)>> = Default::default();
@@ -564,6 +725,67 @@ fn loop_back_edge_routes_outside_the_rank_stack() {
     assert!(
         has_outside_route,
         "expected at least one reversed-edge route to leave the rank-stack column: {:?}",
+        sol.solved.routes
+    );
+}
+
+#[test]
+fn multiple_back_edges_use_distinct_outside_channels() {
+    let (mut doc, nodes, mut edges) = chain(4, None);
+    for (key, from, to) in [("loop-c-a", "n2", "n0"), ("loop-d-b", "n3", "n1")] {
+        let edge = FlowEdge {
+            key: format!("chain#{key}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "chain".into(),
+            from: format!("chain#{from}"),
+            source_occurrence: 0,
+            to: format!("chain#{to}"),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+            traces: Vec::new(),
+        };
+        doc.edges.push(edge.key.clone());
+        edges.push(edge);
+    }
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    assert_eq!(sol.reversed.len(), 2, "fixture must contain two back edges");
+
+    let max_right = sol
+        .solved
+        .nodes
+        .values()
+        .map(|rect| rect.x + rect.w)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let channels = sol
+        .solved
+        .routes
+        .iter()
+        .filter(|route| {
+            route
+                .key
+                .as_ref()
+                .is_some_and(|key| sol.reversed.contains(key))
+        })
+        .filter_map(|route| {
+            route
+                .points
+                .iter()
+                .map(|point| point.0)
+                .find(|x| *x > max_right + 0.5)
+        })
+        .map(|x| x.round() as i64)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        channels.len(),
+        2,
+        "each back edge needs a distinct outside rail: {:?}",
         sol.solved.routes
     );
 }
