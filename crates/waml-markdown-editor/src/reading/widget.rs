@@ -80,6 +80,7 @@ script_mod! {
         // The same blue the raw-markdown surface paints a link destination
         // in, so one document reads the same through either face.
         link_color: #2869c7
+        link_hover_color: #1557b0
     }
 }
 
@@ -251,13 +252,11 @@ pub struct MarkdownViewer {
     /// gap, and a wrapped heading must read as one unit.
     #[live(1.1)]
     heading_line_spacing: f32,
-    /// Colour a navigable link's label draws in. Link text is the only text
-    /// on a reading surface that DOES something when tapped, so it says so:
-    /// this colour plus an underline is the whole affordance (the tap
-    /// hit-test deliberately never runs on a mouse move, so there is no hover
-    /// state or cursor change to lean on).
+    /// Colours for a navigable link's normal and hovered label states.
     #[live]
     link_color: Vec4,
+    #[live]
+    link_hover_color: Vec4,
 
     #[rust]
     document: Option<Arc<ReadingDocument>>,
@@ -271,6 +270,8 @@ pub struct MarkdownViewer {
     images: BTreeMap<PresentationItemId, ImageRef>,
     #[rust]
     visual_source: Option<TextRange>,
+    #[rust]
+    hovered_link: Option<TextRange>,
     /// Source ranges the active search query hit (spec §DocView::reveal),
     /// installed by `set_search_highlights`. Mapped through `source_map` at
     /// paint time -- stale once the document changes underneath them, same
@@ -314,6 +315,7 @@ impl MarkdownViewer {
         // The old document's drawn height says nothing about the new one.
         self.content_height = 0.0;
         self.visual_source = None;
+        self.hovered_link = None;
         self.redraw(cx);
     }
 
@@ -329,6 +331,7 @@ impl MarkdownViewer {
         self.source = None;
         self.source_map.clear();
         self.content_height = 0.0;
+        self.hovered_link = None;
         self.redraw(cx);
     }
 
@@ -449,34 +452,70 @@ impl MarkdownViewer {
         rects
     }
 
-    /// The link destination under `point`, if any. Window-space point in,
-    /// destination out: the flow maps the point to its own char index, the
-    /// source map maps that back to a source offset, and the document
-    /// answers which link covers it.
-    ///
-    /// The candidate is then screened against the pixels the link actually
-    /// drew on. `TextFlow::point_to_index` CLAMPS: a point that lands on no
-    /// run at all resolves to the nearest character, so without this gate a
-    /// click in the reading column's margin, or below the last line, would
-    /// navigate whatever link happens to sit closest -- and every
-    /// "Referenced by" bullet on a generated classifier page starts with one.
-    fn link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
-        let document = self.document.as_ref()?;
+    /// The source span under `point`, screened against the pixels the run
+    /// actually drew on. `TextFlow::point_to_index` clamps a point in blank
+    /// space to the nearest character, so the rectangle check is what keeps
+    /// reading-column margins and space below the last line non-textual.
+    fn source_at_point(&self, cx: &Cx, point: DVec2) -> Option<TextRange> {
         let flow_ref = self.flow(cx);
         let index = {
             let flow = flow_ref.borrow()?;
             flow.selection_point_to_char_index(cx, point)?
         };
         let span = self.source_map.source_span(index..index + 1)?;
-        let link = document.link_at(span.start())?;
-        if !self
-            .source_rects(cx, link.source_range)
+        self.source_rects(cx, span)
             .iter()
             .any(|rect| rect.contains(point))
-        {
-            return None;
-        }
+            .then_some(span)
+    }
+
+    /// The link destination under `point`, if any. Cursor feedback and tap
+    /// navigation both start from `source_at_point`, so they agree on the
+    /// exact drawn pixels that are interactive.
+    fn link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
+        let document = self.document.as_ref()?;
+        let span = self.source_at_point(cx, point)?;
+        let link = document.link_at(span.start())?;
         Some(link.destination.clone())
+    }
+
+    fn hover_cursor_at_point(&self, cx: &Cx, point: DVec2) -> MouseCursor {
+        self.hover_at_point(cx, point).0
+    }
+
+    fn hover_at_point(&self, cx: &Cx, point: DVec2) -> (MouseCursor, Option<TextRange>) {
+        let Some(span) = self.source_at_point(cx, point) else {
+            return (MouseCursor::Default, None);
+        };
+        if let Some(link) = self
+            .document
+            .as_ref()
+            .and_then(|document| document.link_at(span.start()))
+        {
+            (MouseCursor::Hand, Some(link.source_range))
+        } else {
+            (MouseCursor::Text, None)
+        }
+    }
+
+    fn set_hovered_link(&mut self, cx: &mut Cx, hovered_link: Option<TextRange>) {
+        if self.hovered_link == hovered_link {
+            return;
+        }
+        self.hovered_link = hovered_link;
+        self.redraw(cx);
+    }
+
+    fn link_color_for_piece(&self, piece: &ReadingPiece) -> Vec4 {
+        if draws_as_link(piece.role)
+            && self.hovered_link.is_some_and(|hovered| {
+                hovered.end() > piece.range.start() && hovered.start() < piece.range.end()
+            })
+        {
+            self.link_hover_color
+        } else {
+            self.link_color
+        }
     }
 
     /// Top of the drawn document, from the last draw's tracked run rects.
@@ -616,6 +655,7 @@ impl MarkdownViewer {
         flow.fixed.push();
         let mut first_on_line = true;
         for piece in &block.pieces {
+            let link_color = self.link_color_for_piece(piece);
             Self::draw_piece_wrapped(
                 &mut flow,
                 &mut self.source_map,
@@ -624,7 +664,7 @@ impl MarkdownViewer {
                 piece,
                 &mut first_on_line,
                 false,
-                self.link_color,
+                link_color,
             );
         }
         if let Some(error_line) = error_line {
@@ -807,6 +847,7 @@ impl MarkdownViewer {
                 flow.bold.push();
                 let mut first_on_line = true;
                 for piece in &block.pieces {
+                    let link_color = self.link_color_for_piece(piece);
                     Self::draw_piece(
                         &mut flow,
                         &mut self.source_map,
@@ -814,7 +855,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
-                        self.link_color,
+                        link_color,
                     );
                 }
                 flow.bold.pop();
@@ -852,6 +893,7 @@ impl MarkdownViewer {
                 }
                 let mut first_on_line = true;
                 for piece in &block.pieces {
+                    let link_color = self.link_color_for_piece(piece);
                     Self::draw_piece(
                         &mut flow,
                         &mut self.source_map,
@@ -859,7 +901,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
-                        self.link_color,
+                        link_color,
                     );
                 }
                 // A nested list must start on its own line inside the item's
@@ -886,6 +928,7 @@ impl MarkdownViewer {
                 flow.begin_quote(cx);
                 let mut first_on_line = true;
                 for piece in &block.pieces {
+                    let link_color = self.link_color_for_piece(piece);
                     Self::draw_piece(
                         &mut flow,
                         &mut self.source_map,
@@ -893,7 +936,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
-                        self.link_color,
+                        link_color,
                     );
                 }
                 // Same as list items: child blocks must not ride the tail of
@@ -949,6 +992,7 @@ impl MarkdownViewer {
                     if strong {
                         flow.bold.push();
                     }
+                    let link_color = self.link_color_for_piece(piece);
                     Self::draw_piece(
                         &mut flow,
                         &mut self.source_map,
@@ -956,7 +1000,7 @@ impl MarkdownViewer {
                         source,
                         piece,
                         &mut first_on_line,
-                        self.link_color,
+                        link_color,
                     );
                     if strong {
                         flow.bold.pop();
@@ -1108,6 +1152,22 @@ impl Widget for MarkdownViewer {
                 return;
             }
         }
+        // Hit-test before TextFlow while the hover event is still available,
+        // but defer the cursor write until after delegation. Makepad permits
+        // the child to hit-test this same area, yet its hover state is not
+        // cycled soon enough for a second post-delegation hit-test.
+        let hover = if matches!(event, Event::MouseMove(_)) {
+            let flow_area = self.flow(cx).area();
+            match event.hits(cx, flow_area) {
+                Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
+                    Some(self.hover_at_point(cx, fe.abs))
+                }
+                Hit::FingerHoverOut(_) => Some((MouseCursor::Default, None)),
+                _ => None,
+            }
+        } else {
+            None
+        };
         // A tap that lands on a link navigates. Hit-tested against the FLOW's
         // area, not this widget's: the inner `TextFlow` captures the
         // `FingerDown` for its own selection, and makepad delivers `FingerUp`
@@ -1136,6 +1196,13 @@ impl Widget for MarkdownViewer {
         // axes even though TextFlow has no FingerScroll behavior.
         if should_forward_to_text_flow(event) {
             self.view.handle_event(cx, event, scope);
+        }
+        // TextFlow owns selection, but the viewer owns the more precise hover
+        // policy. Write last so TextFlow cannot replace Hand or Default with
+        // its area-wide I-beam on first entry.
+        if let Some((cursor, hovered_link)) = hover {
+            cx.set_cursor(cursor);
+            self.set_hovered_link(cx, hovered_link);
         }
         let finger_down = match event {
             Event::MouseDown(event) if event.button.is_primary() => Some(event.abs),
@@ -1167,14 +1234,9 @@ fn draws_as_link(role: TextRole) -> bool {
 
 /// Whether `event` can carry a `Hit::FingerUp` for a captured area.
 ///
-/// `Event::hits` is destructive for hover: makepad's `finger.rs` hands
-/// `FingerHoverIn` to the FIRST caller that hit-tests an area on a
-/// `MouseMove` (it records the area as hovered) and every later caller gets
-/// `FingerHoverOver`. The inner `TextFlow` hit-tests the same flow area to
-/// raise the I-beam on `FingerHoverIn`, so a link hit-test that ran on mouse
-/// moves would silently eat the cursor change on EVERY reading surface. Only
-/// a mouse-up (or a touch update) can produce the `FingerUp` the link tap
-/// needs, so those are the only events this widget reaches for.
+/// Hover cursor output is applied separately after `TextFlow` so the viewer can classify
+/// links, text and blank space. The tap path only needs mouse-up or touch
+/// events; keeping it gated avoids a second hit-test on every mouse move.
 fn carries_finger_up(event: &Event) -> bool {
     matches!(event, Event::MouseUp(_) | Event::TouchUpdate(_))
 }
@@ -1215,11 +1277,10 @@ mod link_hit_gate_tests {
     use makepad_widgets::event::TouchUpdateEvent;
     use std::cell::Cell;
 
-    /// The regression this gate exists for: a mouse move must never reach the
-    /// link hit-test, or the `TextFlow` below loses the one-shot
-    /// `FingerHoverIn` that raises the I-beam over reading text.
+    /// Tap navigation must only hit-test events that can produce FingerUp.
+    /// Mouse moves use the separate hover path in `handle_event`.
     #[test]
-    fn only_a_mouse_up_or_a_touch_update_reaches_the_link_hit_test() {
+    fn only_a_mouse_up_or_a_touch_update_reaches_the_tap_hit_test() {
         let move_ = Event::MouseMove(MouseMoveEvent {
             abs: Vec2d::default(),
             window_id: WindowId(0, 0),
@@ -1427,6 +1488,23 @@ impl MarkdownViewerRef {
     /// last draw. The same lookup `handle_event` runs on a tap.
     pub fn test_link_at_point(&self, cx: &Cx, point: DVec2) -> Option<Arc<str>> {
         self.borrow()?.link_at_point(cx, point)
+    }
+
+    /// Test seam: cursor classification for a window-space point, using the
+    /// same drawn-run lookup as live hover handling.
+    pub fn test_hover_cursor_at_point(&self, cx: &Cx, point: DVec2) -> MouseCursor {
+        self.borrow().map_or(MouseCursor::Default, |inner| {
+            inner.hover_cursor_at_point(cx, point)
+        })
+    }
+
+    /// Test seam: apply the same hover state transition as a mouse move, or
+    /// clear it as a hover exit.
+    pub fn test_set_hover_point(&self, cx: &mut Cx, point: Option<DVec2>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            let hovered_link = point.and_then(|point| inner.hover_at_point(cx, point).1);
+            inner.set_hovered_link(cx, hovered_link);
+        }
     }
 
     /// Test seam: where a source range actually drew, from the last draw.

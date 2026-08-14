@@ -730,6 +730,38 @@ fn a_point_beside_a_drawn_link_resolves_to_nothing() {
 }
 
 #[test]
+fn hover_cursor_distinguishes_links_text_and_blank_space() {
+    let (cx, ui, link_range) = drawn_link_fixture(
+        "See [Customer](./customer.md) nearby.\n",
+        "reading-widget-hover-cursor-test",
+    );
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let link_rect = viewer.test_source_rects(&cx, link_range)[0];
+    let text_rect = viewer.test_source_rects(&cx, range(0, 3))[0];
+
+    assert_eq!(
+        viewer.test_hover_cursor_at_point(&cx, link_rect.pos + link_rect.size * 0.5),
+        MouseCursor::Hand
+    );
+    assert_eq!(
+        viewer.test_hover_cursor_at_point(&cx, text_rect.pos + text_rect.size * 0.5),
+        MouseCursor::Text
+    );
+    assert_eq!(
+        viewer.test_hover_cursor_at_point(
+            &cx,
+            dvec2(
+                text_rect.pos.x - 20.0,
+                text_rect.pos.y + text_rect.size.y * 0.5
+            ),
+        ),
+        MouseCursor::Default
+    );
+}
+
+#[test]
 fn a_link_label_draws_in_its_own_colour() {
     let mut cx = Cx::new(Box::new(|_, _| {}));
     cx.init_cx_os();
@@ -756,4 +788,29 @@ fn a_link_label_draws_in_its_own_colour() {
     assert!(flow.draw_text.color.w > 0.0);
     assert_eq!(flow.underline.value(), 0);
     assert!(flow.font_colors.is_empty());
+}
+
+#[test]
+fn a_hovered_link_changes_colour_and_restores_on_exit() {
+    let (mut cx, ui, range) = drawn_link_fixture(
+        "[Customer](./customer.md)\n",
+        "reading-widget-link-hover-colour-test",
+    );
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let flow = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
+        .as_text_flow();
+    let normal = flow.borrow().unwrap().draw_text.color;
+    let rect = viewer.test_source_rects(&cx, range)[0];
+
+    viewer.test_set_hover_point(&mut cx, Some(rect.pos + rect.size * 0.5));
+    draw_ui(&mut cx, &ui, 800.0, 600.0, "reading-widget-link-hovered");
+    let hovered = flow.borrow().unwrap().draw_text.color;
+    assert_ne!(hovered, normal);
+
+    viewer.test_set_hover_point(&mut cx, None);
+    draw_ui(&mut cx, &ui, 800.0, 600.0, "reading-widget-link-hover-exit");
+    assert_eq!(flow.borrow().unwrap().draw_text.color, normal);
 }
