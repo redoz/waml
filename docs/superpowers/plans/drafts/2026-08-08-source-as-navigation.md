@@ -49,7 +49,7 @@
 
 - **Gate for every task, all of it, every time:**
   - `cargo test --workspace`
-  - `cd editors/vscode && npm run build && npm run test && npm run lint` (build FIRST — a stale `dist/` produces phantom typecheck errors).
+  - `cd editors/vscode && pnpm build && pnpm test && pnpm lint` (build FIRST — a stale `dist/` produces phantom typecheck errors).
 - Clippy runs with `-D warnings`: `dead_code` is a hard error. Never leave a symbol orphaned at a commit boundary; each task below removes callers and callees together. Do NOT use `#[allow(dead_code)]`.
 - `cargo fmt` before every commit.
 - **No visual/GUI verification inside any task.** The automated gate cannot look at a screen. All screen-level checks are collected in "Deferred visual verification" at the foot of this plan and are explicitly NOT acceptance criteria for any task.
@@ -95,7 +95,7 @@ The wrapper and everything only it needed go in one commit; `uml_documents::open
 - [ ] **Step 1: Unwrap `uml_documents`.** Replace the four `Box::new(SourceToggleView::new(inner, concept_id, assets.clone()))` arms (`uml_documents.rs:104-127`) with `Box::new(inner)` directly, rename the function to `open`, delete the `assets` parameter, delete the now-redundant `#[cfg(test)] open` wrapper, and delete the `use crate::source_toggle_view::SourceToggleView;` and the "Every UML document is markdown underneath…" comment (`:100-102`). Fix the two call sites in `documents.rs` (`:118`, `:137`) and any `uml_documents::open(...)` test callers (they already use the no-assets shape).
 - [ ] **Step 2: Delete the wrapper.** Remove `crates/waml-editor/src/source_toggle_view.rs` and the `mod source_toggle_view;` line at `lib.rs:94`. Its 4 unit tests die with it — coverage is re-established in Tasks 3 and 5 (see "Spec discrepancies" item 5); do not port them verbatim.
 - [ ] **Step 3: Sweep for stragglers.** `rg source_toggle_view crates/` must return nothing (the memory note about `folder-view-middleware` shows it referenced in old plans only — docs hits are fine, code hits are not). `rg "markdown_viewer_source_toggle" crates/` must now hit only `doc_view.rs:253` (the accessor) and `generic_okf_view.rs` (Task 2 removes those).
-- [ ] **Step 4: Gate.** `cargo fmt` · `cargo test --workspace` · `cd editors/vscode && npm run build && npm run test && npm run lint`. Expect green: nothing else compiles against the wrapper.
+- [ ] **Step 4: Gate.** `cargo fmt` · `cargo test --workspace` · `cd editors/vscode && pnpm build && pnpm test && pnpm lint`. Expect green: nothing else compiles against the wrapper.
 - [ ] **Step 5: Commit** — `refactor(editor): unwrap uml document views, delete SourceToggleView`.
 
 ### Task 2: Remove `GenericOkfView`'s in-place source flip

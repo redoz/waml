@@ -175,7 +175,7 @@ Split from Task 4 so a routing regression can be bisected on its own.
 
 ```
 cargo test --workspace
-cd editors/vscode && npm test && npm run lint && npm run build
+cd editors/vscode && pnpm test && pnpm lint && pnpm build
 ```
 
 **The visual pass below is DEFERRED to a human and is NOT part of any task's

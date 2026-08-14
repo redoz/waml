@@ -33,7 +33,7 @@ of the Extension split.
 
 - **Gate for every task, all of it, every time:**
   - `cargo test --workspace`
-  - `cd editors/vscode && npm run build && npm run test && npm run lint` (build FIRST —
+  - `cd editors/vscode && pnpm build && pnpm test && pnpm lint` (build FIRST —
     a stale `dist/` produces phantom typecheck errors).
 - **`docs/okf-spec.md` stays byte-identical.** Deviations go in
   `docs/specs/waml-okf-extensions.md`, one entry each, with strict-consumer degradation.

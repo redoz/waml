@@ -12,7 +12,7 @@
 
 - **Determinism:** same input, same pixels. No RNG, no time, no HashMap iteration order. Ties broken by index (`usize` order) or `f64::total_cmp`. Every new public fn gets a determinism test (call twice, assert equal).
 - **wasm-compatible:** no threads, no filesystem, no `SystemTime`.
-- **Gate (every task, before every commit):** `cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check`, then `npm test && npm run lint && npm run build` in `editors/vscode`. Clippy `-D warnings` promotes `dead_code` to a hard error: every task below leaves its new code reachable (pub API + tests), never half-wired.
+- **Gate (every task, before every commit):** `cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check`, then `pnpm test && pnpm lint && pnpm build` in `editors/vscode`. Clippy `-D warnings` promotes `dead_code` to a hard error: every task below leaves its new code reachable (pub API + tests), never half-wired.
 - **Commits:** conventional style matching the repo (`feat(solve): …`), subject + body only. **No Co-Authored-By / generated-with trailers.**
 - **Never commit `proptest-regressions` files.**
 - **Visual verification is explicitly DEFERRED.** Task 5 changes what the editor draws for every authored-layout diagram. The gate for this plan is golden/unit tests only; a human visual pass over the preset fixtures (start screen → presets, esp. the Connectors/CI-CD entity diagram that motivated this) is owed after landing and is NOT a task here.

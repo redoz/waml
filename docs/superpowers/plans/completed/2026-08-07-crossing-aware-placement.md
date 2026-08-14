@@ -153,7 +153,7 @@ message rather than dressing up a null result.
 
 ```
 cargo test --workspace
-cd editors/vscode && npm install && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm install && pnpm build && pnpm test && pnpm lint
 ```
 
 Note `npm install` is required in a fresh worktree — there is no

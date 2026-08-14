@@ -16,7 +16,7 @@
 - **Gate for every task, all of it, every time:**
   - `cargo fmt` (before every commit)
   - `cargo test --workspace`
-  - `cd editors/vscode && npm run build && npm run test && npm run lint` (build FIRST — a stale `dist/` produces phantom typecheck errors).
+  - `cd editors/vscode && pnpm build && pnpm test && pnpm lint` (build FIRST — a stale `dist/` produces phantom typecheck errors).
 - Clippy runs with `-D warnings`: `dead_code` is a hard error. The surface seam is currently blanketed in `#[allow(dead_code)]`; Task 5 strips those as the seam goes live and no task may add a new one. Items wired into an `#[allow(dead_code)]` root count as live to the lint, so Tasks 1–3 may extend the dormant seam without new allows.
 - **No visual/GUI verification inside any task.** All screen-level checks live in "Deferred visual verification" at the foot of this plan and are NOT acceptance criteria for any task.
 - Work only in `C:\dev\waml-source-nav` (branch `source-navigation`). Absolute paths below are rooted there.

@@ -19,7 +19,7 @@
   - `cargo test --workspace`
   - `cargo clippy --workspace --all-targets` — must be **0 warnings**. The gate runs `-D warnings`, which promotes `dead_code` to a hard error, so **never land an item, field, method, or enum variant that nothing reads**. If a task produces a type that only the *next* task consumes, that type must be exercised by a unit test in its own task.
   - `cargo fmt --all -- --check`
-  - `cd editors/vscode && npm run build && npm run lint && npm test`
+  - `cd editors/vscode && pnpm build && pnpm lint && pnpm test`
 - **Do NOT commit `editors/vscode/package-lock.json`.** The repo has none by design. `npm install` creates one; **delete it before `git add -A`**. (`npm ci` fails — there is no lockfile.)
 - **Never commit `proptest-regressions/`.**
 - **Commit messages:** conventional-commit subject + body. **No Claude co-author trailer** — the user considers it advertising.
@@ -774,7 +774,7 @@ cd C:/dev/waml/.worktrees/markdown-hide-syntax
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode; npm run build; npm run lint; npm test
+cd editors/vscode; pnpm build; pnpm lint; pnpm test
 ```
 
 If `cargo fmt --all -- --check` fails, run `cargo fmt --all` and re-check.
@@ -1732,7 +1732,7 @@ cd C:/dev/waml/.worktrees/markdown-hide-syntax
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode; npm run build; npm run lint; npm test
+cd editors/vscode; pnpm build; pnpm lint; pnpm test
 ```
 
 - [ ] **Step 16: Visual check — the widget draws at all**
@@ -1922,7 +1922,7 @@ cd C:/dev/waml/.worktrees/markdown-hide-syntax
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode; npm run build; npm run lint; npm test
+cd editors/vscode; pnpm build; pnpm lint; pnpm test
 ```
 
 `clippy` will fail with `dead_code` on `MarkdownViewerAction` and `source_offset_at` if nothing reads them yet and the gate denies warnings. If it does, do **not** add `#[allow(dead_code)]` — the constraint forbids landing unread items. Instead, move `MarkdownViewerAction` and `source_offset_at` into **Task 4**, where the toggle consumes them, and land this task with `caret_for_span`, `selected_source_span` and `caret_for_handoff` only (all three are covered by the tests above). Note the move in the commit body.
@@ -2292,7 +2292,7 @@ cd C:/dev/waml/.worktrees/markdown-hide-syntax
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode; npm run build; npm run lint; npm test
+cd editors/vscode; pnpm build; pnpm lint; pnpm test
 ```
 
 - [ ] **Step 11: Visual check — the concept actually renders as prose**
@@ -2524,7 +2524,7 @@ cd C:/dev/waml/.worktrees/markdown-hide-syntax
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode; npm run build; npm run lint; npm test
+cd editors/vscode; pnpm build; pnpm lint; pnpm test
 ```
 
 - [ ] **Step 9: Confirm the kept fixes are still in place**

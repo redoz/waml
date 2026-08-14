@@ -16,9 +16,9 @@
 - **Every task must leave the repo green under the full gate**, in this order:
   ```bash
   cargo test --workspace
-  cd editors/vscode && npm run build && npm test && npm run lint
+  cd editors/vscode && pnpm build && pnpm test && pnpm lint
   ```
-  `editors/vscode`'s packaging test asserts `dist/` exists, so `npm run build` MUST precede `npm test`.
+  `editors/vscode`'s packaging test asserts `dist/` exists, so `pnpm build` MUST precede `pnpm test`.
 - CI also runs `cargo clippy --workspace --all-targets --all-features -- -D warnings`. `dead_code` is therefore a hard error: never leave a private item without a caller.
 - CI also runs `cargo fmt`. Run `cargo fmt --all` before every commit.
 - **Commit messages in this repo carry no Claude co-author trailer.** Subject + body only.
@@ -205,7 +205,7 @@ Expected: PASS — 3 tests.
 ```bash
 cargo fmt --all
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -394,7 +394,7 @@ Expected: PASS — 7 tests.
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -746,7 +746,7 @@ Expected: PASS — 15 tests.
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -1150,7 +1150,7 @@ If a snapshot's expected string is wrong (a fixture attribute order, an extra se
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -1301,7 +1301,7 @@ Expected: PASS.
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -1563,7 +1563,7 @@ Then `cargo test -p waml-editor` — `app/actions.rs` and `book_surface.rs` cons
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -1838,7 +1838,7 @@ Then run `cargo test -p waml-editor` in full. `crates/waml-editor/src/app/tests/
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -1986,7 +1986,7 @@ Expected: PASS — 5 tests.
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 
@@ -2041,7 +2041,7 @@ Expected: no matches in `crates/`; clippy clean (in particular, no `dead_code` o
 ```bash
 cargo fmt --all
 cargo test --workspace
-cd editors/vscode && npm run build && npm test && npm run lint
+cd editors/vscode && pnpm build && pnpm test && pnpm lint
 ```
 Expected: all green.
 

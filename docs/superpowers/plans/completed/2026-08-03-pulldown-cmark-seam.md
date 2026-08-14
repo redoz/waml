@@ -16,7 +16,7 @@
   - `cargo test --workspace`
   - `cargo clippy --workspace --all-targets` (must be **0 warnings** — the gate runs `-D warnings`, which promotes `dead_code` to a hard error, so never land an item, field, or enum variant that nothing reads)
   - `cargo fmt --all -- --check`
-  - `cd editors/vscode && npm run build && npm run lint && npm test`
+  - `cd editors/vscode && pnpm build && pnpm lint && pnpm test`
 - **`commonmark_conformance` and `gfm_extension_conformance` must stay green with NO skip list at every single commit.** A conformance regression is a hard stop. Never add a skip, an `#[ignore]`, or an allow-list.
 - **Behavior must be byte-identical through all of Stage 1.** This is a pure refactor: the conformance HTML and the green trees must not change. If any test output changes, the change is wrong.
 - **Do NOT commit `editors/vscode/package-lock.json`.** The repo has none by design. `npm install` creates one; delete it before `git add -A`. (`npm ci` fails — there is no lockfile.)
@@ -208,7 +208,7 @@ Run, all four, all must exit 0:
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all -- --check
-cd editors/vscode && npm run build && npm run lint && npm test
+cd editors/vscode && pnpm build && pnpm lint && pnpm test
 ```
 `--all-targets` is what type-checks and lints the bench, since `cargo test` does not build bench targets by default.
 

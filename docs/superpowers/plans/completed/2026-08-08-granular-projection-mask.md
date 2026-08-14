@@ -42,7 +42,7 @@ Read it — every decision and rejected alternative is recorded there.
   cargo clippy --workspace --all-targets -- -D warnings
   cargo fmt --all -- --check
   ```
-  Plus, for any task touching `editors/vscode`: its own `npm run build && npm test`. No task
+  Plus, for any task touching `editors/vscode`: its own `pnpm build && pnpm test`. No task
   in this plan touches `editors/vscode`.
 - **Known pre-existing red:** the `waml-syntax` properties proptest reparse failure is
   unrelated to this work. Never commit `crates/waml-syntax/proptest-regressions/`.

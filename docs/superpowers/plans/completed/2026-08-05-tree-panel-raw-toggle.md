@@ -16,7 +16,7 @@
   cargo fmt --all --check
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace
-  cd editors/vscode && npm run build && npm run test && npm run lint   # build FIRST
+  cd editors/vscode && pnpm build && pnpm test && pnpm lint   # build FIRST
   ```
 - **Known baseline failure:** `-p waml-syntax --test properties` has one failing proptest on `origin/main` already. It is pre-existing and NOT caused by this work. Do not attempt to fix it; do not let it block a commit.
 - **`clippy -D warnings` promotes `dead_code` to a hard error.** A half-landed type with no consumer fails the gate. Every `#[allow(dead_code)]` must name a concrete unlanded consumer, and must sit on the specific item — never on the enclosing struct or impl. The commit that lands the named consumer removes the allow in the same commit.
