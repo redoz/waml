@@ -1751,7 +1751,12 @@ fn valid_domain(domain: &str) -> bool {
             .is_some_and(|label| label.bytes().all(|byte| byte.is_ascii_alphabetic()))
 }
 
-fn find_unescaped(source: &str, mut at: usize, end: usize, wanted: char) -> Option<usize> {
+pub(super) fn find_unescaped(
+    source: &str,
+    mut at: usize,
+    end: usize,
+    wanted: char,
+) -> Option<usize> {
     while at < end {
         let ch = source[at..end].chars().next()?;
         if ch == wanted && !escaped(source, 0, at) {

@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use super::inline::find_unescaped;
 use super::scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
 use crate::{
@@ -1371,24 +1372,26 @@ fn definition_tokens(
         )?);
     }
     at = title_start;
-    if source.as_bytes().get(at) == Some(&b'"') {
-        let title_end = at
-            + 1
-            + source[at + 1..content_end].find('"').ok_or_else(|| {
-                ParseError::StructuralInvariant {
-                    reason: "confirmed link title lost its close delimiter".into(),
-                }
-            })?;
+    // Not every range that lands here is a scanner-confirmed definition: the
+    // by-line fallback recognises one by shape alone, and it cuts at the first
+    // newline, so a multi-line title's closing delimiter can sit outside
+    // `content_end`. Run to the end of the range instead of failing -- the
+    // tokens still have to spell the source back exactly.
+    if let Some(close) = source.as_bytes().get(at).copied().and_then(title_close) {
+        let title_end = find_unescaped(source, at + 1, content_end, close).unwrap_or(content_end);
         out.push(token(factory, text, at, at + 1, Kind::LinkTitleToken)?);
         out.push(token(factory, text, at + 1, title_end, Kind::TextToken)?);
-        out.push(token(
-            factory,
-            text,
-            title_end,
-            title_end + 1,
-            Kind::LinkTitleToken,
-        )?);
-        at = title_end + 1;
+        at = title_end;
+        if title_end < content_end {
+            out.push(token(
+                factory,
+                text,
+                title_end,
+                title_end + close.len_utf8(),
+                Kind::LinkTitleToken,
+            )?);
+            at = title_end + close.len_utf8();
+        }
     }
     if at < content_end {
         out.push(token(
@@ -1508,6 +1511,15 @@ fn list_prefix_end(source: &str, start: usize, end: usize) -> usize {
 }
 fn is_link_definition(line: &str) -> bool {
     line.starts_with('[') && line.contains("]:")
+}
+/// The delimiter that closes a CommonMark link title opened by `open`.
+fn title_close(open: u8) -> Option<char> {
+    match open {
+        b'"' => Some('"'),
+        b'\'' => Some('\''),
+        b'(' => Some(')'),
+        _ => None,
+    }
 }
 fn next_line(source: &str, start: usize, cap: usize) -> usize {
     source[start..cap]

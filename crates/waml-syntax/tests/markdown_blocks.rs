@@ -265,6 +265,50 @@ fn dialect_does_not_enable_unrequested_extensions() {
     );
 }
 
+#[test]
+fn link_definition_titles_round_trip_in_every_delimiter() {
+    // A duplicate label is dropped from the scanner's definition map, so the
+    // second definition reaches the tokenizer through the by-line fallback and
+    // is cut at the first newline -- with a multi-line title's closing
+    // delimiter left on the far side of the cut.
+    for source in [
+        "[a]: x \"title\"\n",
+        "[a]: x 'title'\n",
+        "[a]: x (title)\n",
+        "[a]: x \"one\ntwo\"\n",
+        "[a]: x\n[a]: y \"\n\"",
+        "[a]: x\n[a]: y '\n'",
+        "[a]: x\n[a]: y (\n)",
+        "[a]: x\n[a]: y \"one\ntwo\"\n",
+    ] {
+        let shell = parse(source);
+        assert_eq!(
+            shell.tree.write_to_string(),
+            source,
+            "{source:?} round-trips"
+        );
+    }
+
+    for (source, spelling) in [
+        ("[a]: x 'title'\n", "'"),
+        ("[a]: x (title)\n", "("),
+        ("[a]: x \"a\\\"b\"\n", "\""),
+    ] {
+        let shell = parse(source);
+        let titles: Vec<_> = leaf_tokens(&shell.tree.root())
+            .into_iter()
+            .filter(|token| token.kind() == OkfMarkdownSyntaxKind::LinkTitleToken)
+            .map(|token| token.text().write_to_string())
+            .collect();
+        assert_eq!(
+            titles.first().map(String::as_str),
+            Some(spelling),
+            "{source:?}"
+        );
+        assert_eq!(titles.len(), 2, "{source:?} has both title delimiters");
+    }
+}
+
 fn token_spellings(node: &SyntaxNode<OkfMarkdownLanguage>) -> Vec<String> {
     let mut spellings = Vec::new();
     for child in node.children() {
