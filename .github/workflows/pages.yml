@@ -77,7 +77,7 @@ jobs:
       # the workspace manifest, which is the single place it is written.
       - name: Install cargo-makepad
         run: |
-          rev=$(sed -nE 's/^makepad-widgets = .*rev = "([0-9a-f]{40})".*//p' Cargo.toml)
+          rev=$(sed -nE 's/^makepad-widgets = .*rev = "([0-9a-f]{40})".*/\1/p' Cargo.toml)
           if [ -z "$rev" ]; then
             echo "::error::could not read the makepad fork rev from Cargo.toml"
             exit 1
