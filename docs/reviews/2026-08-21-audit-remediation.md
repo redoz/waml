@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`█████░░░░░░░░░░░░░░░░░░░` **12/53 closed** — 34 open, 1 wip, 12 done, 6 decision
+`██████░░░░░░░░░░░░░░░░░░` **14/53 closed** — 32 open, 1 wip, 14 done, 6 decision
 
 ## Findings
 
@@ -45,7 +45,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A14 | H | Performance ceiling | `open` | Every edit triggers bundle-wide semantic reanalysis — the project's own open P2 and the real scaling limit; incremental parsing feeds non-increment… |
 | A15 | H | App shell | `open` | 54-field App god object, impl across 7 files/~7,800 lines, linear per-feature accretion |
 | A16 | H | Fork seam | `done` | All four makepad fork deps hoisted into [workspace.dependencies] (lockfile byte-identical), and pages.yml now READS the rev out of Cargo.toml instead of carrying its own copy — it had drifted 10 days behind (62f515dc vs 6534634a). A CI equality check would have caught the drift; deriving it means there is nothing to drift. |
-| A17 | H | Fork inventory | `open` | 44 commits / +2992−563 fork divergence inventoried only in a Cargo.toml comment; `wip:` commit in pinned lineage |
+| A17 | H | Fork inventory | `done` | docs/makepad-fork.md inventories all 44 fork commits against upstream/dev, classified upstream-worthy (27) / product (9) / dead (8), with the regeneration command and the both-directions drift check. The wip: DComp commit and seven other dead carries are named as removable on the next rebase. |
 | A18 | H | Wire contract | `open` | HTTP envelope + responses defined twice as unlinked serde types; only DocumentWrite shared |
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
 | A20 | H | LSP | `open` | Half-built LSP corrupts state: no didSave/watched files; close restores stale startup disk bytes |
@@ -54,7 +54,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A23 | H | Interop | `decision` | One-way mermaid/SVG export so diagrams can leave the toolchain. Scoped as a feature, not a fix. |
 | A24 | H | Sustainability | `decision` | Bus factor 1 with contribution repelled. Declare a personal tool, or do the contribution minimum and upstream the fork's general patches. |
 | A25 | M | Licensing | `done` | THIRD-PARTY.md added at the repo root and embedded into every assembled site (site.rs THIRD_PARTY_FILE), with a test asserting a site cannot ship without it. cargo-deny's licenses check keeps the allow-list honest. |
-| A26 | M | Serve security | `open` | Competent core (CSPRNG token, constant-time compare, loopback default, Host/origin checks) but the token is accepted and printed as a `?token=` que… |
+| A26 | M | Serve security | `done` | The serve trust model is stated where the flags are read: the token travels in a query parameter (browser history, proxy logs), there is no TLS, and --bind-all puts token, requests and document bodies on the network in cleartext with the Host check necessarily relaxed. The flag's own help repeats it. |
 | A27 | M | Surfaces | `open` | BodyWidgets show_* = five hand-copied sibling lists drifted from the 8-surface authority; compensated at 3 scattered sites; `set_behavior_canvas_vi… |
 | A28 | M | ViewOutcome | `open` | Ten-Option command bag; own comments admit each field exists because the channel couldn't express it |
 | A29 | M | Solve pipeline | `open` | Positional 3-list coupling in build_scene; desync admitted in comments, guarded by debug_assert; orchestration lives editor-side |

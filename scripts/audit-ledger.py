@@ -32,6 +32,18 @@ def refresh(text: str) -> str:
     )
 
 
+def write_atomically(text: str) -> None:
+    """Replace the ledger in one step.
+
+    A plain write truncates first, so a failure mid-write (a full disk, say)
+    leaves an empty ledger behind — which is exactly what happened once. Write
+    beside the target and rename over it instead.
+    """
+    tmp = LEDGER.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    tmp.replace(LEDGER)
+
+
 def main() -> int:
     text = LEDGER.read_text(encoding="utf-8")
     if sys.argv[1:2] != ["--refresh"]:
@@ -42,7 +54,7 @@ def main() -> int:
         text, n = re.subn(pattern, rf"\g<1>`{status}`\g<2>{note}\g<3>", text)
         if n != 1:
             raise SystemExit(f"{row_id}: matched {n} rows, expected 1")
-    LEDGER.write_text(refresh(text), encoding="utf-8", newline="\n")
+    write_atomically(refresh(text))
     return 0
 
 

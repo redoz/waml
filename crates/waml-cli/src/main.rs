@@ -82,6 +82,16 @@ enum Command {
     /// Binds loopback by default and mints a fresh access token per run; the
     /// token is printed once, in the URL, and is required on every request.
     /// Loopback is not access control — see the token flag docs.
+    ///
+    /// Trust model, stated plainly: this is a loopback development server.
+    /// The token may be presented as a `?token=` query parameter because the
+    /// editor boots from a URL, which means it is written to browser history
+    /// and to any proxy or referrer log on the path. There is no TLS. Under
+    /// `--bind-all` the token, every request and every document body cross
+    /// the network in cleartext, and the anti-rebinding Host check is
+    /// necessarily relaxed to accept the LAN name the browser used. Treat
+    /// `--bind-all` as "share this with people I already trust, on a network
+    /// I already trust", not as a security boundary.
     Serve {
         /// Directory to serve and edit.
         #[arg(default_value = ".")]
@@ -89,7 +99,8 @@ enum Command {
         /// Port to bind. `0` picks an ephemeral port and prints it.
         #[arg(long, default_value_t = 8099)]
         port: u16,
-        /// Bind 0.0.0.0 instead of 127.0.0.1. Exposes the API to your network.
+        /// Bind 0.0.0.0 instead of 127.0.0.1. Exposes the API to your network
+        /// in cleartext, token included — see the trust model above.
         #[arg(long)]
         bind_all: bool,
         /// Serve only the API, without the embedded web editor.
