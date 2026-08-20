@@ -23,16 +23,16 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████░░░░░░░░░░░░░░░░░░░░` **9/53 closed** — 42 open, 2 wip, 9 done
+`████░░░░░░░░░░░░░░░░░░░░` **9/53 closed** — 36 open, 2 wip, 9 done, 6 decision
 
 ## Findings
 
 | ID | Sev | Area | Status | Evidence / notes |
 |---|---|---|---|---|
 | A01 | C | Trust layer | `done` | PreparedCandidate::diagnostics() is now the one aggregate stream: quarantined documents surface as document-quarantined errors, and the three swallow arms in validate.rs return an analysis-failed diagnostic instead of an empty (=clean) vec. The vacuous rename all() assertion now asserts on errors. Predicted wave of latent doc-contract failures did NOT materialise: check docs/waml is still exit 0, 2 pre-existing warnings. |
-| A02 | C | Distribution | `open` | No way to install the native editor: zero release tags, no installer, no binaries; extension unpublishable |
-| A03 | C | Product definition | `open` | No external user, adoption path, or competitive confrontation exists anywhere in docs/ |
-| A04 | C | Accessibility | `open` | The flagship zero-install reader renders all text into a GPU canvas: zero screen-reader accessibility, no browser find, no text indexing/SEO — for… |
+| A02 | C | Distribution | `decision` | Cut a tagged v0.x with a Windows zip, or amend mvp.md to defer native install explicitly. Engineering can execute either; which one is the product call. |
+| A03 | C | Product definition | `decision` | Who adopts this and why. The audit's suggestion — agent-authored architecture docs reviewed by humans, per OKF_SPEC 1 — is unclaimed positioning, but naming the user reshapes the goal tree. |
+| A04 | C | Accessibility | `decision` | Ship a plain-HTML export beside the canvas reader. Cheap relative to what exists and product-defining while absent, but it is a new product surface, not a defect fix. |
 | A05 | C | Rendering gate | `open` | No automated rendering regression gate; pixel tool manual and unwired; in-CI screenshot test asserts file existence only. Precise platform gap: the… |
 | A06 | H | CI safety net | `wip` | Build repair landed 9ccf0e7a (cargo-fuzz pinned to the gnu host triple); it now finds real bugs. Corpus persistence and red-run notification still open. |
 | A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
@@ -50,9 +50,9 @@ be wrong later, the row reopens rather than a new row being appended.
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
 | A20 | H | LSP | `open` | Half-built LSP corrupts state: no didSave/watched files; close restores stale startup disk bytes |
 | A21 | H | Verification debt | `open` | 10+ landed features owe visual sign-off, ledger exists only in agent session memory |
-| A22 | H | Effort allocation | `open` | Three company-sized products + a forked framework, solo; every MVP area "partial"; channels that reach users (extension, LSP, image export) explici… |
-| A23 | H | Interop | `open` | No mermaid/plantuml import/export, no SVG/PNG export — diagrams cannot leave the toolchain |
-| A24 | H | Sustainability | `open` | Bus factor 1 with contribution actively repelled: purged single-author history, no releases, no CONTRIBUTING, stub CoC |
+| A22 | H | Effort allocation | `decision` | Three company-sized products plus a forked framework, solo. Which artifact is THE product determines what gets cut. |
+| A23 | H | Interop | `decision` | One-way mermaid/SVG export so diagrams can leave the toolchain. Scoped as a feature, not a fix. |
+| A24 | H | Sustainability | `decision` | Bus factor 1 with contribution repelled. Declare a personal tool, or do the contribution minimum and upstream the fork's general patches. |
 | A25 | M | Licensing | `done` | THIRD-PARTY.md added at the repo root and embedded into every assembled site (site.rs THIRD_PARTY_FILE), with a test asserting a site cannot ship without it. cargo-deny's licenses check keeps the allow-list honest. |
 | A26 | M | Serve security | `open` | Competent core (CSPRNG token, constant-time compare, loopback default, Host/origin checks) but the token is accepted and printed as a `?token=` que… |
 | A27 | M | Surfaces | `open` | BodyWidgets show_* = five hand-copied sibling lists drifted from the 8-surface authority; compensated at 3 scattered sites; `set_behavior_canvas_vi… |
