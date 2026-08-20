@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc bdc66e7aaea458ea7df0b37274944d275e7d0fe81049f61f79528244df8f0055 # shrinks to source = "---\ntype: uml.Class\n---\n¡¡¡¡¡\00 ¡¡\00¡A¡00 \0a aAa\0\000¡¡a¡\0a¡aA0a ¡ ¡A 0\0¡  ¡A0¡¡¡a00¡aa0¡¡a¡A  AaA¡¡ \0  ¡¡¡Aa ¡\0 ¡", edits = [(17729734048906762016, 1522500277811298396, "/𮶓🕴𐦐ᭉᴜ𑴉2🕴ঐ~$.¥`খnᝎ6<𝕀%j\\\\*𝒁r$𐡩"), (11235178439353395002, 9107621094182587789, "𛱳ລѨ𑴋H*𑍌ᥲꦅ"), (16526661725437747230, 13255448151497689494, "\"w\u{10a05}𐊱𐞵=M.%9𑜊%𞊭F"), (5846047677060367968, 12822956635077205556, "𐣴evಶ\\𐀶")]
