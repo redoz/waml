@@ -1767,4 +1767,47 @@ mod tests {
         );
         assert!(normalized.show_cardinality);
     }
+
+    /// The three `FieldEdit` states must survive a wire round-trip distinctly:
+    /// absent means "leave it alone", `null` means "delete it", a value means
+    /// "set it". Conflating the first two silently deletes user data, so pin
+    /// every state on the real op that carries one.
+    #[test]
+    fn field_edit_states_round_trip_distinctly_on_the_wire() {
+        let cases = [
+            (r#"{"op":"attr.set","node":"n","name":"a"}"#, FieldEdit::Unchanged),
+            (r#"{"op":"attr.set","node":"n","name":"a","mult":null}"#, FieldEdit::Clear),
+            (
+                r#"{"op":"attr.set","node":"n","name":"a","mult":"0..1"}"#,
+                FieldEdit::Set("0..1".to_string()),
+            ),
+        ];
+        for (json, expected) in cases {
+            let dto: OpDto = serde_json::from_str(json).expect("op parses");
+            let OpDto::AttrSet { ref mult, .. } = dto else {
+                panic!("expected attr.set");
+            };
+            assert_eq!(mult, &expected, "decoding {json}");
+
+            let encoded = serde_json::to_string(&dto).expect("op re-encodes");
+            let again: OpDto = serde_json::from_str(&encoded).expect("re-encoded op parses");
+            let OpDto::AttrSet { mult: ref again, .. } = again else {
+                panic!("expected attr.set");
+            };
+            assert_eq!(again, &expected, "round-tripping {json} via {encoded}");
+        }
+    }
+
+    /// `Unchanged` has no encoding of its own — it is the *absence* of a key.
+    /// A field that forgets `skip_serializing_if` must fail loudly rather than
+    /// write `null`, which would read back as `Clear`.
+    #[test]
+    fn serializing_an_unchanged_field_edit_directly_is_an_error() {
+        let err = serde_json::to_string(&FieldEdit::<String>::Unchanged)
+            .expect_err("Unchanged must not serialize on its own");
+        assert!(
+            err.to_string().contains("skip_serializing_if"),
+            "the error should name the fix, got: {err}"
+        );
+    }
 }

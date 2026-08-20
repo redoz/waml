@@ -18,6 +18,20 @@ pub enum NameSpec {
 /// `Unchanged` preserves the current value, `Clear` removes it, and `Set`
 /// replaces it. On serde wire boundaries an omitted field defaults to
 /// `Unchanged`, an explicit `null` is `Clear`, and a value is `Set`.
+///
+/// Absence is the only wire encoding `Unchanged` can have, and absence is a
+/// property of the *container*, not of this value — so every struct field of
+/// this type MUST carry both attributes:
+///
+/// ```ignore
+/// #[serde(default, skip_serializing_if = "FieldEdit::is_unchanged")]
+/// mult: FieldEdit<String>,
+/// ```
+///
+/// Without `skip_serializing_if` the field would be written as `null` and read
+/// back as `Clear`, silently turning "leave this alone" into "delete this."
+/// Rather than let that corruption happen quietly, serializing `Unchanged`
+/// directly is an error — see the `Serialize` impl below.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum FieldEdit<T> {
     #[default]
@@ -36,7 +50,14 @@ impl<T> FieldEdit<T> {
 impl<T: serde::Serialize> serde::Serialize for FieldEdit<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            Self::Unchanged | Self::Clear => serializer.serialize_none(),
+            // `Unchanged` means "this key is absent", which only the container
+            // can express. Reaching here means a field is missing its
+            // `skip_serializing_if`, and emitting `null` would round-trip back
+            // as `Clear` — silent data loss. Fail loudly instead.
+            Self::Unchanged => Err(serde::ser::Error::custom(
+                "FieldEdit::Unchanged has no wire encoding of its own; the field                  needs #[serde(default, skip_serializing_if = \"FieldEdit::is_unchanged\")]",
+            )),
+            Self::Clear => serializer.serialize_none(),
             Self::Set(value) => value.serialize(serializer),
         }
     }

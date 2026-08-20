@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`░░░░░░░░░░░░░░░░░░░░░░░░` **0/53 closed** — 52 open, 1 wip
+`░░░░░░░░░░░░░░░░░░░░░░░░` **1/53 closed** — 51 open, 1 wip, 1 done
 
 ## Findings
 
@@ -35,7 +35,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A04 | C | Accessibility | `open` | The flagship zero-install reader renders all text into a GPU canvas: zero screen-reader accessibility, no browser find, no text indexing/SEO — for… |
 | A05 | C | Rendering gate | `open` | No automated rendering regression gate; pixel tool manual and unwired; in-CI screenshot test asserts file existence only. Precise platform gap: the… |
 | A06 | H | CI safety net | `wip` | Build repair landed 9ccf0e7a (cargo-fuzz pinned to the gnu host triple); it now finds real bugs. Corpus persistence and red-run notification still open. |
-| A07 | H | Data integrity | `open` | `FieldEdit::Unchanged` and `Clear` serialize identically; deserialization returns `Clear` — wire round-trip silently deletes fields (verified live) |
+| A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
 | A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
 | A09 | H | Doc contract | `open` | The CI-enforced documentation contract gates through the broken check path: it can pass green while docs/waml contains shell-failed documents |
 | A10 | H | Supply chain | `open` | Zero dependency auditing (no cargo-audit/cargo-deny/deny.toml anywhere); all four GUI crates + the Pages build tooling routed through one personal… |
