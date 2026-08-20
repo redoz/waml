@@ -23,13 +23,13 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`░░░░░░░░░░░░░░░░░░░░░░░░` **1/53 closed** — 51 open, 1 wip, 1 done
+`█░░░░░░░░░░░░░░░░░░░░░░░` **3/53 closed** — 49 open, 1 wip, 3 done
 
 ## Findings
 
 | ID | Sev | Area | Status | Evidence / notes |
 |---|---|---|---|---|
-| A01 | C | Trust layer | `open` | Two distinct holes |
+| A01 | C | Trust layer | `done` | PreparedCandidate::diagnostics() is now the one aggregate stream: quarantined documents surface as document-quarantined errors, and the three swallow arms in validate.rs return an analysis-failed diagnostic instead of an empty (=clean) vec. The vacuous rename all() assertion now asserts on errors. Predicted wave of latent doc-contract failures did NOT materialise: check docs/waml is still exit 0, 2 pre-existing warnings. |
 | A02 | C | Distribution | `open` | No way to install the native editor: zero release tags, no installer, no binaries; extension unpublishable |
 | A03 | C | Product definition | `open` | No external user, adoption path, or competitive confrontation exists anywhere in docs/ |
 | A04 | C | Accessibility | `open` | The flagship zero-install reader renders all text into a GPU canvas: zero screen-reader accessibility, no browser find, no text indexing/SEO — for… |
@@ -37,7 +37,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A06 | H | CI safety net | `wip` | Build repair landed 9ccf0e7a (cargo-fuzz pinned to the gnu host triple); it now finds real bugs. Corpus persistence and red-run notification still open. |
 | A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
 | A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
-| A09 | H | Doc contract | `open` | The CI-enforced documentation contract gates through the broken check path: it can pass green while docs/waml contains shell-failed documents |
+| A09 | H | Doc contract | `done` | Re-gated by A01: the contract's command now reports quarantined documents and analysis failure. Verified after the fix — docs/waml is genuinely clean, not silently clean. CI step ordering is tracked separately as A35. |
 | A10 | H | Supply chain | `open` | Zero dependency auditing (no cargo-audit/cargo-deny/deny.toml anywhere); all four GUI crates + the Pages build tooling routed through one personal… |
 | A11 | H | Layering | `open` | okf substrate transitively depends on the UML tier; the "mechanical okf-core split" header claim is fiction |
 | A12 | H | Layering | `open` | analysis.rs is a hub with three mutual-dependency directions; OkfAnalysis back-patched with UML data |

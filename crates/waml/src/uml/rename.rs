@@ -392,12 +392,16 @@ mod tests {
             "no stale layout link left: {diagram}"
         );
 
+        // Assert on errors, not on the absence of one code: an `all()` over a
+        // list that is empty because analysis failed passes vacuously.
         let diags = crate::validate::validate(&out);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == crate::diagnostic::Severity::Error)
+            .collect();
         assert!(
-            diags
-                .iter()
-                .all(|d| d.code != crate::diagnostic::DiagCode::UnresolvedLayoutRef),
-            "renamed bundle must validate cleanly: {diags:?}"
+            errors.is_empty(),
+            "renamed bundle must validate cleanly: {errors:?}"
         );
     }
 

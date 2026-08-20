@@ -77,6 +77,15 @@ pub enum DiagCode {
     /// Two groups list the same element without one nesting the other, so
     /// their clusters cannot be pulled apart in the default layout.
     EntangledGroups,
+    /// Analysis of the whole bundle failed, so nothing could be checked. A
+    /// failure to analyse is never the same answer as "analysed, found
+    /// nothing" — this code keeps the two distinguishable for callers that
+    /// only see a diagnostic list.
+    AnalysisFailed,
+    /// A document whose shell could not be parsed, so it was excluded from
+    /// analysis entirely. Reported per document so the exclusion is visible
+    /// rather than silent.
+    DocumentQuarantined,
 }
 
 impl DiagCode {
@@ -143,6 +152,8 @@ impl DiagCode {
             DiagCode::UnknownSurface => "unknown-surface",
             DiagCode::UnknownIcon => "unknown-icon",
             DiagCode::EntangledGroups => "entangled-groups",
+            DiagCode::DocumentQuarantined => "document-quarantined",
+            DiagCode::AnalysisFailed => "analysis-failed",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).

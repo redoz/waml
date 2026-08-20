@@ -12,6 +12,7 @@ use waml_syntax::{
 pub use waml_syntax::{DocumentRevision, TextRange, TextSize};
 
 use crate::{
+    diagnostic::{DiagCode, Diagnostic},
     okf,
     source::{BundlePath, SourceBundle, SourceDocument},
     uml::highlight::WamlCodeSyntaxSnapshot,
@@ -134,8 +135,12 @@ pub struct OkfAnalysis {
     code_syntax: Arc<BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot>>,
     /// Documents excluded from this analysis because their shell failed
     /// (path -> rendered error). One bad document quarantines itself instead
-    /// of making the whole bundle unopenable; consumers surface these as
-    /// per-document diagnostics.
+    /// of making the whole bundle unopenable.
+    ///
+    /// These are not diagnostics on their own — [`PreparedCandidate::diagnostics`]
+    /// is what turns them into per-document `document-quarantined` errors, and
+    /// every consumer that reports on a bundle must go through it. Reading this
+    /// map directly means silently ignoring documents the parser rejected.
     pub quarantined: Arc<BTreeMap<BundlePath, Arc<str>>>,
 }
 
@@ -640,6 +645,27 @@ impl PreparedCandidate {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Every diagnostic this candidate carries, across analysis tiers.
+    ///
+    /// This is the only truthful answer to "is this bundle clean?". The UML
+    /// diagnostics alone are not: a document whose shell failed to parse
+    /// produces no UML analysis at all, so reading `uml().diagnostics` reports
+    /// success for a bundle the parser could not even read. Quarantined
+    /// documents come first — they explain why later analysis is missing.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        let quarantined = self.okf.quarantined.iter().map(|(path, error)| {
+            Diagnostic::new(
+                DiagCode::DocumentQuarantined,
+                format!("document excluded from analysis: {error}"),
+                path.to_string(),
+                1,
+            )
+        });
+        quarantined
+            .chain(self.uml.diagnostics.iter().cloned())
+            .collect()
     }
 
     pub fn referrers(&self, target: &str) -> Vec<String> {
@@ -1743,6 +1769,41 @@ mod tests {
         let good_id = analysis.catalog.id_for_path(&good).expect("good survives");
         assert!(analysis.markdown_snapshot(good_id).is_some());
         assert_eq!(analysis.quarantined.len(), 1);
+    }
+
+    /// The whole point of quarantining rather than failing is that the rest of
+    /// the bundle stays analyzable — but a document the parser could not read
+    /// must not vanish silently. It has to reach every consumer that asks the
+    /// candidate what is wrong with the bundle.
+    #[test]
+    fn quarantined_documents_appear_in_the_candidate_diagnostics() {
+        let source =
+            SourceBundle::try_from_pairs([("good.md", "# good"), ("huge.md", "# huge")]).unwrap();
+        let mut hooks = QuarantineHooks {
+            fail_path: BundlePath::parse("huge.md").unwrap(),
+        };
+        let candidate = prepare_candidate_inner(source, None, 1, &mut hooks).unwrap();
+
+        // The UML tier alone cannot see the failure: the document never got far
+        // enough to produce UML analysis. That gap is exactly the bug.
+        assert!(candidate
+            .uml()
+            .diagnostics
+            .iter()
+            .all(|d| d.code != DiagCode::DocumentQuarantined));
+
+        let diagnostics = candidate.diagnostics();
+        let quarantine = diagnostics
+            .iter()
+            .find(|d| d.code == DiagCode::DocumentQuarantined)
+            .expect("the quarantined document must be reported");
+        assert_eq!(quarantine.file, "huge.md");
+        assert_eq!(quarantine.severity, crate::diagnostic::Severity::Error);
+        assert!(
+            quarantine.message.contains("too large"),
+            "the diagnostic should carry the underlying reason, got: {}",
+            quarantine.message
+        );
     }
 
     #[test]
