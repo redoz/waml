@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`█████░░░░░░░░░░░░░░░░░░░` **11/53 closed** — 35 open, 1 wip, 11 done, 6 decision
+`█████░░░░░░░░░░░░░░░░░░░` **12/53 closed** — 34 open, 1 wip, 12 done, 6 decision
 
 ## Findings
 
@@ -36,7 +36,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A05 | C | Rendering gate | `open` | No automated rendering regression gate; pixel tool manual and unwired; in-CI screenshot test asserts file existence only. Precise platform gap: the… |
 | A06 | H | CI safety net | `done` | Build repair 9ccf0e7a pinned cargo-fuzz to the gnu host triple; the job now runs and has already found four real bugs. Corpus is cached per target (append-only key + restore-keys) so discovered coverage survives, and a scheduled red run opens or comments on a labelled issue instead of failing where only the Actions tab shows it. |
 | A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
-| A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
+| A08 | H | Triage discipline | `done` | issues.md reconciled 2026-08-21: the three P1s verified fixed since the freeze are recorded with their commits (nesting overflow, FieldEdit wire, shell/frontmatter diagnostics) instead of silently deleted, the still-live LSP P1 is named, and the header points audit findings at this ledger so the two documents have distinct jobs. |
 | A09 | H | Doc contract | `done` | Re-gated by A01: the contract's command now reports quarantined documents and analysis failure. Verified after the fix — docs/waml is genuinely clean, not silently clean. CI step ordering is tracked separately as A35. |
 | A10 | H | Supply chain | `done` | cargo-deny (advisories+licenses+bans+sources) now runs as a CI job with deny.toml; it immediately found and fixed two real quick-xml DoS advisories (RUSTSEC-2026-0194/0195) and a yanked roughr-merman, and every Action is SHA-pinned with the tag in a trailing comment. The ttf-parser/rustybuzz unmaintained advisories are ignored with a written reason (same SVG text stack, no safe upgrade). Single-account risk is A24/A48, a decision row. |
 | A11 | H | Layering | `done` | Made true rather than deleted: ViewDecl moved to okf::decl (it is authored frontmatter, not view machinery) and Bundle::resolved_view became a free function in view::chain. Production okf now imports nothing from the view/UML tiers, enforced by tests/okf_layering.rs (verified against a deliberate violation). |

@@ -8,6 +8,17 @@ the range `a24f03eb..c31fdc51`. Extended 2026-08-04 with the five-domain
 code-smell review (god modules, misplaced behavior, idiomatic Rust) against
 `2fd4b609`; its findings are the dated section near the end.
 
+Reconciled again 2026-08-21 against `main`, after the greybeard audit found
+this document frozen for fifteen days and listing a fixed P1 next to a live
+one. Items verified fixed since the last reconciliation are listed under
+"Resolved since 2026-08-05" below, with the commit that fixed them, rather than
+being deleted — the audit's point was that silent removal and silent staleness
+look identical from outside.
+
+Audit findings themselves are tracked separately in
+`docs/reviews/2026-08-21-audit-remediation.md`, which is keyed `A01`..`A53` and
+updated by script. This document remains the codebase's own defect ledger.
+
 This document tracks active issues only. Completed items from the 2026-07-26
 review were removed. In particular, native edits now use a real save path,
 `EditorSession` owns in-memory transactions and savepoint identity, `DocView`
@@ -44,6 +55,32 @@ Priority meanings are calibrated for a hobby project:
   that should be fixed when working in the affected area;
 - **P3:** a hypothesis or hygiene item that needs evidence before substantial
   work.
+
+## Resolved since 2026-08-05
+
+Each verified against the code at the commit named, not assumed from a commit
+message.
+
+- **P1 — Hostile nesting overflows the stack and kills the session.** Fixed:
+  `MD_MAX_CONTAINER_DEPTH` caps container and inline nesting at the block
+  scanner and is published as `FRONTMATTER_MAX_NESTING_DEPTH`
+  (`crates/waml-syntax/src/markdown/mod.rs:48`). Verified by
+  `crates/waml-syntax/tests/markdown_nesting_depth.rs`, whose five cases feed
+  exactly the 10,000-deep quotes, lists and emphasis this entry cited.
+- **P1 — `FieldEdit` serde round-trip turns `Unchanged` into `Clear`.** Fixed in
+  `82d1d187` along the lines this entry proposed: serializing `Unchanged`
+  directly is now an error naming the missing `skip_serializing_if`, and the
+  three wire states are pinned by a round-trip test. Worth recording that the
+  live wire field was never affected — `AttrSet.mult` already carried both
+  attributes — so this was a trap for the next field, not active data loss.
+- **P1 — Shell and frontmatter diagnostics disappear at public boundaries.**
+  Fixed in `db98817e`: `PreparedCandidate::diagnostics()` is now one aggregate
+  stream carrying quarantined documents as `document-quarantined` errors, and
+  the three arms in `validate.rs` that returned an empty (=clean) result on
+  analysis failure now return an `analysis-failed` diagnostic.
+
+Still live from that set: the LSP disk/workspace authority P1 below — there is
+still no `didSave` or watched-file handling anywhere in `crates/waml-cli/src/lsp/`.
 
 ## Executive judgment
 
