@@ -2938,6 +2938,23 @@ fn push_behavior_newline(
     }
 }
 
+/// Locates the bullet-item content on the line starting at `start`.
+///
+/// Returns `(lead, content_end)` — the offset of the `-` bullet and the end of
+/// the line's significant text — or `None` when the line is not a bullet item.
+/// A whitespace-only line trims away to nothing, leaving `content_end` back at
+/// `start` while `lead` has already advanced past the indentation, so the
+/// emptiness check has to come before the slice or the range is reversed.
+fn bullet_line(source: &str, start: usize, newline: usize) -> Option<(usize, usize)> {
+    let sig = source[start..newline].trim_end_matches(['\r', ' ', '\t']);
+    let content_end = start + sig.len();
+    let lead = start + sig.len() - sig.trim_start_matches([' ', '\t']).len();
+    if lead >= content_end || !source[lead..content_end].starts_with('-') {
+        return None;
+    }
+    Some((lead, content_end))
+}
+
 fn simple_item(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -2949,15 +2966,7 @@ fn simple_item(
 ) -> Option<waml_syntax::GreenNode<UmlLanguage>> {
     let line = &source[start..end];
     let newline = line.find('\n').map(|i| start + i).unwrap_or(end);
-    let content_end = start
-        + source[start..newline]
-            .trim_end_matches(['\r', ' ', '\t'])
-            .len();
-    let lead = start + source[start..newline].len()
-        - source[start..newline].trim_start_matches([' ', '\t']).len();
-    if lead >= content_end || !source[lead..content_end].starts_with('-') {
-        return None;
-    }
+    let (lead, content_end) = bullet_line(source, start, newline)?;
     let kind = match section {
         UmlSyntaxKind::ValuesSection => UmlSyntaxKind::Value,
         UmlSyntaxKind::SlotsSection => UmlSyntaxKind::Slot,
@@ -4775,18 +4784,7 @@ fn attribute(
 ) -> Option<waml_syntax::GreenNode<UmlLanguage>> {
     let line = &source[start..end];
     let newline = line.find('\n').map(|i| start + i).unwrap_or(end);
-    let sig = source[start..newline].trim_end_matches(['\r', ' ', '\t']);
-    let content_end = start + sig.len();
-    let lead = start + line[..newline - start].len()
-        - line[..newline - start]
-            .trim_start_matches([' ', '\t'])
-            .len();
-    // A whitespace-only line trims away to nothing, leaving `content_end` at
-    // `start` while `lead` has already advanced past the indentation — slicing
-    // `lead..content_end` would be a reversed range.
-    if lead >= content_end || !source[lead..content_end].starts_with('-') {
-        return None;
-    }
+    let (lead, content_end) = bullet_line(source, start, newline)?;
     let mut c = Vec::new();
     c.push(token(
         f,
