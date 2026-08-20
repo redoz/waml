@@ -48,7 +48,7 @@ Additive needs a dark bg to read; Col C is dark, not checkerboard.
   immediate). Hook left if a number is wanted later.
 
 ## Run loop (no hot-reload in bare cargo run)
-1. `cargo build -p waml-editor --bin logo_harness`
+1. `cargo build -p waml-editor --features harness --bin logo_harness`
 2. launch `target/debug/logo_harness.exe` as bg task
 3. wait ~8s, capture via `scratchpad/cap.ps1` (PrintWindow, run via
    `powershell.exe` — WinPS5 has System.Drawing, pwsh7 does not)

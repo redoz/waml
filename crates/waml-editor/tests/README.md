@@ -239,7 +239,7 @@ Store the evidence outside the repository at
 `C:\tmp\markdown-presentation-verification`:
 
 ```powershell
-rtk cargo build -p waml-editor --bin markdown_presentation_harness --release
+rtk cargo build -p waml-editor --features harness --bin markdown_presentation_harness --release
 rtk proxy pwsh -NoProfile -Command '$out = "C:\tmp\markdown-presentation-verification"; New-Item -ItemType Directory -Force -Path $out | Out-Null; $cases = @("headings","inline","lists","quotes","code","tables","images","invalid","selection","motion-start","motion-mid","motion-end"); foreach ($case in $cases) { $ready = "$out\$case.ready"; Remove-Item -LiteralPath $ready -ErrorAction SilentlyContinue; $p = Start-Process -FilePath "target\release\markdown_presentation_harness.exe" -ArgumentList @("--case",$case) -PassThru; try { $deadline = [DateTime]::UtcNow.AddSeconds(20); while (($p.MainWindowHandle -eq 0 -or -not (Test-Path -LiteralPath $ready)) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100; $p.Refresh() }; if ($p.MainWindowHandle -eq 0) { throw "window did not open for $case" }; if (-not (Test-Path -LiteralPath $ready)) { throw "final frame was not presented for $case" }; & pwsh -NoProfile -File scripts/capture-window.ps1 -Out "$out\$case.png" -ProcessId $p.Id; if ($LASTEXITCODE -ne 0) { throw "capture failed for $case" } } finally { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue } }'
 ```
 

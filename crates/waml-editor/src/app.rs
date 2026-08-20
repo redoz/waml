@@ -1602,10 +1602,6 @@ impl AppMain for App {
         // dead and invisible: no draw, no hit, `ids!(find_strip)` empty --
         // gate-green but Ctrl+F would open nothing.
         crate::find_strip::script_mod(vm);
-        // Registered so the design surface compiles into the crate, but never
-        // mounted in the live UI -- it is viewable only via the
-        // `node_editor_harness` bin (see `node_design_editor.rs`).
-        crate::node_design_editor::script_mod(vm);
         self::script_mod(vm)
     }
 

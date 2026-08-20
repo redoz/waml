@@ -48,8 +48,42 @@ waml-ui-test = { path = "../waml-ui-test" }
 [features]
 browser-test-trace = []
 ui-tests = []
+# The design harnesses: the `src/bin/*_harness` executables and the
+# `node_design_editor` surface they mount. Kept out of the default build so the
+# shipping editor does not carry ~3.5k lines of eyeball-only scaffolding; CI
+# still compiles and lints them (`clippy --all-features`).
+harness = []
 
 [[test]]
 name = "ui"
 path = "tests/ui.rs"
 required-features = ["ui-tests"]
+
+[[bin]]
+name = "waml-editor"
+path = "src/main.rs"
+
+[[bin]]
+name = "icon_harness"
+path = "src/bin/icon_harness.rs"
+required-features = ["harness"]
+
+[[bin]]
+name = "logo_harness"
+path = "src/bin/logo_harness.rs"
+required-features = ["harness"]
+
+[[bin]]
+name = "logo_pulse_harness"
+path = "src/bin/logo_pulse_harness.rs"
+required-features = ["harness"]
+
+[[bin]]
+name = "markdown_presentation_harness"
+path = "src/bin/markdown_presentation_harness.rs"
+required-features = ["harness"]
+
+[[bin]]
+name = "node_editor_harness"
+path = "src/bin/node_editor_harness.rs"
+required-features = ["harness"]

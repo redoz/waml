@@ -89,6 +89,10 @@ mod markdown_hosts;
 mod native_save;
 mod nav;
 mod navigation;
+// Eyeball-only design surface: never mounted in the live app, viewable only
+// through the `node_editor_harness` bin. Gated so the shipping editor does not
+// compile it (see the `harness` feature in Cargo.toml).
+#[cfg(feature = "harness")]
 pub mod node_design_editor;
 mod node_style;
 mod okf_documents;
