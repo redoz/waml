@@ -457,3 +457,16 @@ fn nested_fenced_bullet_inside_real_attribute_list_stays_markdown() {
         authored
     );
 }
+
+// Regression: a whitespace-only line inside a body section trims away to
+// nothing, so the attribute parser's content end landed *before* the
+// indentation it had already skipped, and slicing that reversed range paniced
+// ("byte range starts at N but ends at N-1"). Found by the uml_islands fuzz
+// target.
+#[test]
+fn whitespace_only_body_line_does_not_panic() {
+    let value = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n\n- id: OrderId\n   \n";
+    let source = SourceBundle::try_from_pairs([("fuzz.md", value.to_string())]).unwrap();
+    let analysis = analyze(&source);
+    assert_eq!(analysis.syntax.len(), 1);
+}

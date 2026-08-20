@@ -4781,7 +4781,10 @@ fn attribute(
         - line[..newline - start]
             .trim_start_matches([' ', '\t'])
             .len();
-    if !source[lead..content_end].starts_with('-') {
+    // A whitespace-only line trims away to nothing, leaving `content_end` at
+    // `start` while `lead` has already advanced past the indentation — slicing
+    // `lead..content_end` would be a reversed range.
+    if lead >= content_end || !source[lead..content_end].starts_with('-') {
         return None;
     }
     let mut c = Vec::new();
