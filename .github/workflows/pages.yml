@@ -39,18 +39,18 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # cargo-makepad shells out to `rustup run nightly cargo build` with
       # `-Z build-std=panic_abort,std` and `-Z json-target-spec`, so nightly is
       # a hard requirement and `rust-src` must be present for build-std.
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
         with:
           targets: wasm32-unknown-unknown
           components: rust-src
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # The build tool and the framework now sit on the SAME rev, the one
       # crates/waml-editor/Cargo.toml names. They used to be pinned separately --
@@ -71,15 +71,19 @@ jobs:
       # line we build against, so the two pins collapse into one.
       #
       # Note the fork carries several rebase-duplicated lines with identical
-      # commit messages but different shas, and `waml-scroll-occlusion`'s remote
-      # tip is a pre-rebase leftover. Copy an exact sha rather than reading a
-      # branch tip, and keep this in step with waml-editor/Cargo.toml.
+      # commit messages but different shas, so an exact sha is the only safe
+      # pin -- never a branch tip. Rather than hand-copy one (this workflow
+      # drifted 10 days behind the library pin that way), read the rev out of
+      # the workspace manifest, which is the single place it is written.
       - name: Install cargo-makepad
-        run: >
-          cargo install cargo-makepad
-          --git https://github.com/redoz/makepad.git
-          --rev 62f515dc8b61b5daf2a5cf91049f33332cf8b096
-          --locked
+        run: |
+          rev=$(sed -nE 's/^makepad-widgets = .*rev = "([0-9a-f]{40})".*//p' Cargo.toml)
+          if [ -z "$rev" ]; then
+            echo "::error::could not read the makepad fork rev from Cargo.toml"
+            exit 1
+          fi
+          echo "Installing cargo-makepad from the workspace fork pin $rev"
+          cargo install cargo-makepad             --git https://github.com/redoz/makepad.git             --rev "$rev"             --locked
 
       # binaryen supplies the `wasm-opt` binary that the build step below invokes
       # via cargo-makepad's --wasm-opt flag. The version is pinned rather than
@@ -139,7 +143,7 @@ jobs:
       # names 8. Prune to what the source actually references: 67 MB -> 17 MB.
       # Only needed to run the dependency-free scripts/*.mjs below; there is no
       # root package.json (the VS Code extension owns its own in editors/vscode).
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
@@ -214,13 +218,13 @@ jobs:
       - name: Verify the exported site
         run: node scripts/verify-web-artifact.mjs target/pages
 
-      - uses: actions/configure-pages@v6
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
       # `waml export site` output: the cargo-makepad layout (index.html,
       # waml-editor.wasm, the makepad_platform/* JS glue, one resources/ tree
       # per crate) plus bundle.waml and waml-boot.txt, the file that names it,
       # which the editor fetches at startup.
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: target/pages
 
@@ -233,4 +237,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

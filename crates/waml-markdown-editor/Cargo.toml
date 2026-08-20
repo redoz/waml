@@ -5,9 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "WAML-owned variable-metric Markdown editing foundation."
+# Not published: every crate here refers to its siblings by path, which crates.io
+# would reject. Flip this when a crate is actually released.
+publish = false
 
 [dependencies]
 waml-syntax = { path = "../waml-syntax" }
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "6534634a60aa8101fa93bb1ddf0edde6949e520a" }
+makepad-widgets = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }

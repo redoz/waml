@@ -4,6 +4,9 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# Not published: every crate here refers to its siblings by path, which crates.io
+# would reject. Flip this when a crate is actually released.
+publish = false
 
 [dependencies]
 pulldown-cmark.workspace = true

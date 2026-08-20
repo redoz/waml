@@ -1,0 +1,87 @@
+# Supply-chain floor for the workspace, enforced by the `supply-chain` CI job.
+#
+# The audit's finding was blunt: no advisory scanning existed anywhere, while
+# every GUI-adjacent crate takes a git dependency on a personal fork. This file
+# is the minimum that makes both facts visible rather than silent.
+
+[graph]
+# Only check what we actually ship or build. Adding targets here widens the
+# graph; it does not weaken any check.
+all-features = true
+
+[advisories]
+# RUSTSEC advisories in the lockfile fail the build. `ignore` entries must
+# carry a reason and a link, so a suppression is a decision, not a habit.
+yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained with no safe upgrade available. It arrives
+    # both directly and transitively through usvg/rustybuzz/fontdb, so dropping
+    # it means replacing the SVG text stack — tracked, not ignored forever.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0192
+    "RUSTSEC-2026-0192",
+    # rustybuzz is unmaintained and arrives only through usvg, alongside
+    # ttf-parser above — the same SVG text stack, the same replacement work.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0206
+    "RUSTSEC-2026-0206",
+]
+
+[licenses]
+# The repo is MPL-2.0 and its distributed artifacts embed MIT and
+# Apache-2.0 code, so those must be allowed — and the THIRD-PARTY notice must
+# keep covering them. Anything outside this list is a deliberate decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MPL-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "MIT-0",
+]
+confidence-threshold = 0.9
+
+# The makepad fork's own crates carry no `license` field in their manifests, so
+# cargo-deny cannot infer one. The fork's LICENSE file is MIT (it is a fork of
+# makepad, which is MIT), and that is what the THIRD-PARTY notice attributes.
+# Clarify rather than allow-unlicensed, so a genuinely unlicensed *new*
+# dependency still fails.
+[[licenses.clarify]]
+crate = "makepad-fast-inflate"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "makepad-git"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "makepad-latex-math"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "makepad-regex"
+expression = "MIT"
+license-files = []
+
+[bans]
+multiple-versions = "allow"
+# A wildcard on a *published* dependency is unpinned and dangerous; a wildcard
+# on an internal path dependency is just how this workspace refers to itself.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# The makepad fork is the one git source this workspace builds against. Listing
+# it here means a NEW git dependency — from any other account — fails the gate
+# instead of arriving unnoticed.
+allow-git = ["https://github.com/redoz/makepad.git"]

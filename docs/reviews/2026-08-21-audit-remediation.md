@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`█░░░░░░░░░░░░░░░░░░░░░░░` **3/53 closed** — 49 open, 1 wip, 3 done
+`███░░░░░░░░░░░░░░░░░░░░░` **6/53 closed** — 46 open, 1 wip, 6 done
 
 ## Findings
 
@@ -38,13 +38,13 @@ be wrong later, the row reopens rather than a new row being appended.
 | A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
 | A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
 | A09 | H | Doc contract | `done` | Re-gated by A01: the contract's command now reports quarantined documents and analysis failure. Verified after the fix — docs/waml is genuinely clean, not silently clean. CI step ordering is tracked separately as A35. |
-| A10 | H | Supply chain | `open` | Zero dependency auditing (no cargo-audit/cargo-deny/deny.toml anywhere); all four GUI crates + the Pages build tooling routed through one personal… |
+| A10 | H | Supply chain | `done` | cargo-deny (advisories+licenses+bans+sources) now runs as a CI job with deny.toml; it immediately found and fixed two real quick-xml DoS advisories (RUSTSEC-2026-0194/0195) and a yanked roughr-merman, and every Action is SHA-pinned with the tag in a trailing comment. The ttf-parser/rustybuzz unmaintained advisories are ignored with a written reason (same SVG text stack, no safe upgrade). Single-account risk is A24/A48, a decision row. |
 | A11 | H | Layering | `open` | okf substrate transitively depends on the UML tier; the "mechanical okf-core split" header claim is fiction |
 | A12 | H | Layering | `open` | analysis.rs is a hub with three mutual-dependency directions; OkfAnalysis back-patched with UML data |
 | A13 | H | Cohesion | `open` | uml/analysis.rs is a 4,610-line dumping ground: extraction + validation + projection + orchestration; 415- and 405-line functions |
 | A14 | H | Performance ceiling | `open` | Every edit triggers bundle-wide semantic reanalysis — the project's own open P2 and the real scaling limit; incremental parsing feeds non-increment… |
 | A15 | H | App shell | `open` | 54-field App god object, impl across 7 files/~7,800 lines, linear per-feature accretion |
-| A16 | H | Fork seam | `open` | Fork SHA hand-copied into 5 entries across 4 manifests; pages.yml pins a different SHA by prose comment |
+| A16 | H | Fork seam | `done` | All four makepad fork deps hoisted into [workspace.dependencies] (lockfile byte-identical), and pages.yml now READS the rev out of Cargo.toml instead of carrying its own copy — it had drifted 10 days behind (62f515dc vs 6534634a). A CI equality check would have caught the drift; deriving it means there is nothing to drift. |
 | A17 | H | Fork inventory | `open` | 44 commits / +2992−563 fork divergence inventoried only in a Cargo.toml comment; `wip:` commit in pinned lineage |
 | A18 | H | Wire contract | `open` | HTTP envelope + responses defined twice as unlinked serde types; only DocumentWrite shared |
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
@@ -53,7 +53,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A22 | H | Effort allocation | `open` | Three company-sized products + a forked framework, solo; every MVP area "partial"; channels that reach users (extension, LSP, image export) explici… |
 | A23 | H | Interop | `open` | No mermaid/plantuml import/export, no SVG/PNG export — diagrams cannot leave the toolchain |
 | A24 | H | Sustainability | `open` | Bus factor 1 with contribution actively repelled: purged single-author history, no releases, no CONTRIBUTING, stub CoC |
-| A25 | M | Licensing | `open` | MPL-2.0 repo distributes compiled MIT code (entire makepad fork) + merman (MIT OR Apache-2.0) via Pages and every exported site, with no NOTICE/THI… |
+| A25 | M | Licensing | `done` | THIRD-PARTY.md added at the repo root and embedded into every assembled site (site.rs THIRD_PARTY_FILE), with a test asserting a site cannot ship without it. cargo-deny's licenses check keeps the allow-list honest. |
 | A26 | M | Serve security | `open` | Competent core (CSPRNG token, constant-time compare, loopback default, Host/origin checks) but the token is accepted and printed as a `?token=` que… |
 | A27 | M | Surfaces | `open` | BodyWidgets show_* = five hand-copied sibling lists drifted from the 8-surface authority; compensated at 3 scattered sites; `set_behavior_canvas_vi… |
 | A28 | M | ViewOutcome | `open` | Ten-Option command bag; own comments admit each field exists because the channel couldn't express it |

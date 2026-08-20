@@ -27,6 +27,15 @@ use crate::web_artifact::EmbeddedAsset;
 /// `crates/waml-editor/src/browser_boot.rs`, so the two sides cannot drift.
 pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 
+/// Third-party notices, shipped inside every site.
+///
+/// The editor a site embeds is compiled MIT code (the makepad fork, merman),
+/// and MIT's one obligation is that its notice accompany substantial portions
+/// of the software. A site is a standalone distribution — it travels without
+/// the repository — so the notice has to travel inside it.
+const THIRD_PARTY_FILE: &str = "THIRD-PARTY.md";
+const THIRD_PARTY_NOTICE: &str = include_str!("../../../THIRD-PARTY.md");
+
 /// Where an assembled site gets its model from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SiteSource {
@@ -125,6 +134,10 @@ pub(crate) fn assemble_site(
 
     let boot_query = boot_query(&source);
     files.insert(BOOT_CONFIG_FILE.to_string(), boot_query.into_bytes());
+    files.insert(
+        THIRD_PARTY_FILE.to_string(),
+        THIRD_PARTY_NOTICE.as_bytes().to_vec(),
+    );
 
     if let SiteSource::Static {
         bundle,
@@ -268,6 +281,23 @@ mod tests {
             String::from_utf8(site["index.html"].clone()).unwrap(),
             index_html()
         );
+    }
+
+    /// A site is a standalone distribution of compiled MIT code. If the notice
+    /// does not travel inside it, the obligation is unmet the moment anyone
+    /// copies the directory somewhere.
+    #[test]
+    fn every_site_carries_the_third_party_notice() {
+        let artifact = artifact(vec![asset("index.html", &index_html())]);
+
+        let site = assemble_site(&artifact, SiteSource::Api).unwrap();
+
+        let notice = site
+            .get("THIRD-PARTY.md")
+            .expect("a site must ship its third-party notice");
+        let notice = std::str::from_utf8(notice).unwrap();
+        assert!(notice.contains("makepad"), "the notice must cover makepad");
+        assert!(notice.contains("MIT"), "the notice must carry the licence");
     }
 
     #[test]

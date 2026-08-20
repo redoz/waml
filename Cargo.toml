@@ -21,6 +21,34 @@ tower-lsp-server = "0.23"
 url = "2.5"
 proptest = "=1.8.0"
 unicode-segmentation = "1.12"
+# Every dependency on the makepad fork is pinned here and nowhere else, so the
+# rev cannot drift between manifests. .github/workflows/pages.yml reads the rev
+# out of this file rather than carrying its own copy.
+# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch `waml` -- the
+# single integration line every fork change lands on from here; it was cut at
+# the tip of fix/web-batched-shader-link, the richest lineage, and the other
+# waml-* branches are pre-rebase leftovers, so do NOT pin to them. Pin a SHA on
+# `waml`, never the branch name: a moving ref would drift builds silently.
+# `waml` adds a read-only accessor for FileTree's animated folder-open amount,
+# so the tree panel's fold chevron rotates off the real animation instead of a
+# second timer. Below it, fix/web-batched-shader-link stacks two web boot fixes on
+# fix/layout-params-wasm: web takes the shared DrawTextSlug helper instead of inlining the
+# curve solver into every text shader (~40s to ~9s), and web now issues every shader link
+# before querying any of them so ANGLE compiles them in parallel (~9s to ~1.8s) —
+# which is the line rebased onto the newer upstream dev — NOT waml-scroll-occlusion, whose
+# remote tip is a pre-rebase leftover from 07-20 —
+# stacked on waml-fxc-opt, adds handled_x/handled_y scroll occlusion to hits() so overlays
+# and popups stop bleeding scroll into the canvas; also carries two web fixes — Startup
+# dispatched before the window pool is indexed, and separator-agnostic crate manifest paths
+# so wasm built on a Windows host still resolves fonts, and opt-in single-touch mouse
+# emulation so touch devices reach the raw-MouseEvent chrome, and a resize that reallocs the
+# WebGL buffer and repaints in the same task so Edge stops flashing black through a window
+# drag). Also includes Markdown heading anchors, fragment scrolling, and app-owned Markdown
+# vertical scroll snapshot/restore from waml-history-scroll-anchors-current. The FileTree
+# fold and draw hooks were reverted once waml took ownership of the tree row list.
+# rev is the reproducible pin; survives upstream force-push / branch renames.
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "6534634a60aa8101fa93bb1ddf0edde6949e520a" }
+makepad-test = { git = "https://github.com/redoz/makepad.git", rev = "6534634a60aa8101fa93bb1ddf0edde6949e520a" }
 unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "6534634a60aa8101fa93bb1ddf0edde6949e520a" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 brotli = "8"
