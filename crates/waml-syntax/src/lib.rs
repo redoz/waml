@@ -1,4 +1,12 @@
-//! Lossless, domain-neutral syntax primitives.
+//! Lossless syntax primitives for Markdown and the WAML islands inside it.
+//!
+//! The core — green/red trees, text, incremental reparse — is domain-neutral
+//! and parameterised over a `SyntaxLanguage`. The crate as a whole is not: it
+//! exports `WamlLanguageIsland`, `WamlSectionKind` and
+//! `OkfSyntaxDiagnosticCode`, because island recognition has to happen during
+//! the one Markdown parse rather than in a second pass above it. That is a
+//! deliberate trade, not an accident, and the headline used to claim
+//! otherwise.
 
 mod annotation;
 mod ast;

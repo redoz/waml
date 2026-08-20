@@ -3,15 +3,23 @@
 //! document; a [`Bundle`] separates concepts, indexes, logs, and directories.
 //!
 //! Hard rule: this module MUST NOT import any UML type (`ElementType`,
-//! `RelationshipKind`, `UmlMetaclass`, …). The dependency is one-way — the WAML
-//! tier depends on `okf`, never the reverse — so a later `okf-core` crate split
-//! stays mechanical.
+//! `RelationshipKind`, `UmlMetaclass`, …) or any `crate::view` type. The
+//! dependency is one-way — the WAML and view tiers depend on `okf`, never the
+//! reverse — so a later `okf-core` crate split stays mechanical.
+//!
+//! The rule used to be transitively false: `Index` reached up into
+//! `view::decl::ViewDecl`, and `resolved_view` took the view tier's middleware
+//! registry. `ViewDecl` now lives in `okf::decl` (it is authored frontmatter,
+//! not view machinery) and `resolved_view` is a free function in
+//! `view::chain`. What remains is the `view:` *declaration* — inert data the
+//! substrate stores and never interprets.
 
 use std::fmt;
 
 use crate::frontmatter::Frontmatter;
 use crate::source::{SourceBundle, SourceSlice};
 
+pub mod decl;
 pub(crate) mod lower;
 pub mod ops;
 pub(crate) mod shell;
@@ -391,7 +399,7 @@ pub struct Index {
     /// Locally declared profile. What is in EFFECT is `Bundle::resolved_profile`.
     pub profile: Option<String>,
     /// Locally declared view chain. What is in EFFECT is `Bundle::resolved_view`.
-    pub view: Option<crate::view::decl::ViewDecl>,
+    pub view: Option<crate::okf::decl::ViewDecl>,
     /// Producer keys with no dedicated field. Preserved verbatim on round-trip.
     pub extra: Frontmatter,
 }
@@ -547,37 +555,6 @@ impl Bundle {
             }
             current = current.parent()?;
         }
-    }
-
-    /// The chain in EFFECT for `directory`: (1) its own `view:` declaration,
-    /// else (2) the inherited profile's `default_view`, else (3) the
-    /// root-only chain. `Chain::build` handles an unknown middleware name;
-    /// diagnostics ride along with the returned chain.
-    pub fn resolved_view(
-        &self,
-        directory: &str,
-        registry: &crate::view::chain::MiddlewareRegistry,
-        mask: &crate::view::mask::ProjectionMask,
-    ) -> (
-        crate::view::chain::Chain,
-        Vec<crate::diagnostic::Diagnostic>,
-    ) {
-        use crate::view::chain::Chain;
-
-        let Some(index) = self.index(directory) else {
-            return (Chain::root_only(registry), Vec::new());
-        };
-        if let Some(decl) = &index.view {
-            return Chain::build(decl, registry, index, mask);
-        }
-        if let Some(decl) = self
-            .resolved_profile(directory)
-            .and_then(crate::profile::profile)
-            .and_then(|profile_def| profile_def.default_view)
-        {
-            return Chain::build(&decl, registry, index, mask);
-        }
-        (Chain::root_only(registry), Vec::new())
     }
 }
 
@@ -1622,9 +1599,9 @@ mod tests {
 
     mod resolved_profile_and_view {
         use super::*;
+        use crate::okf::decl::{ViewDecl, ViewEntry};
         use crate::profile::{register_test_profile, ProfileDef};
         use crate::view::chain::MiddlewareRegistry;
-        use crate::view::decl::{ViewDecl, ViewEntry};
         use crate::view::projection::{
             Next, PassThrough, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved,
             Unsupported,
@@ -1748,7 +1725,8 @@ mod tests {
             )])
             .unwrap();
             let local_bundle = Bundle::parse(&local_source).unwrap();
-            let (chain, diags) = local_bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &local_bundle,
                 "/",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),
@@ -1760,7 +1738,8 @@ mod tests {
             // whose surface is the root view's own.
             let bare_source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
             let bare_bundle = Bundle::parse(&bare_source).unwrap();
-            let (chain, diags) = bare_bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &bare_bundle,
                 "/",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),
@@ -1787,7 +1766,8 @@ mod tests {
 
             // The profile's default is real (drives the marker if step 1 is
             // skipped) -- but the local `view:` wins, so "local" wins out.
-            let (chain, diags) = bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &bundle,
                 "/",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),
@@ -1812,7 +1792,8 @@ mod tests {
             .unwrap();
             let bundle = Bundle::parse(&source).unwrap();
 
-            let (chain, diags) = bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &bundle,
                 "/",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),
@@ -1827,7 +1808,8 @@ mod tests {
             let bundle = Bundle::parse(&source).unwrap();
             let registry = registry();
 
-            let (chain, diags) = bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &bundle,
                 "/nowhere",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),
@@ -1854,7 +1836,8 @@ mod tests {
             .unwrap();
             let bundle = Bundle::parse(&source).unwrap();
 
-            let (chain, diags) = bundle.resolved_view(
+            let (chain, diags) = crate::view::chain::resolved_view(
+                &bundle,
                 "/",
                 &registry,
                 &crate::view::mask::ProjectionMask::default(),

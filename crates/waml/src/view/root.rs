@@ -1130,7 +1130,8 @@ mod tests {
         let projection_ctx = ctx(&directory, &bundle, &params, &descend);
 
         let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
-        let (chain, build_diags) = bundle.resolved_view(
+        let (chain, build_diags) = crate::view::chain::resolved_view(
+            &bundle,
             "/",
             &registry,
             &crate::view::mask::ProjectionMask::default(),
@@ -1227,7 +1228,8 @@ mod tests {
         let projection_ctx = ctx(&directory, &bundle, &params, &descend);
 
         let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
-        let (chain, build_diags) = bundle.resolved_view(
+        let (chain, build_diags) = crate::view::chain::resolved_view(
+            &bundle,
             "/",
             &registry,
             &crate::view::mask::ProjectionMask::default(),

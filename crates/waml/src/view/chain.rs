@@ -8,13 +8,13 @@ use std::sync::Arc;
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::okf;
 
-use super::decl::ViewDecl;
 use super::mask::ProjectionMask;
 use super::projection::{
     Next, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved, Unsupported,
 };
 use super::row::{Row, RowId, RowPath, RowTarget, ViewId};
 use super::surface::SurfaceId;
+use crate::okf::decl::ViewDecl;
 
 /// Which bound the runner's descent guard tripped on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -801,11 +801,42 @@ impl ProjectConfig {
     }
 }
 
+/// The chain in EFFECT for `directory`: (1) its own `view:` declaration, else
+/// (2) the inherited profile's `default_view`, else (3) the root-only chain.
+/// `Chain::build` handles an unknown middleware name; diagnostics ride along
+/// with the returned chain.
+///
+/// This reads an OKF bundle but belongs to the view tier — it needs the
+/// middleware registry, the chain, and the projection mask, none of which the
+/// substrate should know about. Keeping it here is what lets `okf` stay free
+/// of the tiers above it.
+pub fn resolved_view(
+    bundle: &crate::okf::Bundle,
+    directory: &str,
+    registry: &MiddlewareRegistry,
+    mask: &crate::view::mask::ProjectionMask,
+) -> (Chain, Vec<crate::diagnostic::Diagnostic>) {
+    let Some(index) = bundle.index(directory) else {
+        return (Chain::root_only(registry), Vec::new());
+    };
+    if let Some(decl) = &index.view {
+        return Chain::build(decl, registry, index, mask);
+    }
+    if let Some(decl) = bundle
+        .resolved_profile(directory)
+        .and_then(crate::profile::profile)
+        .and_then(|profile_def| profile_def.default_view)
+    {
+        return Chain::build(&decl, registry, index, mask);
+    }
+    (Chain::root_only(registry), Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::frontmatter::Frontmatter;
-    use crate::view::decl::ViewEntry;
+    use crate::okf::decl::ViewEntry;
     use crate::view::projection::{PassThrough, Unresolved};
     use crate::view::row::{RowPath, RowTarget};
 
@@ -1794,9 +1825,13 @@ mod tests {
         fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
             move |dir: &okf::Directory| {
                 let registry = MiddlewareRegistry::new();
-                bundle
-                    .resolved_view(dir.address.as_str(), &registry, &ProjectionMask::default())
-                    .0
+                crate::view::chain::resolved_view(
+                    bundle,
+                    dir.address.as_str(),
+                    &registry,
+                    &ProjectionMask::default(),
+                )
+                .0
             }
         }
 
@@ -1804,8 +1839,12 @@ mod tests {
             bundle: &okf::Bundle,
             registry: &MiddlewareRegistry,
         ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
-            let (chain, mut build_diags) =
-                bundle.resolved_view("/", registry, &ProjectionMask::default());
+            let (chain, mut build_diags) = crate::view::chain::resolved_view(
+                bundle,
+                "/",
+                registry,
+                &ProjectionMask::default(),
+            );
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle
                 .index("/")
@@ -2063,9 +2102,13 @@ mod tests {
         fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
             move |dir: &okf::Directory| {
                 let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-                bundle
-                    .resolved_view(dir.address.as_str(), &registry, &ProjectionMask::default())
-                    .0
+                crate::view::chain::resolved_view(
+                    bundle,
+                    dir.address.as_str(),
+                    &registry,
+                    &ProjectionMask::default(),
+                )
+                .0
             }
         }
 
@@ -2073,8 +2116,12 @@ mod tests {
             bundle: &okf::Bundle,
             registry: &MiddlewareRegistry,
         ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
-            let (chain, mut build_diags) =
-                bundle.resolved_view("/", registry, &ProjectionMask::default());
+            let (chain, mut build_diags) = crate::view::chain::resolved_view(
+                bundle,
+                "/",
+                registry,
+                &ProjectionMask::default(),
+            );
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle
                 .index("/")
@@ -2241,8 +2288,12 @@ mod tests {
         fn a_hidden_path_does_not_resolve_through_the_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, build_diags) =
-                bundle.resolved_view("/", &registry, &ProjectionMask::default());
+            let (chain, build_diags) = crate::view::chain::resolved_view(
+                &bundle,
+                "/",
+                &registry,
+                &ProjectionMask::default(),
+            );
             assert!(build_diags.is_empty());
 
             let directory = bundle.directory("/").unwrap().clone();
@@ -2280,8 +2331,12 @@ mod tests {
         fn a_hidden_path_cannot_be_edited_through_the_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, build_diags) =
-                bundle.resolved_view("/", &registry, &ProjectionMask::default());
+            let (chain, build_diags) = crate::view::chain::resolved_view(
+                &bundle,
+                "/",
+                &registry,
+                &ProjectionMask::default(),
+            );
             assert!(build_diags.is_empty());
 
             let directory = bundle.directory("/").unwrap().clone();
@@ -2312,7 +2367,12 @@ mod tests {
         fn a_surviving_row_still_edits_through_the_hide_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, _) = bundle.resolved_view("/", &registry, &ProjectionMask::default());
+            let (chain, _) = crate::view::chain::resolved_view(
+                &bundle,
+                "/",
+                &registry,
+                &ProjectionMask::default(),
+            );
 
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle.index("/").unwrap().extra.clone();
@@ -2390,7 +2450,12 @@ mod tests {
                 "references/** is hidden -- only orders survives"
             );
 
-            let (chain, _) = fresh.resolved_view("/", &registry, &ProjectionMask::default());
+            let (chain, _) = crate::view::chain::resolved_view(
+                &fresh,
+                "/",
+                &registry,
+                &ProjectionMask::default(),
+            );
             let directory = fresh.directory("/").unwrap().clone();
             let params = fresh.index("/").unwrap().extra.clone();
             let descend = descend_for(&fresh);

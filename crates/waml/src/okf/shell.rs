@@ -693,12 +693,12 @@ fn parse_authored_index(shell: &ShellDocument<'_>, directory: DirectoryAddress) 
         .filter(|profile| !profile.is_empty())
         .map(str::to_owned);
     // Line tracking for `view:` spans is not yet threaded through
-    // `Frontmatter` (see `crate::view::decl::ViewEntry::line`); 0 is a
+    // `Frontmatter` (see `crate::okf::decl::ViewEntry::line`); 0 is a
     // placeholder until a later task carries real source lines.
     let view = shell
         .frontmatter
         .get("view")
-        .and_then(|value| crate::view::decl::parse_view_decl(value, 0));
+        .and_then(|value| crate::okf::decl::parse_view_decl(value, 0));
     let extra = Frontmatter {
         entries: shell
             .frontmatter

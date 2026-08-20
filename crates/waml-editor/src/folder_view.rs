@@ -583,7 +583,8 @@ mod tests {
         ]);
         let bundle = &prepared.okf().bundle;
 
-        let (_, tree_diagnostics) = bundle.resolved_view(
+        let (_, tree_diagnostics) = waml::view::chain::resolved_view(
+            bundle,
             "/",
             &crate::folder_projection::core_registry(),
             &waml::view::mask::ProjectionMask::default(),

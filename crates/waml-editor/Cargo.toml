@@ -5,7 +5,7 @@ version = "0.0.0"
 edition.workspace = true
 rust-version = "1.95"
 license.workspace = true
-description = "Native, read-only GPU viewer for WAML/OKF diagrams."
+description = "Native GPU editor for WAML/OKF documents and diagrams."
 # Not published: every crate here refers to its siblings by path, which crates.io
 # would reject. Flip this when a crate is actually released.
 publish = false

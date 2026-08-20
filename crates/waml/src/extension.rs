@@ -81,8 +81,8 @@ mod tests {
     use super::*;
     use crate::frontmatter::Frontmatter;
     use crate::okf;
+    use crate::okf::decl::{ViewDecl, ViewEntry};
     use crate::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
-    use crate::view::decl::{ViewDecl, ViewEntry};
     use crate::view::projection::ProjectionCtx;
 
     fn dir() -> okf::Directory {

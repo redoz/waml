@@ -1,6 +1,6 @@
 use crate::frontmatter::{FmValue, Frontmatter};
+use crate::okf::decl::ViewDecl;
 use crate::source::{BundlePath, SourceBundle};
-use crate::view::decl::ViewDecl;
 
 /// True if `path`'s final `/`-separated segment is `index.md`,
 /// case-insensitively. The one predicate every index-basename check in this
@@ -419,11 +419,11 @@ mod tests {
     fn render_index_emits_a_chain_as_a_flow_sequence() {
         let view = ViewDecl {
             entries: vec![
-                crate::view::decl::ViewEntry {
+                crate::okf::decl::ViewEntry {
                     raw: "hide-refs".into(),
                     line: 0,
                 },
-                crate::view::decl::ViewEntry {
+                crate::okf::decl::ViewEntry {
                     raw: "group-by-tag".into(),
                     line: 0,
                 },

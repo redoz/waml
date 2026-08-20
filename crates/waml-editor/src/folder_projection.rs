@@ -133,7 +133,7 @@ pub fn chain_for(
     mask: &ProjectionMask,
     registry: &MiddlewareRegistry,
 ) -> (Chain, Vec<Diagnostic>) {
-    analysis.bundle.resolved_view(directory, registry, mask)
+    waml::view::chain::resolved_view(&analysis.bundle, directory, registry, mask)
 }
 
 /// Run `directory`'s chain under `mask` and hand back the chain itself, its

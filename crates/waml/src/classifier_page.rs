@@ -1,8 +1,10 @@
 //! A pure markdown page for one classifier: prose identity, a definition list
 //! of properties, and every relationship written as a directional sentence.
 //!
-//! Model in, markdown out. No editor dependency — a CLI subcommand can emit
-//! the identical page.
+//! Model in, markdown out, with no editor dependency — so a CLI subcommand
+//! *could* emit the identical page. None does today: the only caller is the
+//! editor's classifier preview view, and no test pins CLI/editor parity. Wire
+//! the subcommand or drop this paragraph rather than leaving the claim to age.
 
 use crate::model::{
     Attribute, ElementType, Model, Node, RelationshipKind, UmlMetaclass, Visibility,

@@ -6,7 +6,7 @@
 //! `default_view` is now `Option<ViewDecl>` to match the middleware-chain
 //! design: `Chain`-shaped defaults, not a bespoke view enum.
 
-use crate::view::decl::ViewDecl;
+use crate::okf::decl::ViewDecl;
 
 /// One known profile: its exact name, its optional default view chain, and
 /// the folder glyph a directory draws when it declares this profile.

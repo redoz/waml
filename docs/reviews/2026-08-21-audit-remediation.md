@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`███░░░░░░░░░░░░░░░░░░░░░` **6/53 closed** — 46 open, 1 wip, 6 done
+`████░░░░░░░░░░░░░░░░░░░░` **9/53 closed** — 42 open, 2 wip, 9 done
 
 ## Findings
 
@@ -39,7 +39,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
 | A09 | H | Doc contract | `done` | Re-gated by A01: the contract's command now reports quarantined documents and analysis failure. Verified after the fix — docs/waml is genuinely clean, not silently clean. CI step ordering is tracked separately as A35. |
 | A10 | H | Supply chain | `done` | cargo-deny (advisories+licenses+bans+sources) now runs as a CI job with deny.toml; it immediately found and fixed two real quick-xml DoS advisories (RUSTSEC-2026-0194/0195) and a yanked roughr-merman, and every Action is SHA-pinned with the tag in a trailing comment. The ttf-parser/rustybuzz unmaintained advisories are ignored with a written reason (same SVG text stack, no safe upgrade). Single-account risk is A24/A48, a decision row. |
-| A11 | H | Layering | `open` | okf substrate transitively depends on the UML tier; the "mechanical okf-core split" header claim is fiction |
+| A11 | H | Layering | `done` | Made true rather than deleted: ViewDecl moved to okf::decl (it is authored frontmatter, not view machinery) and Bundle::resolved_view became a free function in view::chain. Production okf now imports nothing from the view/UML tiers, enforced by tests/okf_layering.rs (verified against a deliberate violation). |
 | A12 | H | Layering | `open` | analysis.rs is a hub with three mutual-dependency directions; OkfAnalysis back-patched with UML data |
 | A13 | H | Cohesion | `open` | uml/analysis.rs is a 4,610-line dumping ground: extraction + validation + projection + orchestration; 415- and 405-line functions |
 | A14 | H | Performance ceiling | `open` | Every edit triggers bundle-wide semantic reanalysis — the project's own open P2 and the real scaling limit; incremental parsing feeds non-increment… |
@@ -78,7 +78,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A47 | L | List primitives | `open` | Three copy-adapted scrollbar geometries with duplicated tests; list widgets built by lineage copying |
 | A48 | L | Arc-identity rename | `open` | Move ops must preserve text Arcs or Renamed degrades to Removed+Inserted; documented, unenforced |
 | A49 | L | Property spread | `open` | Edit-op layer example-based only; no apply→write→reparse round-trip property |
-| A50 | L | Extension packaging | `open` | No vsce/ovsx/bundler; bundled-binary resolution self-documented as dead |
+| A50 | L | Extension packaging | `done` | waml-editor's description now says what it is — a native GPU editor, not a read-only viewer. |
 | A51 | L | Manifest honesty | `open` | waml-editor's description says "read-only GPU viewer" while shipping two write backends. (The workspace-1.80/editor-1.95 MSRV split is the intended… |
-| A52 | L | classifier_page | `open` | "CLI can emit the identical page" has no CLI consumer |
-| A53 | L | Parser fn size | `open` | Island parser fns at 326/277/267/263 lines — defensible, trending toward the uml/analysis.rs failure mode |
+| A52 | L | classifier_page | `wip` | waml-syntax's 'domain-neutral' headline now states the real trade (island recognition happens inside the one Markdown parse). The nav.rs/navigation.rs naming collision and the NavCategory/RowKind mirror ride with the shell refactor (A15). |
+| A53 | L | Parser fn size | `done` | The 'a CLI subcommand can emit the identical page' claim now says no CLI consumer exists and no parity test pins it. |

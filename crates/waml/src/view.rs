@@ -3,7 +3,6 @@
 //! `docs/superpowers/specs/2026-08-05-folder-view-middleware-design.md`.
 
 pub mod chain;
-pub mod decl;
 pub(crate) mod hide;
 pub mod kind;
 pub mod mask;
