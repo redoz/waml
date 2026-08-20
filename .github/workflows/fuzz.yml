@@ -17,6 +17,9 @@ on:
 
 permissions:
   contents: read
+  # The scheduled run opens an issue when a target crashes; without this a red
+  # weekly run is visible only to whoever thinks to look at the Actions tab.
+  issues: write
 
 jobs:
   fuzz:
@@ -40,6 +43,18 @@ jobs:
         with:
           workspaces: fuzz
 
+      # Without this the corpus libFuzzer discovers is thrown away every run,
+      # so each weekly run restarts from the six checked-in seeds and re-derives
+      # the same shallow coverage. The key rotates per run so the cache is
+      # append-only; restore-keys pull the most recent previous corpus.
+      - name: Restore fuzz corpus
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
@@ -59,6 +74,44 @@ jobs:
           cargo fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} \
             fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }} \
             -- -max_total_time=${{ github.event.inputs.max_total_time || 300 }}
+
+      - name: Report a crash
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const target = context.payload.inputs?.target || '${{ matrix.target }}';
+            const title = `Fuzz target ${target} is failing`;
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'fuzz',
+            });
+            const body = [
+              `The scheduled fuzz run for \`${target}\` failed.`,
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'The crashing input is attached to that run as an artifact.',
+            ].join('\n');
+            const match = existing.find((issue) => issue.title === title);
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['fuzz'],
+              });
+            }
 
       - name: Upload crash artifacts
         if: failure()

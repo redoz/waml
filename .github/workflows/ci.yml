@@ -64,14 +64,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: WAML documentation contract
-        shell: bash
-        run: |
-          cargo run -p waml-cli -- check docs/waml
-          cargo run -p waml-cli -- fmt --check docs/waml
-          cargo run -p waml-cli -- index docs/waml --check
-          node scripts/check-waml-doc-contract.mjs docs/waml
-
       - name: Rust cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
@@ -135,6 +127,35 @@ jobs:
         run: pnpm lint
         working-directory: editors/vscode
 
+  doc-contract:
+    # docs/waml is dogfooded as a live bundle, and this is the gate that keeps
+    # it honest. It runs as its own job rather than as the first step of
+    # build-test: there it executed before anything had compiled under test, so
+    # a failure here masked every code failure behind it — the exact ordering
+    # that already hid a broken CI for three days.
+    name: documentation contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: WAML documentation contract
+        run: |
+          cargo run -p waml-cli -- check docs/waml
+          cargo run -p waml-cli -- fmt --check docs/waml
+          cargo run -p waml-cli -- index docs/waml --check
+          node scripts/check-waml-doc-contract.mjs docs/waml
+
   supply-chain:
     name: supply chain
     runs-on: ubuntu-latest
@@ -179,3 +200,9 @@ jobs:
 
       - name: Cargo check waml-ops-dto for wasm32
         run: cargo check -p waml-ops-dto --target wasm32-unknown-unknown
+
+      # Until this existed, waml-editor was first built for wasm at deploy
+      # time, after merge — so a wasm-breaking editor change passed PR CI and
+      # broke main's Pages deploy instead.
+      - name: Cargo check waml-editor for wasm32
+        run: cargo check -p waml-editor --target wasm32-unknown-unknown

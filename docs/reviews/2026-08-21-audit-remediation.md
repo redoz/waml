@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████░░░░░░░░░░░░░░░░░░░░` **9/53 closed** — 36 open, 2 wip, 9 done, 6 decision
+`█████░░░░░░░░░░░░░░░░░░░` **11/53 closed** — 35 open, 1 wip, 11 done, 6 decision
 
 ## Findings
 
@@ -34,7 +34,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A03 | C | Product definition | `decision` | Who adopts this and why. The audit's suggestion — agent-authored architecture docs reviewed by humans, per OKF_SPEC 1 — is unclaimed positioning, but naming the user reshapes the goal tree. |
 | A04 | C | Accessibility | `decision` | Ship a plain-HTML export beside the canvas reader. Cheap relative to what exists and product-defining while absent, but it is a new product surface, not a defect fix. |
 | A05 | C | Rendering gate | `open` | No automated rendering regression gate; pixel tool manual and unwired; in-CI screenshot test asserts file existence only. Precise platform gap: the… |
-| A06 | H | CI safety net | `wip` | Build repair landed 9ccf0e7a (cargo-fuzz pinned to the gnu host triple); it now finds real bugs. Corpus persistence and red-run notification still open. |
+| A06 | H | CI safety net | `done` | Build repair 9ccf0e7a pinned cargo-fuzz to the gnu host triple; the job now runs and has already found four real bugs. Corpus is cached per target (append-only key + restore-keys) so discovered coverage survives, and a scheduled red run opens or comments on a labelled issue instead of failing where only the Actions tab shows it. |
 | A07 | H | Data integrity | `done` | Corrected: NOT live data loss — the only wire field (AttrSet.mult) already carried skip_serializing_if and round-trips Unchanged correctly (verified). The real defect was the latent trap: serializing Unchanged emitted null, so any future field forgetting the attribute would silently turn 'leave alone' into 'delete'. Unchanged now fails to serialize with a message naming the fix; three-state round-trip pinned by test. |
 | A08 | H | Triage discipline | `open` | issues.md frozen since 2026-08-05 through heavy landing; mixes verifiably-fixed and verifiably-live P1s (verified: last commit cb64c9c0 2026-08-05) |
 | A09 | H | Doc contract | `done` | Re-gated by A01: the contract's command now reports quarantined documents and analysis failure. Verified after the fix — docs/waml is genuinely clean, not silently clean. CI step ordering is tracked separately as A35. |
@@ -62,7 +62,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A31 | M | Error handling | `open` | Two incompatible regimes: structured DiagCode vs stringly EditError/BundleError::Analysis(String)/Result<_,String> family; AnalysisError flattened… |
 | A32 | M | cfg seams | `open` | 155 target_arch cfgs, 16 files, no shared facade; markdown_extensions/mod.rs = 53 cfgs interleaving both platforms |
 | A33 | M | Dead code | `open` | ~170-190 `#[allow(dead_code)]` defeat the -D warnings gate; blanket allow on DocView trait; Peek/radial/node_design_editor compiled into the shippi… |
-| A34 | M | CI ordering | `open` | Doc-contract runs before compilation; this exact ordering already masked CI 3 days. wasm PR check omits waml-editor |
+| A34 | M | CI ordering | `done` | The documentation contract is now its own job instead of the first step of build-test, so it can no longer mask code failures behind it, and the pre-merge wasm check covers waml-editor — the crate that actually breaks the deploy (verified: it compiles for wasm32 today). |
 | A35 | M | Panic hygiene | `open` | 110-116 unwraps in the adversarial-input island parser; content-reachable expects; no catch_unwind at LSP/wasm entries |
 | A36 | M | Frontmatter grammar | `open` | YAML-subset quoting split across two crates — three quote-scanner implementations for one grammar |
 | A37 | M | UI-test harness | `open` | 3,583 lines + proc-macro crate serve 4 scenarios (~900 lines/scenario) |
