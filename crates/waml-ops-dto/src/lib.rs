@@ -1775,8 +1775,14 @@ mod tests {
     #[test]
     fn field_edit_states_round_trip_distinctly_on_the_wire() {
         let cases = [
-            (r#"{"op":"attr.set","node":"n","name":"a"}"#, FieldEdit::Unchanged),
-            (r#"{"op":"attr.set","node":"n","name":"a","mult":null}"#, FieldEdit::Clear),
+            (
+                r#"{"op":"attr.set","node":"n","name":"a"}"#,
+                FieldEdit::Unchanged,
+            ),
+            (
+                r#"{"op":"attr.set","node":"n","name":"a","mult":null}"#,
+                FieldEdit::Clear,
+            ),
             (
                 r#"{"op":"attr.set","node":"n","name":"a","mult":"0..1"}"#,
                 FieldEdit::Set("0..1".to_string()),
@@ -1791,7 +1797,10 @@ mod tests {
 
             let encoded = serde_json::to_string(&dto).expect("op re-encodes");
             let again: OpDto = serde_json::from_str(&encoded).expect("re-encoded op parses");
-            let OpDto::AttrSet { mult: ref again, .. } = again else {
+            let OpDto::AttrSet {
+                mult: ref again, ..
+            } = again
+            else {
                 panic!("expected attr.set");
             };
             assert_eq!(again, &expected, "round-tripping {json} via {encoded}");
