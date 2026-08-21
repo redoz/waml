@@ -313,27 +313,30 @@ impl Chain {
             if mask.is_masked(name) {
                 continue;
             }
-            // `hide`'s params live in the folder's index frontmatter
-            // (`ctx.params` at project time, `index.extra` here at
-            // declaration time -- the same data, see
-            // `Chain::resolve_member_surface`'s own `index.extra`
-            // read). Checked at declaration time, not deferred to
-            // `project`, so a missing/malformed `hide:` degrades the
-            // whole chain up front with a diagnostic that names the
-            // `view:` entry, exactly like an unknown middleware name.
-            // A masked `hide` never reaches here -- the mask `continue`
-            // above skipped it, so its params are not checked and a
-            // malformed `hide:` cannot collapse a chain whose `hide` is
-            // switched off.
-            if *name == "hide" {
-                if let Err(message) = super::hide::parse_hide_globs(&index.extra) {
-                    let diagnostic =
-                        super::hide::invalid_params_diagnostic(message, &file, entry.line);
-                    return (Chain::root_only(registry), vec![diagnostic]);
-                }
-            }
             match registry.build(name) {
                 Some(stage) => {
+                    // Params are checked at declaration time, not deferred to
+                    // `project`, so a stage that cannot be built degrades the
+                    // whole chain up front with a diagnostic naming the `view:`
+                    // entry -- exactly like an unknown middleware name. The
+                    // stage owns the rule (`Projection::validate_declaration`);
+                    // the builder does not know which middlewares have one.
+                    // `index.extra` here is the same data a stage sees as
+                    // `ctx.params` when it runs.
+                    //
+                    // A masked stage never reaches here -- the mask `continue`
+                    // above skipped it, so its params are not checked and a
+                    // malformed param cannot collapse a chain whose stage is
+                    // switched off.
+                    if let Err(message) = stage.validate_declaration(&index.extra) {
+                        let diagnostic = Diagnostic::new(
+                            DiagCode::InvalidViewParams,
+                            message,
+                            file.clone(),
+                            entry.line,
+                        );
+                        return (Chain::root_only(registry), vec![diagnostic]);
+                    }
                     ids.push(view_id);
                     stages.push(stage);
                 }
@@ -1067,6 +1070,104 @@ mod tests {
         assert_eq!(chain.ids().len(), 0);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::UnknownViewMiddleware);
+    }
+
+    /// A stage that refuses its declaration unless `demands:` is present.
+    /// `Chain::build` has never heard of it, which is the point: the check has
+    /// to reach it through the trait rather than through a name comparison.
+    struct Demanding;
+
+    impl Projection for Demanding {
+        fn project(
+            &self,
+            ctx: &ProjectionCtx<'_>,
+            next: Next<'_>,
+        ) -> Result<Vec<Row>, ProjectionError> {
+            next.project(ctx)
+        }
+
+        fn resolve(
+            &self,
+            _ctx: &ProjectionCtx<'_>,
+            _path: &RowPath,
+        ) -> Result<Vec<Row>, Unresolved> {
+            Err(Unresolved)
+        }
+
+        fn apply(
+            &self,
+            ctx: &ProjectionCtx<'_>,
+            path: &RowPath,
+            op: RowOp,
+            next: Next<'_>,
+        ) -> Result<Vec<okf::Op>, Unsupported> {
+            next.apply(ctx, path, op)
+        }
+
+        fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId {
+            next.surface(ctx)
+        }
+
+        fn validate_declaration(&self, params: &Frontmatter) -> Result<(), String> {
+            match params.get("demands") {
+                Some(_) => Ok(()),
+                None => Err("`demanding` requires a `demands:` param".to_string()),
+            }
+        }
+    }
+
+    fn registry_with_demanding() -> MiddlewareRegistry {
+        let mut registry = core_registry_for_tests();
+        registry.register("demanding", || Box::new(Demanding));
+        registry
+    }
+
+    /// The declaration rule belongs to the stage, not to the builder.
+    #[test]
+    fn any_stage_can_refuse_its_declaration_not_only_hide() {
+        let registry = registry_with_demanding();
+
+        let (chain, diags) = Chain::build(
+            &decl(&["demanding"]),
+            &registry,
+            &index(),
+            &ProjectionMask::default(),
+        );
+        assert_eq!(chain.ids().len(), 0, "a refused declaration collapses");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, DiagCode::InvalidViewParams);
+
+        let mut satisfied = index();
+        satisfied.extra.entries.push((
+            "demands".to_string(),
+            crate::frontmatter::FmValue::Str("yes".to_string()),
+        ));
+        let (chain, diags) = Chain::build(
+            &decl(&["demanding"]),
+            &registry,
+            &satisfied,
+            &ProjectionMask::default(),
+        );
+        assert_eq!(chain.ids().len(), 1, "params present -- chain builds");
+        assert!(diags.is_empty());
+    }
+
+    /// A masked stage is never built, so it is never asked -- its params
+    /// cannot collapse a chain the reader switched it off in.
+    #[test]
+    fn a_masked_stage_is_not_asked_to_validate() {
+        let registry = registry_with_demanding();
+        let (chain, diags) = Chain::build(
+            &decl(&["demanding", "index"]),
+            &registry,
+            &index(),
+            &ProjectionMask::from_names(["demanding"]),
+        );
+        assert!(
+            diags.is_empty(),
+            "switched off by the reader -- params not checked"
+        );
+        assert_eq!(chain.ids().len(), 1, "the rest of the chain survives");
     }
 
     #[test]

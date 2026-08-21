@@ -141,6 +141,23 @@ pub trait Projection {
     fn occludes(&self, _ctx: &ProjectionCtx<'_>, _path: &RowPath) -> bool {
         false
     }
+
+    /// Reject a `view:` declaration whose params this stage cannot work with,
+    /// at declaration time rather than at project time.
+    ///
+    /// `params` is the folder's index frontmatter — the same data a stage sees
+    /// as `ctx.params` when it runs. An `Err` collapses the whole chain with a
+    /// diagnostic naming the `view:` entry, exactly like an unknown middleware
+    /// name: a chain that cannot be built should say so up front, not project
+    /// a silently wrong listing.
+    ///
+    /// Default `Ok`: a stage with no declaration-time requirement has nothing
+    /// to check. Implement it where the requirement exists — that keeps the
+    /// rule next to the stage that owns it, instead of in the chain builder
+    /// name-checking particular middlewares.
+    fn validate_declaration(&self, _params: &Frontmatter) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Identity middleware — forwards everything to the rest of the chain.

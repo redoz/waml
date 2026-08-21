@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████████░░░░░░░░░░░░░░░░` **18/53 closed** — 27 open, 1 wip, 18 done, 7 decision
+`█████████░░░░░░░░░░░░░░░` **19/53 closed** — 26 open, 1 wip, 19 done, 7 decision
 
 ## Findings
 
@@ -66,7 +66,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A35 | M | Panic hygiene | `open` | 110-116 unwraps in the adversarial-input island parser; content-reachable expects; no catch_unwind at LSP/wasm entries |
 | A36 | M | Frontmatter grammar | `open` | YAML-subset quoting split across two crates — three quote-scanner implementations for one grammar |
 | A37 | M | UI-test harness | `open` | 3,583 lines + proc-macro crate serve 4 scenarios (~900 lines/scenario) |
-| A38 | M | Chain layering | `open` | Chain::build name-checks "hide" to validate params inline |
+| A38 | M | Chain layering | `done` | Chain::build no longer name-checks 'hide'. Projection::validate_declaration is a trait hook defaulting to Ok, so a stage owns its own declaration-time rule and the builder knows nothing about which middlewares have one; hide implements it over parse_hide_globs. Masking still skips the check, because a masked stage is never built. Two tests pin the layering, and the generic one was confirmed to FAIL against the old name-check. |
 | A39 | M | Planning hygiene | `open` | 74 active plans mixing implemented/abandoned/horizon; atproto collab plan (unstarted, MVP-contradicting) in the active queue |
 | A40 | M | Incremental parser | `open` | Ω(n) per-edit floor (≈4 full-document passes); zero reparse benchmarks for 95K chars of machinery; multi-section edits silently full-reparse — and… |
 | A41 | M | Workspace hygiene | `wip` | 65 fully-merged local branches deleted (100 -> 35 refs); the 15 unmerged branches, 16 untouched stashes and the orphaned worktree husk are now inventoried in docs/reviews/workspace-inventory.md. Stashes are deliberately untouched — only their author can judge an interrupted thought. Root .test_out5.log removed. OWNER DECISION: land or delete the 15 unmerged branches, and drop the stashes that are superseded. |

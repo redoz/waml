@@ -16,7 +16,6 @@
 //! hidden path must open through the raw OKF layer instead of the declared
 //! chain, or clicking the result would silently do nothing.
 
-use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::frontmatter::{FmValue, Frontmatter};
 use crate::okf;
 
@@ -45,15 +44,6 @@ pub(crate) fn parse_hide_globs(params: &Frontmatter) -> Result<Vec<String>, Stri
         }
         Some(_) => Err("`hide` must be a list of glob strings".to_string()),
     }
-}
-
-/// Build the declaration-time diagnostic `Chain::build` attaches when
-/// `hide`'s params fail [`parse_hide_globs`] -- spanned on the `view:` entry
-/// that named this middleware (there is no finer-grained span in this
-/// diagnostic model; see the other `view:` entry diagnostics in
-/// `super::chain`).
-pub(crate) fn invalid_params_diagnostic(message: String, file: &str, line: usize) -> Diagnostic {
-    Diagnostic::new(DiagCode::InvalidViewParams, message, file.to_string(), line)
 }
 
 /// A minimal glob matcher over a `/`-joined path: `*` matches a run of
@@ -160,6 +150,12 @@ fn matches_any(globs: &[String], row: &Row) -> bool {
 pub(crate) struct Hide;
 
 impl Projection for Hide {
+    /// `hide`'s globs live in the folder's index frontmatter, so a missing or
+    /// malformed `hide:` is a declaration failure, not a projection failure.
+    fn validate_declaration(&self, params: &Frontmatter) -> Result<(), String> {
+        parse_hide_globs(params).map(|_globs| ())
+    }
+
     fn project(
         &self,
         ctx: &ProjectionCtx<'_>,
