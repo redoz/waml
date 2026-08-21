@@ -972,26 +972,29 @@ fn frontmatter_entries(source: &str, op: &str) -> Result<Vec<(String, Range<usiz
     Ok(entries)
 }
 
+/// The decoded value of a frontmatter scalar, read through the parser rather
+/// than re-split by hand.
+///
+/// This used to take the entry's line and `split_once(':')` it, then decode the
+/// remainder with a local unquoting routine — a second, hand-rolled reading of a
+/// grammar the parser already owns. That copy understood only double quotes and
+/// two escapes, so a single-quoted scalar came back still wearing its quotes,
+/// while the `okf` side of this same crate read the same frontmatter correctly
+/// through the tree.
 fn frontmatter_value(source: &str, wanted: &str, op: &str) -> Result<Option<String>, EditError> {
-    for (key, range) in frontmatter_entries(source, op)? {
-        if key == wanted {
-            let line = source[range].trim_end_matches(['\r', '\n']);
-            return Ok(line
-                .split_once(':')
-                .map(|(_, value)| decode_scalar(value.trim())));
+    let parsed = shell(source, op)?;
+    for frontmatter in parsed
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .filter(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+    {
+        if let Some(entries) = crate::frontmatter::parse_closed_syntax(&frontmatter) {
+            return Ok(entries.get_str(wanted).map(str::to_owned));
         }
     }
     Ok(None)
-}
-
-fn decode_scalar(value: &str) -> String {
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        value[1..value.len() - 1]
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\")
-    } else {
-        value.to_owned()
-    }
 }
 
 fn frontmatter_number(value: &str) -> bool {

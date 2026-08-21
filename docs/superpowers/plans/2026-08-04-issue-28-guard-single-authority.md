@@ -28,6 +28,14 @@ NOT DONE.** Two independent extractors survive:
 `crates/waml/src/uml/lower.rs:909 fn frontmatter_value`, the latter still
 `split_once(':')`-based with its own `decode_scalar` (line 921).
 
+**Task C — one frontmatter authority: DONE (2026-08-21).** `uml/lower.rs`'s
+`frontmatter_value` read the entry's line, split it on `:` and unquoted the
+remainder with a local routine that knew only double quotes; it now reads
+through `frontmatter::parse_closed_syntax`, the same authority the `okf` side
+uses. A single-quoted title reached a relationship line still wearing its
+quotes — pinned by `crates/waml/tests/frontmatter_authority.rs`, confirmed to
+fail against the old reading.
+
 **Task D — strengthen the debug oracle: DONE (e1b31d23).** The island-count
 `debug_assert_eq` is gone; a debug-only lockstep green-tree comparison
 (`incremental::first_structural_divergence`) checks kind, width, child count,
