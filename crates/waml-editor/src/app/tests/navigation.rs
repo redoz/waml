@@ -2241,8 +2241,9 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
         "sales/customer"
     );
     let pending_after_first = app
-        .pending_anchor_restore
-        .clone()
+        .anchor_restore
+        .peek()
+        .cloned()
         .expect("HistoryTraversal with a non-None anchor schedules a deferred restore");
     assert_eq!(
         pending_after_first.document.concept_id(),
@@ -2272,8 +2273,9 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     // The second traversal supersedes the first pending restore with a new
     // one (for sales/order) at a newer generation.
     let pending_after_second = app
-        .pending_anchor_restore
-        .clone()
+        .anchor_restore
+        .peek()
+        .cloned()
         .expect("second HistoryTraversal schedules its own deferred restore");
     assert_eq!(
         pending_after_second.document.concept_id(),
@@ -2282,7 +2284,7 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     assert!(pending_after_second.generation > pending_after_first.generation);
     assert_eq!(
         pending_after_second.generation,
-        app.anchor_restore_generation
+        app.anchor_restore.generation()
     );
 }
 
@@ -2310,16 +2312,16 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
         "sales/order"
     );
     let scheduled_generation = app
-        .pending_anchor_restore
-        .as_ref()
+        .anchor_restore
+        .peek()
         .expect("a restore is pending after two rapid traversals")
         .generation;
-    assert_eq!(scheduled_generation, app.anchor_restore_generation);
+    assert_eq!(scheduled_generation, app.anchor_restore.generation());
 
     // Simulate the deferred Draw that `app/event.rs` drives.
     app.apply_pending_anchor_restore(&mut cx);
 
-    assert!(app.pending_anchor_restore.is_none());
+    assert!(app.anchor_restore.peek().is_none());
     let refreshed = app
         .view_history
         .entry_at(0)

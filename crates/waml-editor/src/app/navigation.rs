@@ -25,6 +25,71 @@ pub(super) struct PendingAnchorRestore {
     pub(super) generation: u64,
 }
 
+/// The anchor restore a history traversal still owes once its target tab has
+/// drawn, plus the generation that says whether it is still the current one.
+///
+/// The two moved together because they are one rule: scheduling BUMPS the
+/// generation and stamps the new restore with it, and applying compares. Held
+/// apart, "bump then stamp" was two statements a caller had to get right in
+/// order, and nothing said the stamp had to come from the bump.
+#[derive(Default)]
+pub(super) struct DeferredAnchorRestore {
+    pending: Option<PendingAnchorRestore>,
+    generation: u64,
+}
+
+impl DeferredAnchorRestore {
+    /// Schedule a restore, superseding any still-deferred one.
+    pub(super) fn schedule(
+        &mut self,
+        document: crate::navigation::DocumentLocator,
+        anchor: ViewAnchor,
+    ) {
+        self.generation = self.generation.wrapping_add(1);
+        self.pending = Some(PendingAnchorRestore {
+            document,
+            anchor,
+            generation: self.generation,
+        });
+    }
+
+    /// Take the deferred restore, if one is owed.
+    pub(super) fn take(&mut self) -> Option<PendingAnchorRestore> {
+        self.pending.take()
+    }
+
+    /// The document a still-deferred restore is for, if any.
+    ///
+    /// A departing view whose restore has not applied yet has a stale captured
+    /// anchor, and refreshing history with it would corrupt the entry that
+    /// restore is about to write.
+    pub(super) fn pending_document(&self) -> Option<&crate::navigation::DocumentLocator> {
+        self.pending.as_ref().map(|pending| &pending.document)
+    }
+
+    /// Whether `pending` is still the newest scheduled restore.
+    ///
+    /// A superseded restore's anchor is still correct for the view, but
+    /// refreshing history with it would clobber the newer entry.
+    pub(super) fn is_current(&self, pending: &PendingAnchorRestore) -> bool {
+        pending.generation == self.generation
+    }
+
+    /// The current generation. Test seam: a scenario asserts that the restore
+    /// it observed carries the generation the schedule minted.
+    #[cfg(test)]
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The deferred restore without taking it. Test seam: a scenario checks
+    /// what a traversal scheduled before the deferred draw applies it.
+    #[cfg(test)]
+    pub(super) fn peek(&self) -> Option<&PendingAnchorRestore> {
+        self.pending.as_ref()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TransitionCause {
     UserNavigation,
@@ -567,7 +632,7 @@ impl App {
     }
 
     pub(super) fn apply_pending_anchor_restore(&mut self, cx: &mut Cx) {
-        let Some(pending) = self.pending_anchor_restore.take() else {
+        let Some(pending) = self.anchor_restore.take() else {
             return;
         };
         if self
@@ -585,7 +650,7 @@ impl App {
         // was still deferred. Applying this stale restore's anchor is still
         // correct for the view itself, but refreshing history with it would
         // clobber the newer entry with this superseded generation's anchor.
-        if pending.generation != self.anchor_restore_generation {
+        if !self.anchor_restore.is_current(&pending) {
             return;
         }
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
@@ -671,10 +736,10 @@ impl App {
             // traversal has not applied yet), and refreshing history with it
             // would corrupt the entry that restore is about to write.
             let departing_is_pending_restore = self
-                .pending_anchor_restore
-                .as_ref()
+                .anchor_restore
+                .pending_document()
                 .zip(departing.as_ref())
-                .is_some_and(|(pending, departing)| pending.document == departing.document);
+                .is_some_and(|(pending, departing)| *pending == departing.document);
             if !departing_is_pending_restore {
                 if let Some(departing) = departing.clone() {
                     self.view_history.refresh_current(departing);
@@ -732,12 +797,8 @@ impl App {
             TransitionCause::HistoryTraversal | TransitionCause::UndoRedoReveal
         ) && !matches!(location.anchor, ViewAnchor::None)
         {
-            self.anchor_restore_generation = self.anchor_restore_generation.wrapping_add(1);
-            self.pending_anchor_restore = Some(PendingAnchorRestore {
-                document: location.document.clone(),
-                anchor: location.anchor.clone(),
-                generation: self.anchor_restore_generation,
-            });
+            self.anchor_restore
+                .schedule(location.document.clone(), location.anchor.clone());
             cx.redraw_all();
         }
         self.sync_document_shell(cx);

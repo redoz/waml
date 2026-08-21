@@ -7,7 +7,7 @@ mod shell;
 mod workspace;
 
 use self::dock_chrome::DockChrome;
-use self::navigation::{PendingAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
+use self::navigation::{DeferredAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
@@ -944,13 +944,11 @@ pub struct App {
     /// last one left behind (see `popup::palette::OpenPalette`).
     #[rust]
     palette: Option<crate::popup::palette::OpenPalette>,
+    /// The anchor restore a history traversal still owes, with the generation
+    /// that says whether a second rapid traversal has superseded it (see
+    /// `app::navigation::DeferredAnchorRestore`).
     #[rust]
-    pending_anchor_restore: Option<PendingAnchorRestore>,
-    /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second
-    /// rapid history traversal can tell whether its deferred restore was
-    /// superseded before `apply_pending_anchor_restore` ran.
-    #[rust]
-    anchor_restore_generation: u64,
+    anchor_restore: DeferredAnchorRestore,
     /// URL of the in-flight boot-bundle fetch -- asked for by the page URL or
     /// by the site's own config -- so its response can name it in an error.
     /// `None` once the response (or error) is handled.

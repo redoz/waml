@@ -28,7 +28,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C11 | Core shell | 9 | 242 | everywhere | stays on `App` — this *is* the app shell |
 | C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | open |
 | C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
-| C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | open |
+| C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredAnchorRestore`) |
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | open |
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | open |
 | C3 | Command palette | 3 | 8 | `actions` (8) | **extracted** (`OpenPalette`) |
@@ -85,6 +85,11 @@ free functions over exactly this group.
 
 `view_history`, `pending_fragment`, `pending_anchor_restore`,
 `anchor_restore_generation`, `history_controls_visible`.
+
+**The last two are extracted** as `navigation::DeferredAnchorRestore`: scheduling
+bumps the generation and stamps the new restore with it, applying compares. Held
+apart, "bump then stamp" was two statements in the right order and nothing said
+the stamp had to come from the bump.
 
 The back/forward stack, the three things a navigation can still owe once the
 target tab draws, and the generation counter that tells a superseded restore to
@@ -162,8 +167,10 @@ Runners-up and why not:
   generation logic, which is the subtlest thing in the app module. Worth doing;
   not worth doing first.
 * **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
-  C8, C10, C3 and C9 are all done. **C6 View history (5) is the next one**, and
-  the best-covered of what remains.
+  C8, C10, C3 and C9 are done, and C6's coupled pair with them. **What is left of
+  C6** — `view_history`, `pending_fragment`, `history_controls_visible` — is the
+  back/forward stack and its caption mount guard, which are a different thing
+  from the deferred restore and should move together with C7.
   Cheap, but they leave the shape of the problem untouched.
 
 Two fields did not survive the move, both write-only records that no code read:
