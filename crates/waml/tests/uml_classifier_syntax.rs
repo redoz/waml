@@ -862,3 +862,86 @@ fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
             && unresolved.span.is_some()
     );
 }
+
+// Regression: an item that fell into recovery left the next token's leading
+// trivia pointing at bytes an earlier token had already taken, so the island
+// wrote those bytes twice and the UML compatibility tree could not be composed
+// at all. Found by the uml_islands fuzz target.
+#[test]
+fn recovering_items_never_claim_the_same_bytes_twice() {
+    for (section, item) in [
+        ("Members", "- instance of [A](./a.md) as x  y"),
+        (
+            "Members",
+            "- instance of [A](./a.md) as x with s set to v  y",
+        ),
+        ("Members", "- instance of [A](./a.md) as x with  "),
+        ("Members", "-oinstance of o"),
+        ("Members", "- instance of# # H"),
+        ("Relationships", "-\" t::"),
+        ("Relationships", "- depends [A](./a.md):  1  to  1  junk"),
+        ("Relationships", "- depends [A](./a.md):  "),
+    ] {
+        let authored = format!("---\ntype: uml.Class\n---\n# C\n\n## {section}\n{item}\n");
+        let source = SourceBundle::try_from_pairs([("c.md", authored.clone())]).unwrap();
+        let analysis = analyze(&source);
+        let id = analysis
+            .syntax
+            .catalog()
+            .id_for_path(&waml::source::BundlePath::parse("c.md").unwrap())
+            .unwrap();
+        assert_eq!(
+            analysis
+                .syntax
+                .document(id)
+                .unwrap()
+                .syntax()
+                .write_to_string(),
+            authored,
+            "lossless for {item:?}"
+        );
+    }
+}
+
+// Regression: the classifier lexer restarted the pending leading trivia on
+// every separator byte, so all but the last byte of a multi-space gap reached
+// no token, and it treated a form feed as a separator the rest of the parser
+// does not recognise, so that byte reached no token either. Either loss broke
+// the island's round-trip and the UML compatibility tree could not be composed
+// at all. Found by the uml_islands fuzz target.
+#[test]
+fn wide_and_exotic_gaps_in_a_classifier_item_stay_lossless() {
+    for item in [
+        "- a  b",
+        "- a \t b",
+        "- status:   \"OPEN\"",
+        "-   status: OPEN",
+        "- a  b  c",
+        "-\u{c}",
+        "- \u{c}\n",
+        "- \u{c}status: OPEN",
+        "- status: OPEN\u{c}",
+        "- sta\u{c}tus: OPEN",
+        "- status:\u{b}OPEN",
+        "- status:\u{a0}OPEN",
+    ] {
+        let authored = format!("---\ntype: uml.Class\n---\n# C\n\n## Slots\n{item}\n");
+        let source = SourceBundle::try_from_pairs([("c.md", authored.clone())]).unwrap();
+        let analysis = analyze(&source);
+        let id = analysis
+            .syntax
+            .catalog()
+            .id_for_path(&waml::source::BundlePath::parse("c.md").unwrap())
+            .unwrap();
+        assert_eq!(
+            analysis
+                .syntax
+                .document(id)
+                .unwrap()
+                .syntax()
+                .write_to_string(),
+            authored,
+            "lossless for {item:?}"
+        );
+    }
+}

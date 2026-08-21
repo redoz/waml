@@ -3192,7 +3192,7 @@ fn layout_statement(
                 }
                 _ => {
                     let n = source[at..content_end]
-                        .find(char::is_whitespace)
+                        .find(is_inline_space)
                         .map(|n| at + n)
                         .unwrap_or(content_end);
                     diags.push(diag(
@@ -3206,7 +3206,7 @@ fn layout_statement(
             },
             _ => {
                 let n = source[at..content_end]
-                    .find(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | '"'))
+                    .find(|c: char| is_inline_space(c) || matches!(c, '(' | ')' | ',' | '[' | '"'))
                     .map(|n| at + n)
                     .unwrap_or(content_end);
                 (n, UmlSyntaxKind::LayoutWordToken)
@@ -3247,7 +3247,11 @@ fn layout_statement(
             // Folding it into the token text would make every range taken from
             // a layout node start one space early.
             children.push(token(f, text, token_start, at, next, kind));
-            atom_words.push(source[at..next].trim().to_ascii_lowercase());
+            atom_words.push(
+                source[at..next]
+                    .trim_matches(is_inline_space)
+                    .to_ascii_lowercase(),
+            );
             atom_spans.push((at, next));
         }
         at = next.max(at + ch.len_utf8());
@@ -4092,6 +4096,11 @@ fn inline_instance(
         )
     });
     p = name_end;
+    // `keyword_leading` is where the next token's leading trivia begins, so it
+    // has to follow the last token that actually took bytes. Leaving it behind
+    // hands the gap to a later token that already saw those bytes, and the
+    // island then writes them out twice.
+    keyword_leading = name_end;
     let before_with = p;
     p = skip_ws(source, p, content_end);
     let mut with_span = None;
@@ -4198,13 +4207,13 @@ fn inline_instance(
             f.node(UmlSyntaxKind::InlineSlot, slot).unwrap(),
         ));
         slots += 1;
-        let join_leading = p;
+        keyword_leading = p;
         p = skip_ws(source, p, content_end);
         if source[p..content_end].starts_with("and") {
             c.push(token(
                 f,
                 text,
-                join_leading,
+                keyword_leading,
                 p,
                 p + 3,
                 UmlSyntaxKind::IdentifierToken,
@@ -4229,13 +4238,22 @@ fn inline_instance(
         }
     }
     if p < content_end {
+        // The gap the scan skipped before giving up belongs to the recovery
+        // node as leading trivia; nothing after it would ever claim it.
+        let leading = (keyword_leading < p)
+            .then(|| {
+                f.trivia(TriviaKind::Whitespace, slice(text, keyword_leading, p))
+                    .unwrap()
+            })
+            .into_iter();
         c.push(GreenElement::Node(
             f.node(
                 UmlSyntaxKind::SkippedTokensSyntax,
                 [GreenElement::Token(
-                    f.bad_token(
+                    f.bad_token_with_leading(
                         UmlSyntaxKind::BadToken,
                         slice(text, p, content_end),
+                        leading,
                         UmlSyntaxDiagnosticCode::UnexpectedToken,
                     )
                     .unwrap(),
@@ -4405,6 +4423,10 @@ fn relationship(
             c.push(GreenElement::Node(to));
             p = q;
         }
+        // The end pair consumed everything it took, so the recovery trivia
+        // below starts here.  Leaving `suffix_leading` back before the colon
+        // would hand it bytes the colon token already owns.
+        suffix_leading = p;
     }
     if p < content_end {
         let leading = (suffix_leading < p)
@@ -4750,13 +4772,15 @@ fn classifier_tokens(
                 at += 1;
             }
             UmlSyntaxKind::TypeToken
-        } else if source.as_bytes()[at].is_ascii_whitespace() {
-            trivia_start = at;
+        } else if is_inline_space(source.as_bytes()[at].into()) {
+            // The gap keeps accumulating into the next token's leading trivia.
+            // Restarting `trivia_start` here would drop every run of separator
+            // bytes but its last, and the green tree owns the authored source.
             at += 1;
             continue;
         } else {
             while at < end
-                && !source.as_bytes()[at].is_ascii_whitespace()
+                && !is_inline_space(source.as_bytes()[at].into())
                 && !matches!(source.as_bytes()[at], b':' | b'[' | b'\"')
             {
                 at += 1;
@@ -5135,8 +5159,21 @@ fn tab_indented_item_line(structure: &MarkdownStructureMap, line_start: usize) -
         .binary_search_by_key(&line_start, |range| range.start().to_usize())
         .is_ok()
 }
+/// The parser's notion of the whitespace that separates words inside a line:
+/// ASCII space and tab, nothing else.
+///
+/// `char::is_whitespace` is much broader -- vertical tab, form feed, NBSP and
+/// the Unicode spaces all answer true -- and the two notions must not be mixed.
+/// A scan that skips whitespace with [`skip_ws`] and then looks for the word's
+/// end with `char::is_whitespace` can be handed a character the first set does
+/// not know about, find it at offset zero, and end the word where it began.
+/// The green tree owns every authored byte, so a zero-length token strands one
+/// and the island stops round-tripping its source.
+fn is_inline_space(c: char) -> bool {
+    matches!(c, ' ' | '\t')
+}
 fn skip_ws(s: &str, mut p: usize, end: usize) -> usize {
-    while p < end && matches!(s.as_bytes()[p], b' ' | b'\t') {
+    while p < end && is_inline_space(s.as_bytes()[p].into()) {
         p += 1
     }
     p

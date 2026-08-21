@@ -876,3 +876,40 @@ fn layout_diagnostic_spans_never_start_on_whitespace() {
         }
     }
 }
+
+// Regression: the layout atom lexer ended a word at the first
+// `char::is_whitespace`, but the parser's own whitespace is ASCII space/tab.
+// An exotic space (vertical tab, form feed, NBSP, ...) at an atom's start
+// therefore ended the word where it began, so the byte landed in no token at
+// all, the island no longer round-tripped, and the compatibility tree "could
+// not be composed from authoritative islands". Found by the uml_islands fuzz
+// target.
+#[test]
+fn exotic_whitespace_in_a_layout_statement_stays_lossless() {
+    for space in ['\u{b}', '\u{c}', '\u{a0}', '\u{2003}', '\u{3000}'] {
+        for layout in [
+            format!("-{space}"),
+            format!("-{space}\n"),
+            format!("- {space}\n"),
+            format!("- A{space}left of A\n"),
+            format!("- {space}A left of A\n"),
+            format!("- [A](./a.md){space}left of [A](./a.md)\n"),
+        ] {
+            let source = diagram_source(&layout);
+            let path = waml::source::BundlePath::parse("d.md").unwrap();
+            let authored = source.document(&path).unwrap().text().to_string();
+            let analysis = analyze(&source);
+            let id = analysis.syntax.catalog().id_for_path(&path).unwrap();
+            assert_eq!(
+                analysis
+                    .syntax
+                    .document(id)
+                    .unwrap()
+                    .syntax()
+                    .write_to_string(),
+                authored,
+                "lossless for {layout:?}"
+            );
+        }
+    }
+}
