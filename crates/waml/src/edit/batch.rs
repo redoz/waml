@@ -364,6 +364,86 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// A move op must carry the document's text `Arc` across, not rebuild an
+    /// equal `String`.
+    ///
+    /// `invalidations` matches renames by pointer identity, so an op that
+    /// reconstructs the text produces a `Removed` plus an `Inserted` that are
+    /// individually correct and jointly wrong: the document's identity is
+    /// broken, its concept id is retired rather than moved, and every consumer
+    /// downstream sees a delete-and-create where the user did a rename. It was
+    /// documented and nothing checked it.
+    ///
+    /// Asserted through the op layer rather than `rename_document`, because
+    /// that is where a future op could get it wrong.
+    #[test]
+    fn every_move_op_preserves_the_text_arc() {
+        use crate::edit::{apply, Batch, Step};
+
+        let pairs = [
+            (
+                "sales/order.md".to_string(),
+                "---
+type: uml.Class
+title: Order
+---
+# Order
+"
+                .to_string(),
+            ),
+            (
+                "sales/index.md".to_string(),
+                "---
+type: okf.Index
+title: Sales
+---
+# Sales
+"
+                .to_string(),
+            ),
+        ];
+
+        for (name, step) in [
+            (
+                "concept.move",
+                Step::Okf(crate::okf::Op::ConceptMove {
+                    id: "sales/order".into(),
+                    to_directory: crate::okf::DirectoryAddress::parse("/archive").unwrap(),
+                }),
+            ),
+            (
+                "directory.rename",
+                Step::Okf(crate::okf::Op::DirectoryRename {
+                    directory: crate::okf::DirectoryAddress::parse("/sales").unwrap(),
+                    name: "archive".into(),
+                }),
+            ),
+        ] {
+            let source = SourceBundle::try_from_pairs(pairs.iter().cloned()).unwrap();
+            let before: BTreeMap<BundlePath, Arc<String>> = source
+                .documents()
+                .iter()
+                .map(|document| (document.path().clone(), document.text_shared().clone()))
+                .collect();
+
+            let after = apply(&source, &Batch::new(vec![step])).expect("op applies");
+            let events = invalidations(&before, &after);
+
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, Invalidation::Renamed { .. })),
+                "{name} must report a rename, got {events:?} --                  the op rebuilt the text instead of carrying its Arc across"
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, Invalidation::Removed { .. })),
+                "{name} must not retire a document it only moved, got {events:?}"
+            );
+        }
+    }
+
     #[test]
     fn invalidations_classifies_same_arc_rename_with_resolved_ids() {
         // `invalidations` matches a rename by Arc pointer identity: the same
