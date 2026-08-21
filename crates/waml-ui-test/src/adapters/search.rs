@@ -112,6 +112,44 @@ pub(crate) fn open_find_strip(driver: &TestApp) -> Result<String, OperationFailu
     Ok("the find strip is open".to_string())
 }
 
+/// F3 / Shift+F3: step the open find session's cursor one hit, wrapping at
+/// either end (`SearchSession::advance`). The strip must already be open --
+/// with no strip these chords drive the bundle-wide session instead, a
+/// different surface with a different cursor, so stepping a strip that is
+/// not open would silently assert against the wrong thing.
+pub(crate) fn advance_find_hit(
+    driver: &TestApp,
+    forward: bool,
+) -> Result<String, OperationFailure> {
+    let widgets = snapshot(driver, "find strip state could not be observed")?;
+    require_find_strip_open(&widgets)?;
+    let modifiers = KeyModifiers {
+        shift: !forward,
+        ..Default::default()
+    };
+    driver
+        .try_press_key_with_modifiers(KeyCode::F3, modifiers)
+        .map_err(|error| find_strip_driver_failure(&error))?;
+    Ok(if forward {
+        "the find cursor stepped to the next hit".to_string()
+    } else {
+        "the find cursor stepped to the previous hit".to_string()
+    })
+}
+
+fn require_find_strip_open(widgets: &[WidgetSnapshot]) -> Result<(), OperationFailure> {
+    if widgets
+        .iter()
+        .any(|widget| widget.visible && widget.id == FIND_QUERY_INPUT_ID)
+    {
+        return Ok(());
+    }
+    Err(OperationFailure {
+        observed: "the find strip is not open".to_string(),
+        detail: "F3 only steps the find session while its strip is open".to_string(),
+    })
+}
+
 /// Observe the find strip's `"{n} of {total}"` counter reading.
 pub(crate) fn expect_find_counter(
     driver: &TestApp,
@@ -367,6 +405,33 @@ mod tests {
         let mut widget = semantic_item(FIND_COUNTER_ID, "Label", text, "", visible);
         widget.value = None;
         widget
+    }
+
+    fn find_query_input(visible: bool) -> WidgetSnapshot {
+        semantic_item(FIND_QUERY_INPUT_ID, "TextInput", "", "", visible)
+    }
+
+    #[test]
+    fn stepping_a_find_session_requires_the_strip_to_be_open() {
+        require_find_strip_open(&[find_query_input(true)]).unwrap();
+
+        let failure = require_find_strip_open(&[counter("1 of 4", true)]).unwrap_err();
+
+        assert_eq!(failure.observed, "the find strip is not open");
+        assert_eq!(
+            failure.detail,
+            "F3 only steps the find session while its strip is open"
+        );
+    }
+
+    /// A closed strip leaves its query input in the snapshot at `0x0` with
+    /// `visible: false`; only the visibility flag separates that from an open
+    /// one, so the gate has to read it rather than merely find the widget.
+    #[test]
+    fn a_hidden_query_input_does_not_count_as_an_open_strip() {
+        let failure = require_find_strip_open(&[find_query_input(false)]).unwrap_err();
+
+        assert_eq!(failure.observed, "the find strip is not open");
     }
 
     #[test]

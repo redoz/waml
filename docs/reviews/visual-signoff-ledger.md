@@ -25,10 +25,10 @@ try to judge pixels from PowerShell — look at the image.
 | V1 | Diagram pens | `bf1303ec` | The whole stroke-weight ladder on both canvases. Class edges deliberately went 3.0 -> 2.0 and the behavior divider 1.4 -> 1.0: **these are intended, do not "restore" them.** Lifeline stems and interaction frames went 1.2 -> 1.5, which quantisation DOUBLES at dpi 1 (1.4 rounds to one device pixel, 1.5 floors to two) — that is the one most likely to read as a regression. |
 | V2 | Viewer font-size control | `6e4d3cb0` | Nobody has looked at this feature at all. The archived plan carries a 7-row verification table. Row 5 has an escape hatch: if the source editor's caret/IME geometry does not follow the scale, defer the source half rather than ship it half-scaled. |
 | V3 | UML extension row icons | `22672758` | V1–V6 from the plan. Core OKF folders should draw the book glyph, UML packages the box glyph, **and every other glyph must be unchanged** — that last guarantee was silently false once already. |
-| V4 | Granular projection mask | `dc5f5fa8` | 8 visual checks from the plan, plus 2 medium review warnings. A disabled stage is a silent skip, so a wrong mask looks like a working view with content missing — the failure mode is invisible by construction. |
+| V4 | Granular projection mask | `dc5f5fa8` | 8 visual checks from the plan, plus 2 medium review warnings. A disabled stage is a silent skip, so a wrong mask looks like a working view with content missing — the failure mode is invisible by construction. **Partly guarded now:** `project_tree_lists_every_row_of_the_bundle` pins the default projection's exact row list, so a stage that starts dropping rows fails a test instead of looking fine. It only covers the default mask — driving the projection menu is not yet a harness operation — so the 8 checks stand. |
 | V5 | Surface-routed navigation | `8d0e9a78` | The forcing case by hand: folder tab -> view source -> back, across surfaces. Plus 3 medium review warnings. |
 | V6 | Book mode, phase 1 | `8c1b8204` | A folder read as one continuous scroll: diagram embeds live and capped, open-full to a tab, the tree working as a TOC in both directions. 3 design calls also owed. |
-| V7 | Bundle search | `679c8994` | Palette, results tab, find strip, and `DocView::reveal` landing on the right row. |
+| V7 | Bundle search | `679c8994` | **Partly automated.** The `ui` scenarios now settle palette sections, results-tab grouping, find-strip scoping, and F3/Shift+F3 traversal with wrap — those are state, and state does not need eyes. What is still owed: that the palette, results tab and find strip *look* right (spacing, section headers, the strip's placement), and `DocView::reveal` actually scrolling the document to the landed hit. The reveal target is drawn inside a view that exposes no semantic item, so no assertion can reach it today. |
 | V8 | Conflict list, grouped delete | `0944e0f` | The 4th `PopupRoot` surface: badge-open, focus, delete -> re-solve -> refresh-open. Hit rects are Turtle-derived and the trash is a drawn glyph rather than a child widget, so misalignment is the thing to look for. |
 | V9 | Drag-to-place constraints | S1–S4 + VIZ | Grey no-go zones for existing constraints, the diagonal drop authoring BOTH placements, and "updating" rather than "adding" when you drop into grey. |
 | V10 | Connector repair phases | `fd8f305f` | Two defects were fixed in the phases that run after A*. The sparse tests cannot see connector quality — this needs eyes on real diagrams. |
@@ -46,3 +46,22 @@ to go except a human's memory. This file is that place.
 
 A plan that ends in a visual check should add its row here as its last task,
 in the same commit that lands the feature.
+
+## What does not have to stay here
+
+Before adding a row, check whether the obligation is really about pixels.
+Several of the entries above are not: "did the tree lose a row", "did the
+cursor wrap at the end of the hit list", "did the selection land where the
+navigation said it would" are questions about *state*, and
+`crates/waml-ui-test` can settle those against a real headless editor
+without a human in the loop. Its crate docs carry the standing line between
+what it can decide and what it cannot; V4 and V7 above are each partly
+discharged that way.
+
+A row belongs here when the claim is about how something was *drawn* —
+stroke weight, glyph identity, spacing, legibility, feel — or when the thing
+being hit-tested is drawn rather than laid out as a widget, so it has no
+snapshot entry to assert against. Those are the rows that will still be here
+next year, and that is fine. What is not fine is a state question sitting in
+this file because writing the scenario looked like more work than looking
+once.

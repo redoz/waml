@@ -62,9 +62,7 @@ pub(crate) fn switch_active_document_to(
     requested: ViewKind,
 ) -> Result<String, OperationFailure> {
     let widgets = snapshot(driver, "document view state could not be observed")?;
-    match decide_view_switch(&widgets, requested)? {
-        ViewSwitchDecision::ClickToggle => {}
-    }
+    require_view_switch_is_a_change(&widgets, requested)?;
 
     let button = driver.locator(view_button_selector());
     let button_snapshot = button
@@ -187,15 +185,13 @@ fn decide_diagram_open(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ViewSwitchDecision {
-    ClickToggle,
-}
-
-fn decide_view_switch(
+/// `switch_active_document_to` is imperative: it must move the active view,
+/// so a request for the view that is already active is a scenario bug, not a
+/// no-op. Every other surface state means the toggle cannot be trusted.
+fn require_view_switch_is_a_change(
     widgets: &[WidgetSnapshot],
     requested: ViewKind,
-) -> Result<ViewSwitchDecision, OperationFailure> {
+) -> Result<(), OperationFailure> {
     let state = observed_view_state(widgets)?;
     match (state, requested) {
         (ObservedViewState::Diagram, ViewKind::Diagram)
@@ -204,7 +200,7 @@ fn decide_view_switch(
             detail: "switch_active_document_to must change the active view".to_string(),
         }),
         (ObservedViewState::Diagram, ViewKind::Source)
-        | (ObservedViewState::Source, ViewKind::Diagram) => Ok(ViewSwitchDecision::ClickToggle),
+        | (ObservedViewState::Source, ViewKind::Diagram) => Ok(()),
         (state, _) => Err(OperationFailure {
             observed: state.description(),
             detail: format!(
@@ -405,8 +401,8 @@ fn view_name(view: ViewKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        decide_diagram_open, decide_view_switch, observe_active_diagram, observe_active_view,
-        DiagramOpenDecision, ViewSwitchDecision,
+        decide_diagram_open, observe_active_diagram, observe_active_view,
+        require_view_switch_is_a_change, DiagramOpenDecision,
     };
     use crate::{DiagramName, ViewKind};
     use makepad_test::WidgetSnapshot;
@@ -568,16 +564,15 @@ mod tests {
 
     #[test]
     fn switching_to_the_active_view_is_rejected_as_a_non_action() {
-        let error = decide_view_switch(&surfaces(false, true), ViewKind::Source).unwrap_err();
+        let error =
+            require_view_switch_is_a_change(&surfaces(false, true), ViewKind::Source).unwrap_err();
 
         assert_eq!(error.observed, "Source view is already active");
     }
 
     #[test]
-    fn switching_to_the_other_valid_view_requires_one_toggle_click() {
-        let decision = decide_view_switch(&surfaces(true, false), ViewKind::Source).unwrap();
-
-        assert_eq!(decision, ViewSwitchDecision::ClickToggle);
+    fn switching_to_the_other_valid_view_is_a_change() {
+        require_view_switch_is_a_change(&surfaces(true, false), ViewKind::Source).unwrap();
     }
 
     #[test]

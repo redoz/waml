@@ -1,4 +1,4 @@
-use crate::adapters::{documents, search, workspace};
+use crate::adapters::{documents, search, tree, workspace};
 use crate::config::WorkspaceBinding;
 use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
@@ -57,6 +57,33 @@ impl WamlApp {
                 workspace.root.title, workspace.ready_diagram.display
             ),
             |driver| workspace::expect_workspace_open(driver, workspace),
+        )
+    }
+
+    /// Assert the project tree's currently-drawn rows, by title, top to
+    /// bottom. Rows scrolled out of the panel viewport are not part of the
+    /// list. The operation also holds the tree to its layout invariant --
+    /// every listed row occupies a non-zero rect, and the rows run down the
+    /// panel without overlapping -- so a row that stays in the model while
+    /// it stops being drawn fails here rather than reading as present.
+    pub fn expect_project_tree_rows(&mut self, rows: &[&str]) -> &mut Self {
+        let rows = rows.to_vec();
+        self.execute(
+            format!("expect project tree rows {}", describe_titles(&rows)),
+            format!("the tree shows {}", describe_titles(&rows)),
+            move |driver| tree::expect_project_tree_rows(driver, &rows),
+        )
+    }
+
+    /// Assert exactly one project-tree row is selected, that it is `row`, and
+    /// that it is inside the panel viewport -- a selection scrolled out of
+    /// view fails, which is the "reveal landed on the right row" claim.
+    pub fn expect_selected_row(&mut self, row: &str) -> &mut Self {
+        let row = row.to_string();
+        self.execute(
+            format!("expect selected row {row}"),
+            format!("the {row} row is selected and in view"),
+            move |driver| tree::expect_selected_row(driver, &row),
         )
     }
 
@@ -160,6 +187,26 @@ impl WamlApp {
         )
     }
 
+    /// F3: step the open find session to the next hit, wrapping past the
+    /// last one back to the first.
+    pub fn advance_to_next_hit(&mut self) -> &mut Self {
+        self.execute(
+            "advance to next hit",
+            "the find cursor stepped to the next hit",
+            |driver| search::advance_find_hit(driver, true),
+        )
+    }
+
+    /// Shift+F3: step the open find session to the previous hit, wrapping
+    /// past the first one back to the last.
+    pub fn advance_to_previous_hit(&mut self) -> &mut Self {
+        self.execute(
+            "advance to previous hit",
+            "the find cursor stepped to the previous hit",
+            |driver| search::advance_find_hit(driver, false),
+        )
+    }
+
     /// Assert the find strip's `"{n} of {total}"` counter reading.
     pub fn expect_find_counter(&mut self, text: &str) -> &mut Self {
         let text = text.to_string();
@@ -169,6 +216,13 @@ impl WamlApp {
             move |driver| search::expect_find_counter(driver, &text),
         )
     }
+}
+
+fn describe_titles(titles: &[&str]) -> String {
+    if titles.is_empty() {
+        return "no rows".to_string();
+    }
+    titles.join(", ")
 }
 
 fn describe_pairs(pairs: &[(&str, usize)]) -> String {

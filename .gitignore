@@ -2,6 +2,8 @@
 /target
 # The makepad UI-test driver pins the spawned editor's CARGO_TARGET_DIR here
 /crates/waml-editor/target
+# ...and the editor it spawns mints this scratch dir beside its manifest
+/crates/waml-editor/.makepad
 
 # Node build output and caches
 node_modules/

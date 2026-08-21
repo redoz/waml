@@ -32,15 +32,45 @@ rtk cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
 The feature gate keeps this target out of the normal
 `cargo nextest run --workspace --profile ci` suite. CI runs the dedicated
 command once, after the normal workspace tests, in the required Linux
-`build-test` job. The journey verifies that the staged Mini fixture is ready,
-activates the Orders diagram, and switches the active document from Diagram to
-Source and back to Diagram.
+`build-test` job.
 
-Windows does not have a working headless runtime for this journey. Do not run
-the native UI test binary headlessly on Windows. Windows CI still compiles all
+The scenarios verify, against a real headless editor:
+
+| Scenario | What it settles |
+|---|---|
+| `open_and_switch_document_views` | The staged Mini fixture is ready, Orders activates, and the active document switches Diagram -> Source -> Diagram. |
+| `project_tree_lists_every_row_of_the_bundle` | The tree's exact row list, and its layout invariant (no zero-height, no overlap). A projection that silently drops a row fails here. |
+| `opening_a_diagram_selects_its_row_in_view` | Opening a diagram selects its row **and leaves it inside the viewport**. |
+| `palette_blends_a_query_into_titled_sections` | Ctrl+K blends one query into its titled sections with the right row counts. |
+| `escalating_a_query_groups_results_by_document` | The results tab groups every hit by document, in rank order. |
+| `find_strip_counts_hits_scoped_to_the_active_document` | Ctrl+F narrows the same query to the active tab's own document. |
+| `f3_walks_the_find_hits_and_wraps_at_both_ends` | F3/Shift+F3 walk the find cursor and wrap at both ends. |
+
+`waml_ui_test`'s crate docs carry the standing list of what this harness can
+and cannot decide -- read them before adding a scenario for something that is
+really a question about pixels.
+
+**Windows can run this now.** The fork's headless backend stopped being
+macOS-only when the CI headless fix landed, and the whole suite was run
+green on Windows against fork rev `6534634a` (8 passed, ~17 min, one editor
+process spawned per scenario). Prebuild the exact configuration the driver
+spawns first, or the in-test build's swallowed output turns a compile error
+into an unreadable startup timeout:
+
+```powershell
+$env:MAKEPAD='headless'
+$env:CARGO_TARGET_DIR='crates/waml-editor/target'
+cargo build -p waml-editor --release
+Remove-Item Env:CARGO_TARGET_DIR
+rtk cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+```
+
+Linux CI remains the verification of record -- that is where the required
+`build-test` job runs it -- but a Windows developer no longer has to push to
+find out whether a scenario passes. Windows CI additionally compiles all
 feature-gated code through
-`cargo clippy --workspace --all-targets --all-features -- -D warnings`. A
-Windows developer can compile the target without running it:
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`, and
+the target can still be compiled without running it:
 
 ```powershell
 rtk cargo test -p waml-editor --features ui-tests --test ui --no-run
