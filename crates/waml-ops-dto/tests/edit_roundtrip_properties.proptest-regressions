@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4d38de4ef103431239dda5e4e2233bd1c82bf0b930e6eaa565546b7421cedb14 # shrinks to op = PkgReorder { v: 1, path: "shop", order: [] }
+cc a089bf7d2df62e4a71a7ff85bf9100334ef40d5c4358a141c6788c01c42148db # shrinks to op = PlaceSet { v: 1, diagram: "shop/order", subject_title: "Invoice", subject_slug: "shop/order", reference_title: "Invoice", reference_slug: "shop/order", directions: [LeftOf] }
+cc 42a95a0bd7385c614f70b8690f970661757efe66349fe530946488913370db43 # shrinks to ops = [PlaceSet { v: 1, diagram: "shop/order", subject_title: "Invoice", subject_slug: "shop/order", reference_title: "Invoice", reference_slug: "shop/order", directions: [LeftOf] }]

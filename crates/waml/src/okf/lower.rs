@@ -635,7 +635,6 @@ fn authored_member_order(
     work: &SourceBundle,
     state: &mut OkfLoweringState,
     directory: &str,
-    valid: &[String],
 ) -> Result<Vec<String>, EditError> {
     let path = BundlePath::parse(if directory.is_empty() {
         "index.md".to_owned()
@@ -646,7 +645,7 @@ fn authored_member_order(
     let Some(document) = work.document(&path) else {
         return Ok(Vec::new());
     };
-    let (ranges, _) = confirmed_member_block(work, state, &path, directory, valid)?;
+    let (ranges, _) = confirmed_member_block(work, state, &path, directory)?;
     let mut ordered = Vec::new();
     for range in ranges {
         let line = &document.text()[range.clone()];
@@ -660,12 +659,28 @@ fn authored_member_order(
     Ok(ordered)
 }
 
+/// Locates the member listing inside an authored `index.md`, so a rewrite
+/// replaces it instead of adding a second one.
+///
+/// A block qualifies when every one of its lines is *shaped* like a member
+/// entry of `directory` — see [`member_entry_key`]. It deliberately does NOT
+/// require the entries to still be current. That used to be the rule, and it
+/// was wrong in a way that compounded: one stale entry (a document that
+/// `pkg.move` had since moved out of the directory, which `pkg.move`
+/// deliberately does not clean up) disqualified the whole block, so
+/// `update_authored_index` fell through to its "no listing here yet" branch and
+/// appended a *second* listing — leaving the stale one in place. The next
+/// `pkg.reorder`/`pkg.sort`/`pkg.retitle` saw the same stale entry, and
+/// appended a third. The index grew a duplicate member list on every call,
+/// forever, and never dropped the stale entry.
+///
+/// Reconciling stale entries is the entire job of these ops, so the block they
+/// are meant to rewrite must be recognizable *because* it is stale.
 fn confirmed_member_block(
     work: &SourceBundle,
     state: &mut OkfLoweringState,
     path: &BundlePath,
     directory: &str,
-    valid: &[String],
 ) -> Result<(Vec<std::ops::Range<usize>>, usize), EditError> {
     let document = work
         .document(path)
@@ -712,9 +727,9 @@ fn confirmed_member_block(
         }
     }
     let mut confirmed = blocks.into_iter().filter(|block| {
-        block.iter().all(|range| {
-            member_key(directory, &source[range.clone()]).is_some_and(|key| valid.contains(&key))
-        })
+        block
+            .iter()
+            .all(|range| member_entry_key(directory, &source[range.clone()]).is_some())
     });
     let selected = confirmed.next().unwrap_or_default();
     if confirmed.next().is_some() {
@@ -724,6 +739,28 @@ fn confirmed_member_block(
         ));
     }
     Ok((selected, preamble_end))
+}
+
+/// [`member_key`], but only for lines whose href has the exact shape
+/// [`crate::index_md::render_members`] writes: `./<name>.md` for a concept and
+/// `<segment>/` for a child package, both naming a *direct* child of
+/// `directory`.
+///
+/// The shape test is what keeps [`confirmed_member_block`] from mistaking an
+/// unrelated authored bullet list for the member listing and overwriting it.
+/// An external URL, an in-page anchor, an absolute path, and a `../` escape all
+/// answer `None`, so a block containing any of them is never claimed.
+fn member_entry_key(directory: &str, line: &str) -> Option<String> {
+    let href = markdown_href(line)?;
+    let relative = href.strip_prefix("./").unwrap_or(href);
+    let name = match relative.strip_suffix('/') {
+        Some(segment) => segment,
+        None => relative.strip_suffix(".md")?,
+    };
+    if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+        return None;
+    }
+    member_key(directory, line)
 }
 
 fn member_key(directory: &str, line: &str) -> Option<String> {
@@ -768,9 +805,7 @@ fn update_authored_index(
     } else {
         "\n"
     };
-    let valid: Vec<_> = entries.iter().map(|entry| entry.key.clone()).collect();
-    let (member_ranges, preamble_end) =
-        confirmed_member_block(work, state, index_path, directory, &valid)?;
+    let (member_ranges, preamble_end) = confirmed_member_block(work, state, index_path, directory)?;
     let shell = state.shell(work, index_path, "pkg.index")?;
     let h1 = shell
         .structure
@@ -923,7 +958,7 @@ fn write_package_index(
             v
         }
         MemberOrder::Keep => {
-            let authored = authored_member_order(work, state, path, &keys)?;
+            let authored = authored_member_order(work, state, path)?;
             authored
                 .into_iter()
                 .chain(keys)
@@ -1697,5 +1732,100 @@ mod tests {
         )];
         let err = apply(&b, vec![bundle_import("", "", docs)]).unwrap_err();
         assert!(err.reason.contains("name"), "got: {}", err.reason);
+    }
+
+    /// A stale member entry — the shape `pkg.move` leaves behind, since it
+    /// deliberately does not maintain either index — used to make
+    /// `confirmed_member_block` disown the whole listing, so the rewrite
+    /// appended a second listing beside it and left the stale line in place.
+    /// Every later index op appended another copy: unbounded growth, and the
+    /// stale entry never went away.
+    ///
+    /// Found by the `apply -> write -> reparse` property in
+    /// `waml-ops-dto/tests/edit_roundtrip_properties.rs`, minimised to a single
+    /// `pkg.reorder` over a directory whose index holds one stale entry.
+    #[test]
+    fn reorder_rewrites_a_listing_that_holds_a_stale_entry() {
+        let bundle = vec![
+            (
+                "shop/index.md".to_string(),
+                "# Shop\n\n* [Order](./order.md)\n* [OrderLine](./order-line.md)\n".to_string(),
+            ),
+            (
+                "shop/order-line.md".to_string(),
+                "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string(),
+            ),
+            // `order.md` is at the root: `shop/index.md`'s first entry is stale.
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+        ];
+
+        let once = apply(
+            &bundle,
+            vec![Step::Okf(okf::Op::IndexReorder {
+                directory: dir("shop"),
+                order: Vec::new(),
+            })],
+        )
+        .unwrap();
+        let index = &once
+            .iter()
+            .find(|(path, _)| path == "shop/index.md")
+            .unwrap()
+            .1;
+        assert_eq!(
+            index, "# Shop\n\n* [OrderLine](./order-line.md)\n",
+            "the stale entry should be dropped, not duplicated"
+        );
+
+        let twice = apply(
+            &once,
+            vec![Step::Okf(okf::Op::IndexReorder {
+                directory: dir("shop"),
+                order: Vec::new(),
+            })],
+        )
+        .unwrap();
+        assert_eq!(twice, once, "reorder must be idempotent");
+    }
+
+    /// The block guard still has to hold: a bullet list that is not a member
+    /// listing must not be mistaken for one and overwritten.
+    #[test]
+    fn reorder_leaves_a_non_member_bullet_list_alone() {
+        let bundle = vec![
+            (
+                "shop/index.md".to_string(),
+                "# Shop\n\n* [Spec](https://example.com/spec)\n* [Up](../readme.md)\n".to_string(),
+            ),
+            (
+                "shop/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+        ];
+
+        let out = apply(
+            &bundle,
+            vec![Step::Okf(okf::Op::IndexSort {
+                directory: dir("shop"),
+            })],
+        )
+        .unwrap();
+        let index = &out
+            .iter()
+            .find(|(path, _)| path == "shop/index.md")
+            .unwrap()
+            .1;
+        assert!(
+            index.contains("[Spec](https://example.com/spec)")
+                && index.contains("[Up](../readme.md)"),
+            "authored links were clobbered:\n{index}"
+        );
+        assert!(
+            index.contains("[Order](./order.md)"),
+            "the real member listing was not written:\n{index}"
+        );
     }
 }

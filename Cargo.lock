@@ -3585,6 +3585,7 @@ dependencies = [
 name = "waml-ops-dto"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
  "waml",

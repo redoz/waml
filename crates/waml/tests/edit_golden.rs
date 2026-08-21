@@ -145,3 +145,75 @@ fn uml_rename_preserves_unknown_and_malformed_text_byte_for_byte() {
     assert!(order.contains("- malformed [OrderLine](./order-line.md\n"));
     assert!(order.contains("Example only: [OrderLine](./order-line.md)\n"));
 }
+
+/// `place.set` renders each endpoint as a href resolved relative to the diagram,
+/// but the clear-then-append pass used to look for a needle it built itself as
+/// `./{slug}.md`. For a bare, same-directory slug those agree by accident; for a
+/// qualified slug they never do, so nothing was ever cleared and every call
+/// appended another copy of the same placement. `place.rm` shared the needle and
+/// so removed nothing at all.
+///
+/// Found by the `apply -> write -> reparse` property in
+/// `waml-ops-dto/tests/edit_roundtrip_properties.rs`.
+#[test]
+fn placement_set_and_rm_address_a_qualified_slug() {
+    let bundle: Pairs = vec![
+        (
+            "shop/order.md".to_owned(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_owned(),
+        ),
+        (
+            "shop/customer.md".to_owned(),
+            "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_owned(),
+        ),
+        (
+            "shop/dia.md".to_owned(),
+            concat!(
+                "---\ntype: uml.ClassDiagram\ntitle: Dia\n---\n# Dia\n\n",
+                "## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n",
+            )
+            .to_owned(),
+        ),
+    ];
+
+    let set = || {
+        Step::Uml(uml::Op::PlacementSet {
+            diagram: "shop/dia".into(),
+            subject_title: "Order".into(),
+            subject_slug: "shop/order".into(),
+            reference_title: "Customer".into(),
+            reference_slug: "shop/customer".into(),
+            directions: vec![waml::layout::Direction::LeftOf],
+        })
+    };
+    let placements = |pairs: &Pairs| -> usize {
+        pairs
+            .iter()
+            .find(|(path, _)| path == "shop/dia.md")
+            .unwrap()
+            .1
+            .matches("left of")
+            .count()
+    };
+
+    let once = apply_pairs(&bundle, vec![set()]).unwrap();
+    assert_eq!(placements(&once), 1, "one placement after the first set");
+
+    let twice = apply_pairs(&once, vec![set()]).unwrap();
+    assert_eq!(twice, once, "place.set must replace, not append");
+
+    let removed = apply_pairs(
+        &twice,
+        vec![Step::Uml(uml::Op::PlacementRemove {
+            diagram: "shop/dia".into(),
+            subject_slug: "shop/order".into(),
+            reference_slug: "shop/customer".into(),
+        })],
+    )
+    .unwrap();
+    assert_eq!(
+        placements(&removed),
+        0,
+        "place.rm must remove a placement it can address"
+    );
+}

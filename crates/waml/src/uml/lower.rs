@@ -1760,10 +1760,20 @@ fn direction_text(direction: Direction) -> &'static str {
     }
 }
 
+/// Whether one `## Layout` statement is the placement of `subject` against
+/// `reference`.
+///
+/// `subject` and `reference` are *hrefs* as [`target_href`] renders them, NOT
+/// raw slugs. That distinction is the whole point: this used to build its own
+/// needle as `./{slug}.md`, while the writer emits a href resolved relative to
+/// the referring document. For a bare, same-directory slug the two agree by
+/// accident; for a qualified slug (`shop/order`) or any cross-directory
+/// reference they never do, so `place.set` never found the line it was meant
+/// to replace and appended a duplicate on every call, and `place.rm` silently
+/// removed nothing. Resolve once at the call site and both operations compare
+/// the same string the writer wrote.
 fn placement_matches(source: &str, subject: &str, reference: &str) -> bool {
-    let subject = format!("./{subject}.md");
-    let reference = format!("./{reference}.md");
-    source.contains(&subject) && source.contains(&reference)
+    source.contains(subject) && source.contains(reference)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1783,10 +1793,12 @@ pub(crate) fn op_place_set(
         .expect("claimed document")
         .text()
         .to_owned();
+    let subject_href = target_href(work, &path, subject_slug);
+    let reference_href = target_href(work, &path, reference_slug);
     let mut ranges: Vec<_> = nodes(&tree, UmlSyntaxKind::LayoutStatement)
         .into_iter()
         .map(|syntax| node_range(&syntax))
-        .filter(|range| placement_matches(&source[range.clone()], subject_slug, reference_slug))
+        .filter(|range| placement_matches(&source[range.clone()], &subject_href, &reference_href))
         .collect();
     ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
     for range in ranges {
@@ -1806,10 +1818,8 @@ pub(crate) fn op_place_set(
             &tree,
             "Layout",
             &format!(
-                "- [{subject_title}]({}) {} [{reference_title}]({})",
-                target_href(work, &path, subject_slug),
+                "- [{subject_title}]({subject_href}) {} [{reference_title}]({reference_href})",
                 direction_text(*direction),
-                target_href(work, &path, reference_slug)
             ),
             "place.set",
         )?;
@@ -1837,10 +1847,12 @@ pub(crate) fn op_place_rm(
         .expect("claimed document")
         .text()
         .to_owned();
+    let subject_href = target_href(work, &path, subject_slug);
+    let reference_href = target_href(work, &path, reference_slug);
     let mut matches: Vec<_> = nodes(&tree, UmlSyntaxKind::LayoutStatement)
         .into_iter()
         .filter(|syntax| {
-            placement_matches(&source[node_range(syntax)], subject_slug, reference_slug)
+            placement_matches(&source[node_range(syntax)], &subject_href, &reference_href)
         })
         .collect();
     matches.sort_by_key(|syntax| std::cmp::Reverse(node_range(syntax).start));
