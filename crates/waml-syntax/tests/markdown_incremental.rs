@@ -526,6 +526,43 @@ fn a_definition_created_behind_a_block_quote_prefix_still_resolves_its_uses() {
 }
 
 #[test]
+fn an_edit_to_a_definitions_next_line_destination_refreshes_its_uses() {
+    // This fails if the definition guard reads definition-ness off the edited
+    // line alone. In each case the definition's destination sits on the line
+    // *after* its label, so the edited line -- `xing` -- carries no label, no
+    // colon, and nothing else that reads as a definition; only the line above
+    // it makes those bytes a destination. The guard saw an ordinary paragraph
+    // line, skipped the fan-out, and left `[n][id]` in the first block
+    // resolved against the definition the edit had just unmade (or unresolved
+    // against the one it had just made).
+    //
+    // The heading between the two blocks is load-bearing: it splits them into
+    // separate shell windows, so the window that reparses the definition does
+    // not contain the use.
+
+    // The destination goes away: `[id]: ` alone defines nothing, so the use
+    // above must stop being a link.
+    assert_matches_full_oracle(
+        "[n][id]\n\n# M\n\n[id]: \nxing\n",
+        "[n][id]\n\n# M\n\n[id]: \n\ning\n",
+        &[TextChange {
+            old_range: range(21, 22),
+            replacement: Arc::from("\n"),
+        }],
+    );
+    // The destination arrives: `x ing` is a destination followed by `ing`,
+    // which is not a valid title, so nothing is defined until the space goes.
+    assert_matches_full_oracle(
+        "[n][id]\n\n# M\n\n[id]: \nx ing\n",
+        "[n][id]\n\n# M\n\n[id]: \nxing\n",
+        &[TextChange {
+            old_range: range(22, 23),
+            replacement: Arc::from(""),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";

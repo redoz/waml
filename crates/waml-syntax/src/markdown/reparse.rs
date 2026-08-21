@@ -23,28 +23,52 @@ pub(crate) fn change_touches_reference_definition(
     map: &ChangeMap,
 ) -> bool {
     changes.iter().zip(map.segments()).any(|(change, segment)| {
-        intersecting_lines(old.shared(), change.old_range).any(line_may_define_reference)
-            || intersecting_lines(new.shared(), segment.new).any(line_may_define_reference)
-            || trailing_paragraph_lines(old.shared(), change.old_range)
-                .any(line_may_define_reference)
-            || trailing_paragraph_lines(new.shared(), segment.new).any(line_may_define_reference)
+        paragraph_run_lines(old.shared(), change.old_range).any(line_may_define_reference)
+            || paragraph_run_lines(new.shared(), segment.new).any(line_may_define_reference)
     })
 }
 
-/// Lines following the edited lines up to the first blank line.
+/// The whole blank-line-delimited run of lines the edited lines sit in.
 ///
-/// An edit can promote or demote a definition-shaped line it never touches:
-/// deleting the only text of a paragraph's opening line turns the next line
-/// from a paragraph continuation into a real reference definition. Scan the
-/// rest of that paragraph run so such promotions still count as touching a
-/// definition.
-fn trailing_paragraph_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
+/// A reference definition is not a line, it is a run of them: its destination
+/// may sit on the line after the label, and a title on the line after that.
+/// Every line of such a definition except the first reads as ordinary
+/// paragraph text on its own — `xing` is a destination or a paragraph
+/// depending only on what stands above it — so a scan anchored on the edited
+/// lines cannot see the definition an edit to those lines makes or unmakes.
+///
+/// The run is also what decides definition-ness in the other direction: an
+/// edit can promote or demote a definition-shaped line it never touches, by
+/// deleting the only text of the paragraph's opening line and leaving the next
+/// line to start the block.
+///
+/// Both readings are settled by the same unit, so scan it whole — back to the
+/// blank line above the edit and on to the blank line below it. That is at
+/// worst the length of one paragraph; over-reporting only costs an oracle
+/// parse, while under-reporting leaves reference uses elsewhere in the
+/// document resolved against a definition that no longer exists.
+fn paragraph_run_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
+    let start = range.start().to_usize().min(source.len());
     let end = range.end().to_usize().min(source.len());
-    let line_end = source[end..].find('\n').map_or(source.len(), |at| end + at);
-    source[line_end..]
-        .split_terminator('\n')
-        .skip(1)
-        .take_while(|line| !line.trim().is_empty())
+    let mut run_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
+    while run_start > 0 {
+        let previous = source[..run_start - 1].rfind('\n').map_or(0, |at| at + 1);
+        if source[previous..run_start - 1].trim().is_empty() {
+            break;
+        }
+        run_start = previous;
+    }
+    let mut run_end = source[end..].find('\n').map_or(source.len(), |at| end + at);
+    while run_end < source.len() {
+        let next = source[run_end + 1..]
+            .find('\n')
+            .map_or(source.len(), |at| run_end + 1 + at);
+        if source[run_end + 1..next].trim().is_empty() {
+            break;
+        }
+        run_end = next;
+    }
+    source[run_start..run_end].split_terminator('\n')
 }
 
 /// Returns true when an edited line can add, remove, or join a reference use.
@@ -919,6 +943,25 @@ mod tests {
             &local_changes,
             &local_map,
         ));
+    }
+
+    #[test]
+    fn definition_run_scan_reaches_the_label_above_the_edited_line() {
+        // `xing` is this definition's destination, and nothing on that line
+        // says so: only the `[id]: ` above it does.
+        let source = "para\n\n[id]: \nxing\n\ntail\n";
+        assert_eq!(
+            paragraph_run_lines(source, range(13, 14)).collect::<Vec<_>>(),
+            vec!["[id]: ", "xing"]
+        );
+        assert!(paragraph_run_lines(source, range(13, 14)).any(line_may_define_reference));
+        // The run stops at the blank lines that bound it, so a neighbouring
+        // paragraph's definition is not attributed to this edit.
+        assert_eq!(
+            paragraph_run_lines(source, range(0, 1)).collect::<Vec<_>>(),
+            vec!["para"]
+        );
+        assert!(!paragraph_run_lines(source, range(19, 20)).any(line_may_define_reference));
     }
 
     #[test]
