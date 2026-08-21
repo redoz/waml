@@ -142,11 +142,24 @@ pub(crate) fn shell_map(
                     if let Some((expected, heading_start, heading_end)) = pending.take() {
                         if containers.is_empty() {
                             let heading_end = heading_end.max(end).min(len);
-                            let text_start = heading_text_start(source, heading_start, heading_end);
+                            // A heading's text is its first line, never more.
+                            // `projection::heading` — the classifier
+                            // `block::wrap_waml_sections` consults to decide
+                            // which heading opens a WAML section — clips both
+                            // its ATX and its setext branch to the first line.
+                            // Running to `heading_end` instead swallows a
+                            // setext heading's underline, and `waml_kind` reads
+                            // `Attributes\n---` as no section at all, so every
+                            // consumer comparing the two views disagrees about
+                            // a setext section head.
+                            let text_end = line_end(source, heading_start)
+                                .unwrap_or(len)
+                                .min(heading_end);
+                            let text_start = heading_text_start(source, heading_start, text_end);
                             let heading = ConfirmedHeading {
                                 level: expected,
                                 range: range(heading_start, heading_end)?,
-                                text_range: range(text_start, heading_end)?,
+                                text_range: range(text_start, text_end)?,
                             };
                             if expected <= 2 {
                                 headings.push(heading);

@@ -586,6 +586,88 @@ fn edit_in_sibling_line_keeps_reference_link_in_window() {
     }
 }
 
+#[test]
+fn trailing_deletion_that_completes_a_waml_heading_keeps_the_island() {
+    // Shrunk from randomized_full_and_incremental_snapshots_agree. The first
+    // edit replaces the document's whole tail with an "x", leaving
+    // "## Attributesx": a heading whose text names no WAML section, so the
+    // document carries no island at all. The second edit deletes that trailing
+    // "x", restoring "## Attributes" as the last bytes of the document.
+    //
+    // A window reparse never runs the WAML section wrapper, so it can only ever
+    // republish the sections the previous tree already had; the guard that
+    // watches for a new section head is what keeps such an edit off that path.
+    // The second edit is a pure deletion at the very end of the text, so its
+    // new-side segment has zero width and sits exactly on the heading's own end
+    // offset — an overlap test that ignores collapsed segments waves it through
+    // and publishes "## Attributes" with no island where a full parse has one.
+    let mut candidate = BASE.to_owned();
+    let mut snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let mut revision = DocumentRevision::INITIAL;
+    for (start, end, replacement) in [(124, 138, "x"), (124, 125, "")] {
+        let replacement: Arc<str> = Arc::from(replacement);
+        candidate.replace_range(start..end, &replacement);
+        revision = revision.checked_next().unwrap();
+        let update = reparse_markdown(
+            &snapshot,
+            revision,
+            source(&candidate),
+            &[TextChange {
+                old_range: range(start, end),
+                replacement,
+            }],
+        )
+        .unwrap();
+        assert_full_oracle(&update.snapshot, &candidate);
+        snapshot = update.snapshot;
+    }
+    assert!(candidate.ends_with("## Attributes"));
+    assert_eq!(snapshot.structure().islands.len(), 1);
+}
+
+// A WAML section head written as a setext heading. `Attributes` and its `---`
+// underline are one heading node, and the block parser reads a heading's text
+// as its first line, so it wraps this as a WAML section exactly as it would
+// wrap `## Attributes`.
+const SETEXT_ISLAND_BASE: &str = "# Model\n\nAttributesx\n---\nname: String\n";
+
+#[test]
+fn setext_waml_heading_edit_keeps_the_island() {
+    // The shell scan feeds the incremental guards a heading's text range, and
+    // it used to run that range to the end of the whole heading node — through
+    // a setext heading's underline. `waml_kind` reads "Attributesx\n---" as no
+    // section at all, and still reads "Attributes\n---" as no section after the
+    // "x" goes, so the guard never saw a section head appear and the window
+    // splice published a bare SetextHeading where a full parse has a section.
+    let mut candidate = SETEXT_ISLAND_BASE.to_owned();
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    assert_eq!(snapshot.structure().islands.len(), 0);
+    let at = candidate.find("Attributesx").unwrap() + "Attributes".len();
+    candidate.replace_range(at..at + 1, "");
+    let update = reparse_markdown(
+        &snapshot,
+        DocumentRevision::INITIAL.checked_next().unwrap(),
+        source(&candidate),
+        &[TextChange {
+            old_range: range(at, at + 1),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, &candidate);
+    assert_eq!(update.snapshot.structure().islands.len(), 1);
+}
+
 const NESTED_FRONTMATTER_BASE: &str = "---\ntitle: test\nmeta:\n  owner: platform\n  tags:\n    - a\n    - b\nnotes: |\n  line one\n  line two\n---\n\n# Model\n\n[id]: /one\n\n- item\n\nuse [x][id]\n";
 
 #[test]

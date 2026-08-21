@@ -84,6 +84,30 @@ struct WindowPlan {
 /// overflow, an unrecoverable tree shape) come back as the outer `Err`,
 /// exactly as they did before this function existed; they are not
 /// recoverable by falling back to a full parse of `new_text`.
+/// Whether one side of a change segment touches `range`.
+///
+/// A window reparse never runs [`crate::markdown::block::wrap_waml_sections`],
+/// so the spliced tree can only ever carry the WAML sections the previous tree
+/// already had. Both island guards therefore have to recognise every change
+/// that could add or remove one, and "could" has to include changes that sit
+/// flush against a boundary rather than across it.
+///
+/// A segment collapses to a point on one side or the other whenever the edit
+/// is a pure insertion (empty on the old side) or a pure deletion (empty on the
+/// new side), and a zero-width range overlaps nothing under the half-open rule.
+/// Deleting the trailing `x` of a document that reads `## Attributesx` leaves
+/// `## Attributes` — a WAML section head — with the deletion collapsed onto the
+/// heading's own end offset, which a strict overlap test waves through. Treat a
+/// collapsed segment as touching the range whenever it lands anywhere on it,
+/// both boundaries included.
+fn segment_touches(range: TextRange, segment: TextRange) -> bool {
+    if segment.start() == segment.end() {
+        range.start() <= segment.start() && segment.start() <= range.end()
+    } else {
+        segment.start() < range.end() && range.start() < segment.end()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn plan_window_reparse(
     previous: &SyntaxTree<OkfMarkdownLanguage>,
@@ -98,14 +122,9 @@ fn plan_window_reparse(
     let old_structure = Arc::new(crate::markdown::shell_map(old, dialect)?);
     if old_projection.islands.iter().any(|island| {
         let island_range = island.heading_range.cover(island.content_range);
-        map.segments().iter().any(|segment| {
-            if segment.old.start() == segment.old.end() {
-                island_range.start() <= segment.old.start()
-                    && segment.old.start() <= island_range.end()
-            } else {
-                segment.old.start() < island_range.end() && island_range.start() < segment.old.end()
-            }
-        })
+        map.segments()
+            .iter()
+            .any(|segment| segment_touches(island_range, segment.old))
     }) {
         return Ok(Err(FullReparseReason::IslandBoundaryChanged));
     }
@@ -118,10 +137,9 @@ fn plan_window_reparse(
                 crate::markdown::waml_kind(new_text.shared(), heading.text_range).is_some()
             })
             .any(|heading| {
-                map.segments().iter().any(|segment| {
-                    segment.new.start() < heading.range.end()
-                        && heading.range.start() < segment.new.end()
-                })
+                map.segments()
+                    .iter()
+                    .any(|segment| segment_touches(heading.range, segment.new))
             })
     {
         return Ok(Err(FullReparseReason::IslandBoundaryChanged));
