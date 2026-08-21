@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████████░░░░░░░░░░░░░░░░` **17/53 closed** — 29 open, 17 done, 7 decision
+`████████░░░░░░░░░░░░░░░░` **18/53 closed** — 28 open, 18 done, 7 decision
 
 ## Findings
 
@@ -49,7 +49,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A18 | H | Wire contract | `done` | DocumentsRequest, RevisionResponse and ConflictResponse now live in waml-ops-dto beside DocumentWrite, so the editor's encoder and the CLI's decoder share one definition instead of two structurally-unlinked copies. A test pins the exact wire spelling of every field, because a round-trip through one side alone would not catch drift. |
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
 | A20 | H | LSP | `open` | Half-built LSP corrupts state: no didSave/watched files; close restores stale startup disk bytes |
-| A21 | H | Verification debt | `open` | 10+ landed features owe visual sign-off, ledger exists only in agent session memory |
+| A21 | H | Verification debt | `done` | The sign-off ledger is now docs/reviews/visual-signoff-ledger.md — 13 rows, each naming the landed commit and the specific thing nobody has looked at. It also records what is already obsolete (V12's peek machinery was deleted today) and which row is a choice rather than a check (V13). The obligations stay open; what is closed is their living only in one agent's session memory. |
 | A22 | H | Effort allocation | `decision` | Three company-sized products plus a forked framework, solo. Which artifact is THE product determines what gets cut. |
 | A23 | H | Interop | `decision` | One-way mermaid/SVG export so diagrams can leave the toolchain. Scoped as a feature, not a fix. |
 | A24 | H | Sustainability | `decision` | Bus factor 1 with contribution repelled. Declare a personal tool, or do the contribution minimum and upstream the fork's general patches. |
