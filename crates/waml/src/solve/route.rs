@@ -443,13 +443,44 @@ pub fn route_keyed_with_policy(
         .into_iter()
         .map(|(_, route, obstacles)| (route, obstacles))
         .unzip();
+    let barriers = repair_barriers(&routes, rects, &route_obstacles);
     if !policy.adjacency_aware {
-        hub_spread(&mut routes, rects);
-        nudge(&mut routes);
+        hub_spread(&mut routes, rects, &barriers);
+        nudge(&mut routes, rects, &barriers);
     } else {
-        nudge_crossing_safe(&mut routes, &route_obstacles);
+        nudge_crossing_safe(&mut routes, rects, &barriers);
     }
     routes
+}
+
+/// The rects a post-A* repair phase must never drag a segment through.
+///
+/// A* already routes around every obstacle, but the repair phases move points
+/// afterwards with no obstacle model of their own — so a swept channel or a
+/// spread endpoint can put a segment straight through a node A* had carefully
+/// avoided. Per route that is its own inflated obstacle list PLUS its two
+/// endpoint boxes: those are deliberately NOT obstacles while the edge is being
+/// routed (the route has to reach them), which leaves nothing at all stopping a
+/// repair from sliding a segment through the very node the connector belongs
+/// to. Uninflated, because a route legitimately touches its endpoints' borders.
+fn repair_barriers(
+    routes: &[Route],
+    rects: &BTreeMap<BoxId, Rect>,
+    obstacles: &[Vec<Rect>],
+) -> Vec<Vec<Rect>> {
+    routes
+        .iter()
+        .zip(obstacles)
+        .map(|(route, obstacle)| {
+            let mut barrier = obstacle.clone();
+            for key in [&route.source, &route.target] {
+                if let Some(r) = rects.get(&BoxId::Node(key.clone())) {
+                    barrier.push(*r);
+                }
+            }
+            barrier
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -656,14 +687,14 @@ fn group_obstacles(
 /// glyph. If the stub were shorter, the diamond's tail would overshoot the bend
 /// and stick out perpendicular to the routed line. Keep >= that reach; the
 /// connected-pair gutter (`MIN_ASSOC`) already clears two facing stubs.
-const ROUTE_MARGIN: f64 = 24.0;
+pub(crate) const ROUTE_MARGIN: f64 = 24.0;
 
 /// Keep border attachment points at least this far from a box corner: a
 /// connector meeting a node right on its corner reads as ambiguous/ugly, so
 /// grid-derived attach candidates in the corner band are dropped. Side
 /// midpoints are always kept, so every side still offers a candidate even when
 /// the box is shorter than `2 * CORNER_INSET`.
-const CORNER_INSET: f64 = 12.0;
+pub(crate) const CORNER_INSET: f64 = 12.0;
 
 type P = (f64, f64);
 
@@ -677,6 +708,35 @@ struct Obstacle {
 struct Ovg {
     verts: Vec<P>,
     adj: Vec<Vec<(usize, f64)>>,
+}
+
+/// May an attach stub leaving `border` on `side` wire to grid vertex `g`?
+///
+/// An endpoint box is NOT an obstacle for its own edge, so the grid keeps
+/// vertices inside it, and they sit on the same line as the stub. Wiring one up
+/// hands A* a path that enters the node it is attaching to and crosses its
+/// interior; `simplify` then folds the whole excursion away as "collinear",
+/// leaving nothing behind but a first segment pointing INWARD or far shorter
+/// than ROUTE_MARGIN. The perpendicular-stub rule is structural, so the
+/// adjacency must not admit that path at all.
+///
+/// Only a vertex COLLINEAR with the stub is at risk — one aligned on the other
+/// axis is a normal perpendicular hop off the stub end, and one at or beyond
+/// the border on the OUTWARD side is ordinary corridor, including the stretch
+/// between the border and the stub's own outer end (A* cannot use that as a
+/// shortcut: reaching it from the border and coming back is a reversal, which
+/// the search refuses -- see `is_reversal`).
+fn stub_wiring_is_outward(border: P, side: Side, g: P) -> bool {
+    let collinear = if perp_is_horizontal(side) {
+        (g.1 - border.1).abs() < 1e-9
+    } else {
+        (g.0 - border.0).abs() < 1e-9
+    };
+    if !collinear {
+        return true;
+    }
+    let n = outward_normal(side);
+    (g.0 - border.0) * n.0 + (g.1 - border.1) * n.1 >= -1e-9
 }
 
 fn inflate(r: Rect, m: f64) -> Rect {
@@ -942,6 +1002,7 @@ fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<u
     let attach = |verts: &mut Vec<P>,
                   adj: &mut Vec<Vec<(usize, f64)>>,
                   on_border: &mut BTreeSet<usize>,
+                  stub_sides: &mut BTreeMap<usize, (Side, P)>,
                   bx: Rect|
      -> Vec<usize> {
         let mut cands: Vec<(P, Side)> = Vec::new();
@@ -988,6 +1049,7 @@ fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<u
             let si = verts.len();
             verts.push(stub);
             adj.push(Vec::new());
+            stub_sides.insert(si, (side, pt));
             // Mandatory perpendicular stub segment p <-> p'.
             adj[bi].push((si, ROUTE_MARGIN));
             adj[si].push((bi, ROUTE_MARGIN));
@@ -1014,7 +1076,20 @@ fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<u
                 }
                 let g = verts[gi];
                 let aligned = (g.0 - stub.0).abs() < 1e-9 || (g.1 - stub.1).abs() < 1e-9;
-                if aligned && !seg_blocked(stub, g) {
+                // The rule is symmetric: when `g` is another candidate's stub
+                // end, THIS hop must also stay outward of that stub, or the
+                // same free U-turn reappears from the other side.
+                let other_outward = match stub_sides.get(&gi) {
+                    Some(&(other_side, other_border)) => {
+                        stub_wiring_is_outward(other_border, other_side, stub)
+                    }
+                    None => true,
+                };
+                if aligned
+                    && stub_wiring_is_outward(pt, side, g)
+                    && other_outward
+                    && !seg_blocked(stub, g)
+                {
                     let len = (g.0 - stub.0).abs() + (g.1 - stub.1).abs();
                     adj[si].push((gi, len));
                     adj[gi].push((si, len));
@@ -1026,8 +1101,9 @@ fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<u
     };
 
     let mut on_border: BTreeSet<usize> = BTreeSet::new();
-    let srcv = attach(&mut verts, &mut adj, &mut on_border, src);
-    let tgtv = attach(&mut verts, &mut adj, &mut on_border, tgt);
+    let mut stub_sides: BTreeMap<usize, (Side, P)> = BTreeMap::new();
+    let srcv = attach(&mut verts, &mut adj, &mut on_border, &mut stub_sides, src);
+    let tgtv = attach(&mut verts, &mut adj, &mut on_border, &mut stub_sides, tgt);
     (Ovg { verts, adj }, srcv, tgtv)
 }
 
@@ -1047,12 +1123,43 @@ impl Ord for Ord64 {
     }
 }
 
+/// SIGNED direction of one axis-aligned step: 1 = +x, 2 = -x, 3 = +y, 4 = -y.
+/// `0` is the search's "no previous step yet" state.
+///
+/// The sign matters because a step that reverses the previous one is free under
+/// an axis-only direction state (same axis => no bend penalty), and `simplify`
+/// then folds the reversal away as "collinear" — so a doubling-back detour
+/// leaves no trace in the polyline except a SHORTENED first/last segment. That
+/// is how the mandatory perpendicular ROUTE_MARGIN stub silently shrank.
 fn dir_of(a: P, b: P) -> u8 {
     if (a.1 - b.1).abs() < 1e-9 {
-        1
+        if b.0 >= a.0 {
+            1
+        } else {
+            2
+        }
+    } else if b.1 >= a.1 {
+        3
     } else {
-        2
-    } // horizontal else vertical
+        4
+    }
+}
+
+/// Axis of a signed direction: 0 = none, 1 = horizontal, 2 = vertical.
+fn dir_axis(d: u8) -> u8 {
+    match d {
+        0 => 0,
+        1 | 2 => 1,
+        _ => 2,
+    }
+}
+
+/// Does `next` undo `prev`? An orthogonal connector that doubles back on its
+/// own line is never the shape anyone wants, and the graph offers no vertex
+/// behind that cannot be reached another way, so the search refuses it outright
+/// rather than pricing it.
+fn is_reversal(prev: u8, next: u8) -> bool {
+    matches!((prev, next), (1, 2) | (2, 1) | (3, 4) | (4, 3))
 }
 
 fn simplify(pts: Vec<P>) -> Vec<P> {
@@ -1216,9 +1323,11 @@ fn astar(
     let label_size = environment.label_size;
     let prior_routes = environment.prior_routes;
     let n = ovg.verts.len();
-    let state = |v: usize, d: u8| v * 3 + d as usize;
-    let mut dist = vec![f64::INFINITY; n * 3];
-    let mut prev: Vec<Option<usize>> = vec![None; n * 3]; // predecessor STATE
+    // Five direction states per vertex: none, +x, -x, +y, -y. Signed, so the
+    // search can refuse a step that reverses the previous one (see `dir_of`).
+    let state = |v: usize, d: u8| v * 5 + d as usize;
+    let mut dist = vec![f64::INFINITY; n * 5];
+    let mut prev: Vec<Option<usize>> = vec![None; n * 5]; // predecessor STATE
     let is_target = |v: usize| targets.contains(&v);
     let h = |v: usize| {
         let (x, y) = ovg.verts[v];
@@ -1244,8 +1353,8 @@ fn astar(
 
     let mut goal_state: Option<usize> = None;
     while let Some(Reverse((_f, st))) = heap.pop() {
-        let v = st / 3;
-        let d = (st % 3) as u8;
+        let v = st / 5;
+        let d = (st % 5) as u8;
         let g = dist[st];
         if is_target(v) {
             goal_state = Some(st);
@@ -1253,7 +1362,14 @@ fn astar(
         }
         for &(w, len) in &ovg.adj[v] {
             let nd = dir_of(ovg.verts[v], ovg.verts[w]);
-            let bend = if d != 0 && d != nd { cost.bend } else { 0.0 };
+            if is_reversal(d, nd) {
+                continue;
+            }
+            let bend = if d != 0 && dir_axis(d) != dir_axis(nd) {
+                cost.bend
+            } else {
+                0.0
+            };
             let pressure = if pressured {
                 let key = (v.min(w), v.max(w));
                 let frac = *band_cache.entry(key).or_insert_with(|| {
@@ -1290,7 +1406,7 @@ fn astar(
     let mut cur = goal_state?;
     let mut rev: Vec<P> = Vec::new();
     loop {
-        rev.push(ovg.verts[cur / 3]);
+        rev.push(ovg.verts[cur / 5]);
         match prev[cur] {
             Some(p) => cur = p,
             None => break,
@@ -1320,6 +1436,13 @@ struct Seg {
     other_mid: f64,
     lo: f64,
     hi: f64,
+    /// Extent along the segment's OWN axis. Two segments sharing a channel
+    /// coordinate only actually draw on top of each other where these overlap.
+    span: (f64, f64),
+    /// A first/last segment — the perpendicular stub itself. Sliding one moves
+    /// its route's endpoint along a node border, so it is only worth doing when
+    /// it removes a real overlap.
+    terminal: bool,
 }
 
 /// How far the channel coordinate of a stub-adjacent segment may travel before
@@ -1349,11 +1472,22 @@ fn stub_bound(anchor: f64, base: f64) -> (f64, f64) {
 /// Split parallel segments that share a routing channel (same axis + coincident
 /// coordinate) into distinct parallel lines via an order-then-push sweep.
 /// Endpoints (first/last point of each route) are never moved.
-fn nudge(routes: &mut [Route]) {
-    nudge_with_gap(routes, NUDGE_GAP);
+///
+/// The sweep itself has no obstacle model, so each route's swept geometry is
+/// accepted only if it still clears that route's barriers (see
+/// `repair_barriers`). A pair of connectors still sharing a channel is a lesser
+/// defect than one driven through a node — the same trade `stub_bound` already
+/// makes for a stub it cannot keep.
+fn nudge(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>, barriers: &[Vec<Rect>]) {
+    nudge_with_gap(routes, NUDGE_GAP, rects, barriers);
 }
 
-fn nudge_with_gap(routes: &mut [Route], gap: f64) {
+fn nudge_with_gap(
+    routes: &mut [Route],
+    gap: f64,
+    rects: &BTreeMap<BoxId, Rect>,
+    barriers: &[Vec<Rect>],
+) {
     let mut chan_h: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized y
     let mut chan_v: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized x
     let q = |c: f64| (c * 1e6).round() as i64;
@@ -1368,8 +1502,10 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
     for (ri, route) in routes.iter().enumerate() {
         let n = route.points.len();
         for i in 0..n.saturating_sub(1) {
-            // Skip first/last segment: keep route endpoints anchored to their box.
-            if i == 0 || i + 1 == n - 1 {
+            let terminal = i == 0 || i + 1 == n - 1;
+            // A 2-point route is BOTH terminals at once: sliding it would have
+            // to satisfy two borders in one move. Leave it to `hub_spread`.
+            if terminal && n < 3 {
                 continue;
             }
             let a = route.points[i];
@@ -1381,6 +1517,35 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
             let bound = |horizontal: bool| {
                 let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
                 let axis = |p: P| if horizontal { p.1 } else { p.0 };
+                // A TERMINAL segment is the stub itself: sweeping it
+                // perpendicular to its own axis slides the endpoint ALONG its
+                // border, which keeps the stub perpendicular and exactly
+                // ROUTE_MARGIN long. Two connectors leaving DIFFERENT nodes
+                // head-on into the same corridor is the one overlap class
+                // neither `hub_spread` (same node only) nor the interior sweep
+                // (skips the stubs) can reach; the band is the border's span
+                // minus its corner insets, so `attach`'s corner rule survives.
+                if terminal {
+                    let (key, on_border) = if i == 0 {
+                        (&route.source, 0usize)
+                    } else {
+                        (&route.target, n - 1)
+                    };
+                    let Some(bx) = rects.get(&BoxId::Node(key.clone())) else {
+                        return (1.0, 0.0); // unknown box: refuse to move it
+                    };
+                    let (span_lo, span_hi) = if horizontal {
+                        (bx.y, bx.y + bx.h)
+                    } else {
+                        (bx.x, bx.x + bx.w)
+                    };
+                    if span_hi - span_lo <= 2.0 * CORNER_INSET {
+                        return (1.0, 0.0); // no room between the corner bands
+                    }
+                    // The endpoint must stay on the border it is already on.
+                    let _ = on_border;
+                    return (span_lo + CORNER_INSET, span_hi - CORNER_INSET);
+                }
                 for (touch, on_border) in [(1usize, 0usize), (n - 2, n - 1)] {
                     if i != touch && i + 1 != touch {
                         continue;
@@ -1400,6 +1565,8 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
                     other_mid: (a.0 + b.0) / 2.0,
                     lo,
                     hi,
+                    span: (a.0.min(b.0), a.0.max(b.0)),
+                    terminal,
                 });
             } else if (a.0 - b.0).abs() < 1e-9 {
                 let (lo, hi) = bound(false);
@@ -1410,8 +1577,60 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
                     other_mid: (a.1 + b.1) / 2.0,
                     lo,
                     hi,
+                    span: (a.1.min(b.1), a.1.max(b.1)),
+                    terminal,
                 });
             }
+        }
+    }
+
+    /// Would moving `seg`'s channel coordinate to `coord` push it — or either
+    /// segment that shares an endpoint with it — through one of this route's
+    /// barriers?
+    fn segment_fits(
+        routes: &[Route],
+        seg: &Seg,
+        barriers: &[Vec<Rect>],
+        horizontal: bool,
+        coord: f64,
+    ) -> bool {
+        let barrier = &barriers[seg.ri];
+        if barrier.is_empty() {
+            return true;
+        }
+        let points = &routes[seg.ri].points;
+        let moved = |mut p: P| {
+            if horizontal {
+                p.1 = coord;
+            } else {
+                p.0 = coord;
+            }
+            p
+        };
+        let (a, b) = (moved(points[seg.a]), moved(points[seg.b]));
+        if segment_blocked(barrier, a, b) {
+            return false;
+        }
+        if seg.a > 0 && segment_blocked(barrier, points[seg.a - 1], a) {
+            return false;
+        }
+        match points.get(seg.b + 1) {
+            Some(&next) => !segment_blocked(barrier, b, next),
+            None => true,
+        }
+    }
+
+    /// How many slots a blocked segment may look through before it gives up
+    /// and stays put. Bounded so a wide fan stays linear in its own size.
+    const SLOT_SEARCH: usize = 5;
+
+    fn place(routes: &mut [Route], seg: &Seg, horizontal: bool, coord: f64) {
+        if horizontal {
+            routes[seg.ri].points[seg.a].1 = coord;
+            routes[seg.ri].points[seg.b].1 = coord;
+        } else {
+            routes[seg.ri].points[seg.a].0 = coord;
+            routes[seg.ri].points[seg.b].0 = coord;
         }
     }
 
@@ -1421,8 +1640,28 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
         keys: &[(String, String)],
         horizontal: bool,
         gap: f64,
+        barriers: &[Vec<Rect>],
     ) {
         for (key, mut segs) in chan {
+            // A terminal segment only joins the sweep when it genuinely draws
+            // on top of another run in this channel. Sharing a channel
+            // COORDINATE is not the same as overlapping: two stubs leaving
+            // opposite sides of the same node share a y and touch nothing, and
+            // moving them apart only breaks the alignment a reader reads as one
+            // connector passing through.
+            let overlapped: Vec<bool> = segs
+                .iter()
+                .map(|s| {
+                    !s.terminal
+                        || segs.iter().any(|other| {
+                            other.ri != s.ri
+                                && s.span.0 < other.span.1 - 1e-9
+                                && other.span.0 < s.span.1 - 1e-9
+                        })
+                })
+                .collect();
+            let mut keep = overlapped.iter();
+            segs.retain(|_| *keep.next().unwrap_or(&true));
             if segs.len() < 2 {
                 continue;
             }
@@ -1435,28 +1674,46 @@ fn nudge_with_gap(routes: &mut [Route], gap: f64) {
             let base = key as f64 / 1e6;
             let m = segs.len();
             let start = base - (m as f64 - 1.0) * gap / 2.0;
+            let mut taken = vec![false; m];
             for (k, s) in segs.iter().enumerate() {
-                // Clamp into the segment's stub-safe band. When the band is
-                // empty (two stubs pulling opposite ways) the segment stays
-                // put: leaving two channels coincident is a lesser defect than
-                // a connector glued to -- or doubled back through -- a border.
-                let coord = if s.lo > s.hi {
-                    base
-                } else {
-                    (start + k as f64 * gap).clamp(s.lo, s.hi)
-                };
-                if horizontal {
-                    routes[s.ri].points[s.a].1 = coord;
-                    routes[s.ri].points[s.b].1 = coord;
-                } else {
-                    routes[s.ri].points[s.a].0 = coord;
-                    routes[s.ri].points[s.b].0 = coord;
+                // An empty stub-safe band (two stubs pulling opposite ways)
+                // leaves the segment put and claims no slot: two coincident
+                // channels are a lesser defect than a connector glued to -- or
+                // doubled back through -- a border.
+                if s.lo > s.hi {
+                    place(routes, s, horizontal, base);
+                    continue;
                 }
+                // The sweep has no obstacle model of its own, so a channel that
+                // was clear at `base` can be blocked one slot over. Take the
+                // nearest FREE slot that fits rather than giving up on the
+                // segment: falling straight back to `base` puts it right back
+                // on the run its neighbours are moving off.
+                let mut order: Vec<usize> = (0..m).collect();
+                order.sort_by_key(|slot| ((*slot as i64) - k as i64).abs());
+                order.truncate(SLOT_SEARCH);
+                let mut chosen = None;
+                for slot in order {
+                    if taken[slot] {
+                        continue;
+                    }
+                    let candidate = (start + slot as f64 * gap).clamp(s.lo, s.hi);
+                    if segment_fits(routes, s, barriers, horizontal, candidate) {
+                        taken[slot] = true;
+                        chosen = Some(candidate);
+                        break;
+                    }
+                }
+                let coord = match chosen {
+                    Some(c) => c,
+                    None => base,
+                };
+                place(routes, s, horizontal, coord);
             }
         }
     }
-    sweep(chan_h, routes, &keys, true, gap);
-    sweep(chan_v, routes, &keys, false, gap);
+    sweep(chan_h, routes, &keys, true, gap, barriers);
+    sweep(chan_v, routes, &keys, false, gap, barriers);
 }
 
 fn route_crossings(routes: &[Route]) -> usize {
@@ -1474,9 +1731,14 @@ fn route_crossings(routes: &[Route]) -> usize {
 }
 
 #[inline(never)]
-fn nudge_crossing_safe(routes: &mut [Route], obstacles: &[Vec<Rect>]) {
+fn nudge_crossing_safe(
+    routes: &mut [Route],
+    rects: &BTreeMap<BoxId, Rect>,
+    barriers: &[Vec<Rect>],
+) {
+    let obstacles = barriers;
     let mut separated = routes.to_vec();
-    nudge_with_gap(&mut separated, 12.0);
+    nudge_with_gap(&mut separated, 12.0, rects, barriers);
     let mut crossings = route_crossings(routes);
     for route_index in 0..routes.len() {
         if separated[route_index]
@@ -1626,7 +1888,183 @@ fn connect_ends(s: P, s_side: Option<Side>, t: P, t_side: Option<Side>) -> Vec<P
 /// BOTH of its endpoints may be spread (on different boxes) and each must stay
 /// on its own border -- the old single-pass code dragged the opposite endpoint
 /// off the target, deleting the connecting segment.
-fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
+/// Does `route` still obey the two structural connector rules and clear its
+/// barriers?
+///
+/// `hub_spread` moves endpoints and drags the bend next to them, and it does so
+/// with no obstacle model and no knowledge of the OTHER end's stub. On a
+/// 3-point route both stubs share the single interior bend, so realigning it
+/// for one end rewrites the other end's stub — which is how a connector ends up
+/// bending straight back into the node it just left. This is the predicate that
+/// catches it.
+fn spread_is_sound(route: &Route, rects: &BTreeMap<BoxId, Rect>, barrier: &[Rect]) -> bool {
+    let points = &route.points;
+    if points.len() < 2 {
+        return false;
+    }
+    let last = points.len() - 1;
+    for (key, ep, nb) in [
+        (&route.source, 0usize, 1usize),
+        (&route.target, last, last - 1),
+    ] {
+        let Some(bx) = rects.get(&BoxId::Node(key.clone())) else {
+            continue; // not a node we placed: nothing to check against
+        };
+        let Some(side) = attach_side(bx, points[ep], points[nb]) else {
+            return false;
+        };
+        let normal = outward_normal(side);
+        let delta = (points[nb].0 - points[ep].0, points[nb].1 - points[ep].1);
+        let lateral = if perp_is_horizontal(side) {
+            delta.1.abs()
+        } else {
+            delta.0.abs()
+        };
+        let outward = delta.0 * normal.0 + delta.1 * normal.1;
+        if lateral > 1e-6 || outward < ROUTE_MARGIN - 1e-6 {
+            return false;
+        }
+    }
+    !points
+        .windows(2)
+        .any(|segment| segment_blocked(barrier, segment[0], segment[1]))
+}
+
+/// A channel coordinate on one axis that is outward of BOTH stub ends.
+///
+/// `a`/`b` are the two stub ends' coordinates on that axis and `an`/`bn` their
+/// outward normals' components. Two ends facing each other admit the midpoint;
+/// two facing the same way admit only the far side of both. When the feasible
+/// half-lines do not meet (ends facing away from each other but overlapping)
+/// there is no single channel and the midpoint is returned as a best effort —
+/// the caller validates the shape and falls back if it does not hold up.
+fn outward_channel(a: f64, an: f64, b: f64, bn: f64) -> f64 {
+    let (lo_a, hi_a) = if an > 0.0 {
+        (a, f64::INFINITY)
+    } else {
+        (f64::NEG_INFINITY, a)
+    };
+    let (lo_b, hi_b) = if bn > 0.0 {
+        (b, f64::INFINITY)
+    } else {
+        (f64::NEG_INFINITY, b)
+    };
+    let (lo, hi) = (lo_a.max(lo_b), hi_a.min(hi_b));
+    let mid = (a + b) / 2.0;
+    if lo <= hi {
+        mid.clamp(lo, hi)
+    } else {
+        mid
+    }
+}
+
+/// Orthogonal polylines from border point `s` (leaving `s_side`) to border
+/// point `t` (leaving `t_side`), each giving BOTH ends their mandatory
+/// perpendicular ROUTE_MARGIN stub before the first turn.
+///
+/// `connect_ends` joins the two BORDER points directly, which is why a spread
+/// endpoint can end up with its first bend inside its own node: the midpoint of
+/// two border coordinates says nothing about which way either border faces.
+/// These candidates are built from the STUB ENDS outward instead. They are
+/// returned cheapest-shape-first for the caller to validate, because neither
+/// shape is obstacle-aware.
+fn stub_aware_shapes(s: P, s_side: Side, t: P, t_side: Side) -> Vec<Vec<P>> {
+    let sn = outward_normal(s_side);
+    let tn = outward_normal(t_side);
+    let s1 = (s.0 + ROUTE_MARGIN * sn.0, s.1 + ROUTE_MARGIN * sn.1);
+    let t1 = (t.0 + ROUTE_MARGIN * tn.0, t.1 + ROUTE_MARGIN * tn.1);
+    let mut shapes: Vec<Vec<P>> = Vec::new();
+    if perp_is_horizontal(s_side) == perp_is_horizontal(t_side) {
+        // Parallel exits: one channel perpendicular to both stubs.
+        if perp_is_horizontal(s_side) {
+            for mx in [
+                outward_channel(s1.0, sn.0, t1.0, tn.0),
+                s1.0 + ROUTE_MARGIN * sn.0,
+                t1.0 + ROUTE_MARGIN * tn.0,
+            ] {
+                shapes.push(vec![s, s1, (mx, s1.1), (mx, t1.1), t1, t]);
+            }
+        } else {
+            for my in [
+                outward_channel(s1.1, sn.1, t1.1, tn.1),
+                s1.1 + ROUTE_MARGIN * sn.1,
+                t1.1 + ROUTE_MARGIN * tn.1,
+            ] {
+                shapes.push(vec![s, s1, (s1.0, my), (t1.0, my), t1, t]);
+            }
+        }
+    } else {
+        // Perpendicular exits: the single shared corner when it lies outward of
+        // both stubs, otherwise the two-channel jog that always does.
+        let corner = if perp_is_horizontal(s_side) {
+            (t1.0, s1.1)
+        } else {
+            (s1.0, t1.1)
+        };
+        shapes.push(vec![s, s1, corner, t1, t]);
+        let jog = if perp_is_horizontal(s_side) {
+            (s1.0, t1.1)
+        } else {
+            (t1.0, s1.1)
+        };
+        shapes.push(vec![s, s1, jog, t1, t]);
+    }
+    shapes.into_iter().map(simplify).collect()
+}
+
+fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>, barriers: &[Vec<Rect>]) {
+    let before = routes.to_vec();
+    let spread_sides = hub_spread_unchecked(routes, rects);
+    // Keep only the moves that left the connector sound. When one did not,
+    // prefer a stub-aware rebuild that KEEPS the new attachment point over
+    // giving the spread up: two edges back on one attachment point read as a
+    // single thick line, which is the defect this phase exists to remove.
+    // Reverting is the last resort — still far better than a connector that
+    // doubles back through its own node.
+    for (index, route) in routes.iter_mut().enumerate() {
+        if *route == before[index] || spread_is_sound(route, rects, &barriers[index]) {
+            continue;
+        }
+        let side_of_end = |is_source: bool| -> Option<Side> {
+            if let Some(side) = spread_sides.get(&(index, is_source)) {
+                return Some(*side);
+            }
+            let old = &before[index].points;
+            let last = old.len() - 1;
+            let (key, ep, nb) = if is_source {
+                (&before[index].source, 0, 1)
+            } else {
+                (&before[index].target, last, last - 1)
+            };
+            rects
+                .get(&BoxId::Node(key.clone()))
+                .and_then(|bx| attach_side(bx, old[ep], old[nb]))
+        };
+        let rebuilt = match (side_of_end(true), side_of_end(false)) {
+            (Some(s_side), Some(t_side)) => {
+                let last = route.points.len() - 1;
+                stub_aware_shapes(route.points[0], s_side, route.points[last], t_side)
+                    .into_iter()
+                    .map(|points| Route {
+                        points,
+                        ..route.clone()
+                    })
+                    .find(|candidate| spread_is_sound(candidate, rects, &barriers[index]))
+            }
+            _ => None,
+        };
+        *route = rebuilt.unwrap_or_else(|| before[index].clone());
+    }
+}
+
+/// Returns, for every endpoint it MOVED, the border side that endpoint now
+/// attaches to — keyed by `(route index, is_source)`. `hub_spread` needs it to
+/// rebuild a connector the spread broke without guessing the side back out of
+/// geometry that is, by then, wrong.
+fn hub_spread_unchecked(
+    routes: &mut [Route],
+    rects: &BTreeMap<BoxId, Rect>,
+) -> BTreeMap<(usize, bool), Side> {
     let mut groups: BTreeMap<(String, Side), Vec<End>> = BTreeMap::new();
 
     for (ri, route) in routes.iter().enumerate() {
@@ -1661,6 +2099,7 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     // record their new endpoint (both ends may still be spread by another group,
     // and each must stay on its own border) for the rebuild pass.
     let mut moved: BTreeMap<(usize, usize), (P, Side)> = BTreeMap::new();
+    let mut spread_sides: BTreeMap<(usize, bool), Side> = BTreeMap::new();
     for ((key, side), mut ends) in groups {
         if ends.len() < 2 {
             continue;
@@ -1707,6 +2146,7 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
             } else {
                 (fixed, along)
             };
+            spread_sides.insert((e.ri, e.ep == 0), side);
             if routes[e.ri].points.len() == 2 {
                 moved.insert((e.ri, e.ep), (new, side));
             } else {
@@ -1741,7 +2181,11 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         });
         routes[ri].points = connect_ends(s, s_side, t, t_side);
     }
+    spread_sides
 }
+
+#[cfg(test)]
+mod quality;
 
 #[cfg(test)]
 mod tests {
@@ -1936,7 +2380,8 @@ mod tests {
             key: None,
         };
         let mut routes = vec![mk("a"), mk("b")];
-        nudge(&mut routes);
+        let barriers = no_barriers(routes.len());
+        nudge(&mut routes, &BTreeMap::new(), &barriers);
         let y0 = routes[0].points[1].1;
         let y1 = routes[1].points[1].1;
         assert!(
@@ -1970,7 +2415,8 @@ mod tests {
                 key: None,
             });
         }
-        hub_spread(&mut routes, &rects);
+        let barriers = no_barriers(routes.len());
+        hub_spread(&mut routes, &rects, &barriers);
         for rt in &routes {
             let y = rt.points[0].1;
             assert!(
@@ -1996,7 +2442,8 @@ mod tests {
             key: None,
         };
         let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
-        hub_spread(&mut routes, &rects);
+        let barriers = no_barriers(routes.len());
+        hub_spread(&mut routes, &rects, &barriers);
         let ys: Vec<f64> = routes.iter().map(|rt| rt.points[0].1).collect();
         for rt in &routes {
             assert!(
@@ -2030,7 +2477,8 @@ mod tests {
             key: None,
         };
         let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
-        hub_spread(&mut routes, &rects);
+        let barriers = no_barriers(routes.len());
+        hub_spread(&mut routes, &rects, &barriers);
         for rt in &routes {
             let tgt = rects[&BoxId::Node(rt.target.clone())];
             let last = *rt.points.last().unwrap();
@@ -2071,6 +2519,13 @@ mod tests {
 
     fn nrect(x: f64, y: f64, w: f64, h: f64) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    /// Barrier lists for a hand-built route set with no scene behind it: the
+    /// repair phases' obstacle guard has nothing to check, so only the
+    /// structural stub rules apply.
+    fn no_barriers(n: usize) -> Vec<Vec<Rect>> {
+        vec![Vec::new(); n]
     }
 
     fn leafbox(k: &str) -> Box {
@@ -2885,6 +3340,7 @@ mod tests {
         let attach = |verts: &mut Vec<P>,
                       adj: &mut Vec<Vec<(usize, f64)>>,
                       on_border: &mut BTreeSet<usize>,
+                      stub_sides: &mut BTreeMap<usize, (Side, P)>,
                       bx: Rect|
          -> Vec<usize> {
             let mut cands: Vec<(P, Side)> = Vec::new();
@@ -2924,6 +3380,7 @@ mod tests {
                 let si = verts.len();
                 verts.push(stub);
                 adj.push(Vec::new());
+                stub_sides.insert(si, (side, pt));
                 adj[bi].push((si, ROUTE_MARGIN));
                 adj[si].push((bi, ROUTE_MARGIN));
                 for gi in 0..si {
@@ -2932,7 +3389,17 @@ mod tests {
                     }
                     let g = verts[gi];
                     let aligned = (g.0 - stub.0).abs() < 1e-9 || (g.1 - stub.1).abs() < 1e-9;
-                    if aligned && !segment_blocked(&inflated, stub, g) {
+                    let other_outward = match stub_sides.get(&gi) {
+                        Some(&(other_side, other_border)) => {
+                            stub_wiring_is_outward(other_border, other_side, stub)
+                        }
+                        None => true,
+                    };
+                    if aligned
+                        && stub_wiring_is_outward(pt, side, g)
+                        && other_outward
+                        && !segment_blocked(&inflated, stub, g)
+                    {
                         let len = (g.0 - stub.0).abs() + (g.1 - stub.1).abs();
                         adj[si].push((gi, len));
                         adj[gi].push((si, len));
@@ -2944,8 +3411,9 @@ mod tests {
         };
 
         let mut on_border: BTreeSet<usize> = BTreeSet::new();
-        let srcv = attach(&mut verts, &mut adj, &mut on_border, src);
-        let tgtv = attach(&mut verts, &mut adj, &mut on_border, tgt);
+        let mut stub_sides: BTreeMap<usize, (Side, P)> = BTreeMap::new();
+        let srcv = attach(&mut verts, &mut adj, &mut on_border, &mut stub_sides, src);
+        let tgtv = attach(&mut verts, &mut adj, &mut on_border, &mut stub_sides, tgt);
         (Ovg { verts, adj }, srcv, tgtv)
     }
 
@@ -2960,6 +3428,7 @@ mod tests {
     ) -> Vec<Route> {
         let membership = build_membership(boxes);
         let mut routes: Vec<Route> = Vec::new();
+        let mut route_obstacles: Vec<Vec<Rect>> = Vec::new();
         for (s, t, key, label_size) in edges {
             let Some((source, target, src, tgt)) = routable(rects, s, t) else {
                 continue;
@@ -2987,9 +3456,11 @@ mod tests {
                 target,
                 key: key.clone(),
             });
+            route_obstacles.push(inflated);
         }
-        hub_spread(&mut routes, rects);
-        nudge(&mut routes);
+        let barriers = repair_barriers(&routes, rects, &route_obstacles);
+        hub_spread(&mut routes, rects, &barriers);
+        nudge(&mut routes, rects, &barriers);
         routes
     }
 

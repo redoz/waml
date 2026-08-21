@@ -993,9 +993,18 @@ fn border_mid(rect: Rect, right: bool) -> (f64, f64) {
 /// A 4-point orthogonal loop out the node's right border into a side channel
 /// and back in (spec §2.5); the router skips self-edges, flow owns them.
 fn self_edge_route(rect: Rect, cfg: &FlowConfig) -> Vec<(f64, f64)> {
-    let out_x = rect.x + rect.w + cfg.node_gap / 2.0;
-    let y_top = rect.y + rect.h * 0.3;
-    let y_bot = rect.y + rect.h * 0.7;
+    use crate::solve::route::{CORNER_INSET, ROUTE_MARGIN};
+    // Half the node gap alone put the loop 16px off the border while every
+    // routed connector keeps ROUTE_MARGIN (24px) clear -- and the router
+    // INFLATES each node by that same margin before searching, so an edge
+    // routed past this node runs down a corridor the shallow loop sits inside,
+    // and crosses it. The loop has to clear the corridor it shares.
+    let out_x = rect.x + rect.w + (cfg.node_gap / 2.0).max(ROUTE_MARGIN);
+    // Keep the two ends off the corners for the same reason `attach` does, and
+    // never let them cross over on a short node.
+    let inset = CORNER_INSET.min(rect.h / 2.0);
+    let y_top = (rect.y + rect.h * 0.3).max(rect.y + inset);
+    let y_bot = (rect.y + rect.h * 0.7).min(rect.y + rect.h - inset);
     vec![
         (rect.x + rect.w, y_top),
         (out_x, y_top),
@@ -1017,6 +1026,34 @@ fn back_edge_uses_right(src: Rect, all_rects: &BTreeMap<String, Rect>) -> bool {
         .map(|rect| rect.x + rect.w)
         .fold(f64::NEG_INFINITY, f64::max);
     src.x + src.w / 2.0 >= (min_left + max_right) / 2.0
+}
+
+/// Half the gap between two back edges' attachment points on one border.
+const BACK_EDGE_PORT_STEP: f64 = 8.0;
+
+/// Where a back edge meets `rect`'s border.
+///
+/// Back edges bypass the shared router entirely (see `route_edges`): they are
+/// built here and appended to the route list, so the router's endpoint-spreading
+/// phase never sees them. Every one of them took its side's exact MIDPOINT --
+/// which is also the one attach candidate the router guarantees on every side.
+/// So a back edge and the ordinary edge coming the other way between the same
+/// two nodes attached at exactly the same two points and drew one connector on
+/// top of the other for the whole run out to the channel. The activity fixture
+/// ships that: `Retry -> Check` and `Check -> Retry` share 31px at Retry and
+/// 29px at Check.
+///
+/// The channels are already separated by `channel_index`; fan the PORTS out by
+/// the same index, alternating either side of the midpoint, never taking the
+/// midpoint itself, and never crossing into the corner band the router's own
+/// attach rule keeps clear.
+fn back_edge_port(rect: Rect, right: bool, channel_index: usize) -> (f64, f64) {
+    let (x, mid) = border_mid(rect, right);
+    let rank = (channel_index + 1).div_ceil(2) as f64;
+    let sign = if channel_index % 2 == 0 { 1.0 } else { -1.0 };
+    let room = (rect.h / 2.0 - crate::solve::route::CORNER_INSET).max(0.0);
+    let offset = (sign * rank * BACK_EDGE_PORT_STEP).clamp(-room, room);
+    (x, mid + offset)
 }
 
 fn back_edge_route(
@@ -1041,13 +1078,13 @@ fn back_edge_route(
     } else {
         min_left - cfg.node_gap - channel_step * channel_index as f64
     };
-    let (_, sy) = border_mid(src, use_right);
-    let (_, ty) = border_mid(tgt, use_right);
+    let source_port = back_edge_port(src, use_right, channel_index);
+    let target_port = back_edge_port(tgt, use_right, channel_index);
     vec![
-        border_mid(src, use_right),
-        (channel_x, sy),
-        (channel_x, ty),
-        border_mid(tgt, use_right),
+        source_port,
+        (channel_x, source_port.1),
+        (channel_x, target_port.1),
+        target_port,
     ]
 }
 

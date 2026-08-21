@@ -2,8 +2,8 @@ node states#Active @ 9,246 112x116
 node states#Done @ 54,417 22x22
 node states#Idle @ 0,74 131x116
 node states#Start @ 56,0 18x18
-route states#Active -> states#Active : 121,280 137,280 137,327 121,327
-route states#Active -> states#Idle : 121,304 163,304 163,132 131,132
+route states#Active -> states#Active : 121,280 145,280 145,327 121,327
+route states#Active -> states#Idle : 121,312 163,312 163,140 131,140
 route states#Start -> states#Idle : 65,18 65,74
 route states#Idle -> states#Active : 65,190 65,246
 route states#Active -> states#Done : 65,361 65,417

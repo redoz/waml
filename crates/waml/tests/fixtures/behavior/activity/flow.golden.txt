@@ -13,7 +13,7 @@ node flow#Start @ 62,0 18x18
 node flow#Validate @ 24,74 95x41
 group Frame "Intake" d0 @ 0,0 143x921
 group Frame "Fulfillment" d0 @ 143,0 229x921
-route flow#Retry -> flow#Check : 35,422 -8,422 -8,210 33,210
+route flow#Retry -> flow#Check : 35,430 -8,430 -8,218 33,218
 route flow#Start -> flow#Validate : 71,18 71,74
 route flow#Validate -> flow#Check : 71,115 71,171
 route flow#Check -> flow#Ship : 110,210 187,210 187,304
