@@ -1,10 +1,12 @@
 mod actions;
+mod dock_chrome;
 mod event;
 mod menus;
 mod navigation;
 mod shell;
 mod workspace;
 
+use self::dock_chrome::DockChrome;
 use self::navigation::{PendingAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
@@ -28,7 +30,6 @@ use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
 use crate::popup::palette::PaletteSectionModel;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
-use crate::project_settings::DockWidths;
 use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
@@ -850,20 +851,14 @@ pub struct App {
     /// 2026-08-11-read-as-scroll-design). Read in the `folder_closed` branch.
     #[rust]
     folder_menu_address: Option<String>,
+    /// Everything the two docked columns and the caption chrome that tracks
+    /// them remember between frames: responsive mode, column widths, the
+    /// open/close animations, and the last-applied layout/slot/seam guards.
+    /// See [`dock_chrome`] for the invariants that hold across them.
     #[rust]
-    narrow: bool,
-    #[rust]
-    pointer_in_narrow_dock: bool,
-    #[rust]
-    dock_layout: ResponsiveDockLayout,
-    /// User-dragged widths of the two dock columns, seeded from the open
-    /// project's `.waml/editor.json` and persisted back on drag release.
-    /// Replaces the compile-time `PROJECT_TREE_W` / `INSPECTOR_W` that
-    /// `responsive_layout` used to be handed.
-    #[rust]
-    dock_widths: DockWidths,
+    dock: DockChrome,
     /// The view-chain descent cap in force, from the same
-    /// `.waml/editor.json` read that seeds `dock_widths`. User/workspace
+    /// `.waml/editor.json` read that seeds `dock.widths()`. User/workspace
     /// scope ONLY -- a bundle cannot reach this, by construction: nothing
     /// builds `ChainLimits` from bundle frontmatter. Defaults to 20 when the
     /// project declares nothing.
@@ -886,37 +881,10 @@ pub struct App {
     /// both an edit and `EditorSession::replace` bump it.
     #[rust]
     nav_tree: Option<((u64, ProjectionMask, usize), crate::tree::ProjectTree)>,
-    /// Springy give, in px, currently shown by a collapsed-but-still-held
-    /// panel: `(tree, inspector)`. Non-zero only for the length of a drag that
-    /// has snapped the panel shut, and reset the moment the finger lifts or the
-    /// panel reopens. Not persisted -- it is gesture state, not a width.
-    #[rust]
-    dock_rubber: (f64, f64),
-    #[rust(DockMotion::new(1.0))]
-    tree_motion: DockMotion,
-    #[rust]
-    inspector_motion: DockMotion,
-    #[rust]
-    dock_next_frame: NextFrame,
     /// Whether `tab_row`'s history pair is mounted (guards the visibility
     /// writes).
     #[rust]
     history_controls_visible: bool,
-    /// Last-applied `tree_btn_slot` width (see `tree_toggle_layout`). Written
-    /// every frame of a dock motion, so it carries its own guard rather than
-    /// riding `dock_layout`'s. Negative so the first sync always writes.
-    #[rust(-1.0)]
-    tree_btn_slot_w: f64,
-    /// Last-applied `ChromeSeam` break (see `sync_chrome_seam`). Change-guard
-    /// only -- the seam owns the value it draws with.
-    #[rust]
-    seam_break: Option<(f64, f64, Vec4)>,
-    /// Whether a model is open, and so whether the tree-column toggle should be
-    /// showing at all. Which of its two seats it takes is `sync_dock_slots`'
-    /// call (see `tree_toggle_visibility`); this is the gate above that, so the
-    /// open/close paths don't have to know there are two buttons.
-    #[rust]
-    tree_toggle_mounted: bool,
     /// `--title` badge text, retained so a theme live-edit reload can re-push it
     /// (`Apply::Reload` wipes the widget's own `#[rust]` state).
     #[rust]
@@ -925,7 +893,7 @@ pub struct App {
     #[rust]
     agent_tint: Option<Vec4>,
     /// Last-pushed title-row width, so `sync_agent_row` only pushes on a real
-    /// change (same guard shape as `dock_layout`).
+    /// change (same "last applied" guard shape as `DockChrome`'s slot width).
     #[rust]
     agent_row_w: f64,
     /// Native screenshot verification marker. It is consumed after the first

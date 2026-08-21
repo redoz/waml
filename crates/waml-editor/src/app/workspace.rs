@@ -746,7 +746,7 @@ impl App {
         // column is open, tab row while it is collapsed) and sets the real
         // glyph. The `PanelLeft` written here is only the first-frame reading,
         // before any dock state has been sampled.
-        self.tree_toggle_mounted = true;
+        self.dock.set_toggle_mounted(true);
         {
             self.ui
                 .widget(cx, ids!(tree_btn))
@@ -790,9 +790,9 @@ impl App {
                 .widget(cx, ids!(doc_tabs))
                 .borrow_mut::<crate::doc_tabs::DocTabs>()
             {
-                tabs.set_narrow(cx, self.narrow);
+                tabs.set_narrow(cx, self.dock.is_narrow());
             }
-            self.dock_layout = ResponsiveDockLayout::default();
+            self.dock.invalidate_layout();
             self.sync_dock_slots(cx);
             return;
         }
@@ -806,9 +806,9 @@ impl App {
             .widget(cx, ids!(doc_tabs))
             .borrow_mut::<crate::doc_tabs::DocTabs>()
         {
-            tabs.set_narrow(cx, self.narrow);
+            tabs.set_narrow(cx, self.dock.is_narrow());
         }
-        self.dock_layout = ResponsiveDockLayout::default();
+        self.dock.invalidate_layout();
         self.sync_dock_slots(cx);
     }
 
@@ -884,7 +884,7 @@ impl App {
         self.open_dir = None;
         // Column widths are per-project state; closing the project returns them
         // to the defaults the next one will start from unless it has its own.
-        self.dock_widths = crate::project_settings::DockWidths::default();
+        self.dock.reset_widths();
         self.markdown_assets = None;
         self.sync_save_error(cx);
         self.show_start_screen(cx);
@@ -922,7 +922,7 @@ impl App {
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.ui.widget(cx, ids!(search_btn)).set_visible(cx, false);
-        self.tree_toggle_mounted = false;
+        self.dock.set_toggle_mounted(false);
         self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
         // Replacing the host with no tabs applies hidden chrome through the
         // same transition path used when the final document closes.

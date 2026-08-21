@@ -1,0 +1,216 @@
+# `App`: the field clusters, and the order to extract them
+
+Audit finding **A15 ("App shell")**: *"54-field `App` god object, impl across 7
+files/~7,800 lines, linear per-feature accretion."*
+
+The line count is not the problem. The problem is that every new feature has
+exactly one obvious place to put its state, so it keeps going there — and the
+next feature after that. This file exists so the next person does not have to
+re-derive which fields belong together before they can move any of them.
+
+## Method
+
+Every `self.<field>` reference in `app.rs` and the six `app/*.rs` impl files was
+counted per file. Fields that are read and written by the same code, in the same
+file, at the same points in the frame, are a type trying to exist. Fields spread
+evenly across all seven files are not — they are the app shell itself.
+
+Counts below are `self.<field>` references in the seven impl files at the time of
+writing (test files excluded). The seven files are `app.rs` (1,639),
+`actions.rs` (2,274), `event.rs` (403), `menus.rs` (483), `navigation.rs`
+(1,007), `shell.rs` (980), `workspace.rs` (1,061).
+
+## The clusters
+
+| # | Cluster | Fields | Refs | Lives in | Status |
+|---|---|---|---|---|---|
+| C1 | **Dock chrome** | 11 | 54 | `shell` (44), `workspace` (7), `actions` (3) | **extracted** → `app::dock_chrome::DockChrome` |
+| C11 | Core shell | 9 | 242 | everywhere | stays on `App` — this *is* the app shell |
+| C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | open |
+| C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
+| C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | open |
+| C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | open |
+| C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | open |
+| C3 | Command palette | 3 | 8 | `actions` (8) | open |
+| C8 | Zoom | 3 | 8 | `actions` (8) | open |
+| C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | open |
+| C10 | Context-menu subject | 2 | 5 | `actions` (5) | open |
+
+### C1 — Dock chrome (11 fields) — **extracted**
+
+`narrow`, `pointer_in_narrow_dock`, `dock_layout`, `dock_widths`,
+`dock_rubber`, `tree_motion`, `inspector_motion`, `dock_next_frame`,
+`tree_btn_slot_w`, `seam_break`, `tree_toggle_mounted`.
+
+Everything the two docked columns and the caption chrome that tracks them
+remember between frames. Now `App::dock: DockChrome`, in
+`crates/waml-editor/src/app/dock_chrome.rs`; the invariants that hold over the
+group are stated in that module's docs.
+
+### C2 — Search sessions (5 fields)
+
+`search`, `find`, `session_search`, `stepped_session_index`, `pending_reveal`.
+
+The bundle index plus the two live cursors over it — the Ctrl+F document-scoped
+one and the bundle-wide F3 one — and the reveal that is waiting on a tab to
+draw. `stepped_session_index` exists only because the cursor cannot be
+re-derived from a landing; that is the invariant a type would carry.
+
+### C3 — Command palette (3 fields)
+
+`palette_sections`, `palette_query`, `palette_hidden`.
+
+The state of ONE open Ctrl+K palette. All three are set together on open, read
+together on a row commit, and meaningless while it is closed — so they are one
+`Option<OpenPalette>`, not three fields. Covered by `app/tests/palette.rs`.
+
+### C4 — Web / remote boot (5 fields)
+
+`api_backend`, `pending_boot_bundle`, `pending_boot_index_hash`,
+`pending_api_boot`, `pending_api_save`.
+
+Four in-flight-request slots and the backend one of them commits. Every one is
+`#[cfg(target_arch = "wasm32")]` in practice (all five carry a
+`cfg_attr(..., allow(dead_code))` for the native build).
+
+### C5 — Open project + save (4 fields)
+
+`open_dir`, `open_name`, `save_timer`, `save_feedback`.
+
+Where the open bundle came from, what to call it, and the debounce/feedback of
+writing it back. `prevent_quit_after_failed_save` and `should_flush_save` are
+free functions over exactly this group.
+
+### C6 — View history + deferred navigation (5 fields)
+
+`view_history`, `pending_fragment`, `pending_anchor_restore`,
+`anchor_restore_generation`, `history_controls_visible`.
+
+The back/forward stack, the three things a navigation can still owe once the
+target tab draws, and the generation counter that tells a superseded restore to
+give up. `history_controls_visible` is the caption-side mount guard for the
+history pair.
+
+### C7 — Projection + tree cache (4 fields)
+
+`nav_state`, `projection_mask`, `nav_tree`, `chain_limits`.
+
+The tree's scope, the session-wide middleware mask, the descent cap, and the
+memoised build. `nav_tree`'s cache key is literally `(revision, mask, chain
+cap)` — the type is already written down, as a tuple.
+
+### C8 — Zoom (3 fields)
+
+`wheel_zoom`, `wheel_zoom_target`, `zoom_state`.
+
+A wheel-delta accumulator, the target it is banking for, and the live percent
+per target. The accumulator resets when the target changes; that coupling is the
+whole reason the second field exists.
+
+### C9 — Agent window marks (3 fields)
+
+`agent_badge`, `agent_tint`, `agent_row_w`.
+
+`--title` / `--color` launch flags, retained so a theme live-edit reload can
+re-push them, plus the last-pushed row width. Note `agent_row_w` is the same
+"last applied, guard the write" shape as C1's `tree_btn_slot_w`.
+
+### C10 — Context-menu subject (2 fields)
+
+`node_menu_key`, `folder_menu_address`.
+
+What the currently-open context menu is *about*, stashed at open time because
+the committed menu id carries no subject. Two `Option<String>`s where at most
+one is ever `Some` — an enum, mis-spelled as two fields.
+
+### C11 — Core shell (9 fields) — stays
+
+`ui`, `session`, `documents`, `markdown_assets`, `markdown_emphasis`,
+`editor_shown`, `start_recents`, `fps_meter`, `capture_ready`.
+
+The widget tree, the model, the open documents, and a handful of
+genuinely-app-wide settings. `ui` (78 refs), `session` (83) and `documents` (55)
+are read from six of the seven files each; that is not accretion, that is what
+`App` is for. Do not chase these.
+
+## Why C1 was extracted first
+
+Best ratio of moved fields to risk, by some distance:
+
+* **Biggest single cluster** — 11 of 54 fields, 20% of the god object, in one
+  move.
+* **Concentrated.** 44 of its 54 references are in one file (`shell.rs`); the
+  other ten are in two files and are all one-liners. A cluster touched from all
+  seven files would have been a bad first pick regardless of size.
+* **It moves state, not widget ownership.** Not one widget changed parent, and
+  no `script_mod` registration order changed — which is where a makepad
+  refactor breaks invisibly.
+* **It is the one UI cluster with real headless coverage.**
+  `app/tests/shell.rs` mounts the production shell, *draws* the dock, and
+  asserts slot/host/body rects wide and narrow, both splitter drags including
+  the collapse-with-rubber and the reopen, and the toggle-seat continuity across
+  the whole collapse. Those tests pin the extraction to observable geometry
+  rather than to "it compiles".
+
+Runners-up and why not:
+
+* **C4 (web boot, 5 fields)** is equally concentrated but `cargo test
+  --workspace` cannot execute a single line of it — it is all wasm-gated. A
+  refactor whose only verification is a type-check is not a first move.
+* **C6 (view history, 5 fields)** is the best-covered cluster in the file, but
+  its 25 references in `navigation.rs` are threaded through the deferred-restore
+  generation logic, which is the subtlest thing in the app module. Worth doing;
+  not worth doing first.
+* **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
+  Cheap, but they leave the shape of the problem untouched.
+
+Two fields did not survive the move, both write-only records that no code read:
+
+* `pointer_in_narrow_dock` — residue of the `Peek` state machine deleted in
+  `475a3959`. It was written on every narrow-mode mouse move and never read.
+* `dock_next_frame` — the `NextFrame` handle from `cx.new_next_frame()`. The
+  frame is requested by the call; storing the handle did nothing. The one test
+  that read it was asserting "the motion is still running", which is
+  `DockChrome::motions_active()`.
+
+Both were invisible while `#[derive(Script)]` was generating a read of every
+field on `App`. Moving a cluster into a plain struct is what surfaces them —
+which is an argument for doing the rest.
+
+## Recommended order for the remaining clusters
+
+Cheap-and-safe first, so the pattern is established before the risky ones; the
+untestable one last.
+
+1. **C8 Zoom (3)** — one file, pure state, `zoom.rs` already owns the types.
+   The cheapest possible next move.
+2. **C3 Palette (3)** — one file, one lifetime (open → commit → closed), so it
+   collapses to `Option<OpenPalette>`. Covered by `app/tests/palette.rs`.
+3. **C10 Context-menu subject (2)** — one file, and the move *fixes* something:
+   two `Option`s that must never both be `Some` become one enum.
+4. **C9 Agent marks (3)** — two files, nine references. No test coverage, but
+   the behaviour is "a coloured pill in the caption", which a human verifies in
+   one glance.
+5. **C6 View history + deferred navigation (5)** — the largest remaining win
+   with real coverage behind it (`app/tests/navigation.rs`, 3,504 lines). Fold
+   `history_controls_visible` in with it.
+6. **C7 Projection + tree cache (4)** — do it *after* C6, since both live in
+   `navigation.rs` and doing them together would make the diff unreviewable.
+   Higher stakes: a wrong mask looks like a working view with content missing.
+7. **C5 Open project + save (4)** — `workspace.rs` only, but it touches disk and
+   the quit path. Land it when someone can exercise a failing save by hand.
+8. **C2 Search sessions (5)** — spread over four files and the most entangled
+   with `documents` and `ui`. Last of the tractable ones.
+9. **C4 Web / remote boot (5)** — last, not because it is hard but because
+   nothing in `cargo test --workspace` executes it. Move it only in a session
+   that can verify a `?bundle=` / `?api=` boot in a real browser.
+
+C11 stays where it is.
+
+## The rule this file is really for
+
+`App` will grow another field the next time a feature lands. The question to ask
+is not "does it fit on `App`" — everything fits on `App` — but **"which of the
+clusters above does it belong to, and is that cluster a type yet?"** If the
+answer is C1, it goes in `DockChrome` and `App` does not change. That is the
+whole point of doing the first one.

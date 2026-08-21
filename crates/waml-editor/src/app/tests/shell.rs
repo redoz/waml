@@ -1,6 +1,7 @@
-use super::super::shell::{
-    dock_toggle_icon, panel_body_w, tree_toggle_layout, DEFAULT_TAB_ROW_LEAD_W, TREE_BTN_W,
+use super::super::dock_chrome::{
+    panel_body_w, tree_toggle_layout, DEFAULT_TAB_ROW_LEAD_W, TREE_BTN_W,
 };
+use super::super::shell::dock_toggle_icon;
 use super::*;
 
 const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
@@ -286,12 +287,8 @@ fn configure_mounted_dock(
     cx.windows[window_id].window_geom.inner_size = size;
     cx.windows[window_id].window_geom.outer_size = size;
     app.apply_dock_states(cx, tree, inspector);
-    app.tree_motion = DockMotion::new(if tree == DockState::Pinned { 1.0 } else { 0.0 });
-    app.inspector_motion = DockMotion::new(if inspector == DockState::Pinned {
-        1.0
-    } else {
-        0.0
-    });
+    app.dock
+        .seat_motions(tree == DockState::Pinned, inspector == DockState::Pinned);
     let header_widget = app.ui.widget(cx, ids!(document_header));
     let mut header = header_widget
         .borrow_mut::<crate::document_header::DocumentHeader>()
@@ -361,9 +358,12 @@ fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
     let closing = draw_mounted_dock(&mut cx, &app, size);
 
     assert_eq!(app.dock_states(&mut cx), (DockState::Flag, DockState::Flag));
-    assert_near(app.dock_layout.left_slot, crate::tree_panel::PROJECT_TREE_W);
     assert_near(
-        app.dock_layout.right_slot,
+        app.dock.layout().left_slot,
+        crate::tree_panel::PROJECT_TREE_W,
+    );
+    assert_near(
+        app.dock.layout().right_slot,
         crate::inspector_panel::INSPECTOR_W,
     );
     // The panel BODY is the column minus the splitter strip it shares the host
@@ -381,7 +381,8 @@ fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
         Some(Icon::PanelRightOpen)
     );
     assert!(!drawn_header_right_dock_active(&mut cx, &app));
-    assert_ne!(app.dock_next_frame, NextFrame::default());
+    // Still animating, so the sync that just ran asked for another frame.
+    assert!(app.dock.motions_active());
 }
 
 // Scenario: NATIVE-009
@@ -401,8 +402,11 @@ fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
     assert_near(wide.body.size.x, wide_size.x);
     assert_near(wide.left_slot.size.x, crate::tree_panel::PROJECT_TREE_W);
     assert_near(wide.right_slot.size.x, crate::inspector_panel::INSPECTOR_W);
-    assert_near(app.dock_layout.left_slot, app.dock_layout.tree_body);
-    assert_near(app.dock_layout.right_slot, app.dock_layout.inspector_body);
+    assert_near(app.dock.layout().left_slot, app.dock.layout().tree_body);
+    assert_near(
+        app.dock.layout().right_slot,
+        app.dock.layout().inspector_body,
+    );
     assert_near(
         wide.header.pos.x,
         wide.left_slot.pos.x + wide.left_slot.size.x,
@@ -538,7 +542,7 @@ fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
 #[test]
 fn visible_mounted_document_header_is_client_area_but_collapsed_header_is_not() {
     let (mut cx, mut app) = navigation_app();
-    app.narrow = true;
+    app.dock.force_narrow(true);
     let segment = BreadcrumbSegment {
         title: "Order".into(),
         target: NavigationTarget::Document {
@@ -620,14 +624,14 @@ fn mounted_tree_splitter_drag_widens_the_left_slot() {
 
     app.apply_splitter_drag(&mut cx, DockEdge::Left, 420.0);
 
-    assert_near(app.dock_widths.tree_w, 420.0);
-    assert_near(app.dock_layout.left_slot, 420.0);
+    assert_near(app.dock.widths().tree_w, 420.0);
+    assert_near(app.dock.layout().left_slot, 420.0);
     let drawn = draw_mounted_dock(&mut cx, &app, size);
     assert_near(drawn.left_slot.size.x, 420.0);
     assert_near(drawn.tree_panel.size.x, panel_body_w(420.0));
     // The inspector is untouched by the other edge's drag.
     assert_near(
-        app.dock_widths.inspector_w,
+        app.dock.widths().inspector_w,
         crate::inspector_panel::INSPECTOR_W,
     );
 }
@@ -650,8 +654,8 @@ fn mounted_inspector_splitter_drag_narrows_the_right_slot() {
     // 1200 - 950 = 250 wide.
     app.apply_splitter_drag(&mut cx, DockEdge::Right, 950.0);
 
-    assert_near(app.dock_widths.inspector_w, 250.0);
-    assert_near(app.dock_layout.right_slot, 250.0);
+    assert_near(app.dock.widths().inspector_w, 250.0);
+    assert_near(app.dock.layout().right_slot, 250.0);
     let drawn = draw_mounted_dock(&mut cx, &app, size);
     assert_near(drawn.right_slot.size.x, 250.0);
     assert_near(drawn.inspector_panel.size.x, panel_body_w(250.0));
@@ -683,18 +687,18 @@ fn mounted_tree_splitter_drag_past_collapse_flags_the_panel() {
     // Inside the sticky band [collapse, min): still open, held at min.
     app.apply_splitter_drag(&mut cx, DockEdge::Left, mid_band);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
-    assert_near(app.dock_widths.tree_w, l.min);
+    assert_near(app.dock.widths().tree_w, l.min);
 
     // Past it: collapsed.
     app.apply_splitter_drag(&mut cx, DockEdge::Left, l.collapse - 20.0);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
     // The width the panel will reopen at is the last OPEN one, not the
     // threshold it was dragged through.
-    assert_near(app.dock_widths.tree_w, l.min);
+    assert_near(app.dock.widths().tree_w, l.min);
     // While shut and still held, the panel shows springy give rather than
     // sitting flush -- and never more than the cap.
-    assert!(app.dock_rubber.0 > 0.0);
-    assert!(app.dock_rubber.0 <= crate::splitter::RUBBER_MAX_W);
+    assert!(app.dock.rubber().0 > 0.0);
+    assert!(app.dock.rubber().0 <= crate::splitter::RUBBER_MAX_W);
 
     // Hysteresis: a collapsed panel needs strictly more travel back out than it
     // took to close, and only then reopens.
@@ -702,9 +706,9 @@ fn mounted_tree_splitter_drag_past_collapse_flags_the_panel() {
     assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
     app.apply_splitter_drag(&mut cx, DockEdge::Left, 260.0);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
-    assert_near(app.dock_widths.tree_w, 260.0);
+    assert_near(app.dock.widths().tree_w, 260.0);
     // Reopening releases the spring.
-    assert_eq!(app.dock_rubber.0, 0.0);
+    assert_eq!(app.dock.rubber().0, 0.0);
 }
 
 /// The caption search button is the only VISIBLE route to the palette, and it

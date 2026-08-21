@@ -191,7 +191,7 @@ impl App {
             .as_icon_button()
             .clicked(actions);
         if tree_toggled {
-            if self.narrow {
+            if self.dock.is_narrow() {
                 let (tree, inspector) = self.dock_states(cx);
                 let (tree, inspector) =
                     crate::dock::narrow_toggle_states(tree, inspector, crate::dock::DockEdge::Left);
@@ -214,7 +214,7 @@ impl App {
             document_header_action,
             Some(crate::document_header::DocumentHeaderAction::ToggleRightDock)
         ) {
-            if self.narrow {
+            if self.dock.is_narrow() {
                 let (tree, inspector) = self.dock_states(cx);
                 let (tree, inspector) = crate::dock::narrow_toggle_states(
                     tree,
@@ -1276,7 +1276,7 @@ impl App {
                     .is_some_and(|mut tree| tree.reveal_target(cx, &target));
                 if accepted {
                     let (_, inspector) = self.dock_states(cx);
-                    let inspector = if self.narrow {
+                    let inspector = if self.dock.is_narrow() {
                         DockState::Flag
                     } else {
                         inspector

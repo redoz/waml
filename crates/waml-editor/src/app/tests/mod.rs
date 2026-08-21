@@ -1,7 +1,7 @@
 use super::*;
 use crate::doc_tabs::{DocTab, OpenTabs};
 use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, ViewData};
-use crate::dock::{DockEdge, DockMotion, DockState};
+use crate::dock::{DockEdge, DockState};
 use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
 use crate::document_host::DocumentCommand;
 use crate::icons::{Icon, IconSet};

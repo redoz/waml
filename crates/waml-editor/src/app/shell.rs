@@ -1,3 +1,4 @@
+use super::dock_chrome::{panel_body_w, DEFAULT_TAB_ROW_LEAD_W};
 use super::*;
 
 pub(super) fn open_overlay_contains(
@@ -24,59 +25,6 @@ pub(super) fn dock_toggle_icon(
         (DockEdge::Right, true) => Icon::PanelRightOpen,
         (DockEdge::Right, false) => Icon::PanelRightClose,
     }
-}
-
-/// Where the tree-column toggle sits, as `(visible, slot_w)`.
-///
-/// There is ONE toggle and it lives in the caption's tab row. `tree_btn_slot`
-/// is what moves it: an empty runtime-sized spacer leading the row, with the
-/// button as its next sibling.
-///
-/// The slot is a WIDTH rather than a flag because a flag is what made this
-/// jerk. Open, the button ends where the tree column does, so the history pair
-/// after it starts on the column's right edge; collapsed, the slot closes to
-/// nothing and the button leads the row. Both ends are the same continuous
-/// number, so nothing jumps at the handoff -- the arrangement this replaced
-/// faded a second, panel-docked button in at the end of the collapse and added
-/// its 32px in a single frame.
-///
-/// `lead_w` is what the logo costs before the row's turtle starts; the
-/// slot only makes up the difference to the column's edge. Lerped off the
-/// RESERVATION rather than the animating body, which keeps the run monotonic (a
-/// body-derived target dips below the button's own width while the column is
-/// narrower than `lead_w`).
-///
-/// Narrow is the exception: the panel floats instead of reserving, so the column
-/// has no edge to sit on and the button just leads the row throughout.
-pub(super) fn tree_toggle_layout(
-    mounted: bool,
-    narrow: bool,
-    tree_body: f64,
-    tree_w: f64,
-    lead_w: f64,
-) -> (bool, f64) {
-    if !mounted {
-        return (false, 0.0);
-    }
-    if narrow {
-        return (true, 0.0);
-    }
-    // `tree_w` is the column's LIVE reserved width, not the compile-time
-    // default: a drag that resizes the column moves body and reservation
-    // together, so `progress` stays 1 and the button tracks the edge without
-    // sliding. Only a snap (collapse/reopen), which animates the body against a
-    // fixed reservation, runs `progress` between the ends.
-    let progress = if tree_w > 0.0 {
-        (tree_body / tree_w).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    // The toggle's own footprint comes off the target: the slot leads it, so it
-    // is `lead_w + slot + TREE_BTN_W` that has to land on the column's edge --
-    // the toggle sits flush with the split, and the burger trailing it is the
-    // first thing right of the split.
-    let open_w = (tree_w - lead_w - TREE_BTN_W).max(0.0);
-    (true, open_w * progress)
 }
 
 pub(super) fn should_dismiss_narrow_dock(
@@ -111,41 +59,6 @@ pub(super) fn project_document_header(
         Vec::new()
     };
     (segments, chrome.right_dock, chrome.view_toggle)
-}
-
-/// Footprint of one slot-carried caption control: the DSL `width` (30) plus its
-/// 2px margin. The burger and the tree toggle are both this wide and ride the
-/// slot in that order -- the toggle ending on the split, the burger just past
-/// it -- so the slot is sized against the toggle's copy of it (see
-/// `tree_toggle_layout`).
-pub(super) const TREE_BTN_W: f64 = 32.0;
-
-/// `tab_row`'s x within the caption, as the DSL declares it: `title_row`'s 2px
-/// left padding and the 44px logo. The burger is NOT part of the lead any more
-/// -- it moved into the row, onto the slot. Only used before the row has a drawn
-/// rect to measure (see `sync_dock_slots`).
-pub(super) const DEFAULT_TAB_ROW_LEAD_W: f64 = 46.0;
-
-pub(super) const NARROW_ENTER_W: f64 = 640.0;
-pub(super) const NARROW_EXIT_W: f64 = 680.0;
-
-/// Width a dock panel's BODY draws at inside a host of `host_w`: the host
-/// width less the splitter strip that shares the host with it. Floored at zero
-/// so a mid-animation host narrower than the strip cannot go negative.
-///
-/// This is the spec's stated consequence of mounting the splitter inside the
-/// panel host: the stored/persisted width is the whole column, and the body is
-/// `SPLITTER_W` narrower than that number.
-pub(super) fn panel_body_w(host_w: f64) -> f64 {
-    (host_w - crate::panel_splitter::SPLITTER_W).max(0.0)
-}
-
-pub(super) fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
-    if narrow {
-        viewport_w <= NARROW_EXIT_W
-    } else {
-        viewport_w < NARROW_ENTER_W
-    }
 }
 
 impl App {
@@ -310,7 +223,13 @@ impl App {
         event: &Event,
         popup_was_open: bool,
     ) {
-        if !self.narrow {
+        if !self.dock.is_narrow() || popup_was_open {
+            return;
+        }
+        let Event::MouseDown(e) = event else {
+            return;
+        };
+        if !e.button.is_primary() {
             return;
         }
         let (tree_state, inspector_state) = self.dock_states(cx);
@@ -327,36 +246,15 @@ impl App {
             .map(|panel| panel.drawn_rect(cx))
             .unwrap_or_default();
         let canvas_rect = self.ui.widget(cx, ids!(canvas)).area().rect(cx);
-        let contains = |point| {
-            open_overlay_contains(
-                point,
-                tree_state,
-                tree_rect,
-                inspector_state,
-                inspector_rect,
-            )
-        };
-        match event {
-            Event::MouseMove(e) => {
-                self.pointer_in_narrow_dock = contains(e.abs);
-            }
-            Event::MouseDown(e) if e.button.is_primary() => {
-                let inside = contains(e.abs);
-                self.pointer_in_narrow_dock = inside;
-                if !popup_was_open
-                    && should_dismiss_narrow_dock(
-                        e.abs,
-                        canvas_rect,
-                        tree_state,
-                        tree_rect,
-                        inspector_state,
-                        inspector_rect,
-                    )
-                {
-                    self.apply_dock_states(cx, DockState::Flag, DockState::Flag);
-                }
-            }
-            _ => {}
+        if should_dismiss_narrow_dock(
+            e.abs,
+            canvas_rect,
+            tree_state,
+            tree_rect,
+            inspector_state,
+            inspector_rect,
+        ) {
+            self.apply_dock_states(cx, DockState::Flag, DockState::Flag);
         }
     }
 
@@ -364,8 +262,7 @@ impl App {
     /// and overlay hosts together so one layout model owns all dock geometry.
     pub(super) fn sync_dock_slots(&mut self, cx: &mut Cx) {
         let viewport_w = self.window_bounds(cx).size.x;
-        let next = next_narrow(self.narrow, viewport_w);
-        if next != self.narrow {
+        if self.dock.reconcile_narrow(viewport_w) {
             if let Some(mut root) = self
                 .ui
                 .widget(cx, ids!(popup_root))
@@ -375,8 +272,7 @@ impl App {
                     root.close(cx);
                 }
             }
-            self.narrow = next;
-            if self.narrow {
+            if self.dock.is_narrow() {
                 let (tree, inspector) = self.dock_states(cx);
                 let (tree, inspector) = crate::dock::narrow_entry_states(tree, inspector);
                 self.apply_dock_states(cx, tree, inspector);
@@ -386,51 +282,19 @@ impl App {
                 .widget(cx, ids!(doc_tabs))
                 .borrow_mut::<crate::doc_tabs::DocTabs>()
             {
-                tabs.set_narrow(cx, self.narrow);
+                tabs.set_narrow(cx, self.dock.is_narrow());
             }
             cx.redraw_all();
         }
 
         let (tree_state, inspector_state) = self.dock_states(cx);
         let now = cx.seconds_since_app_start();
-        self.tree_motion.request(
-            if tree_state == DockState::Pinned {
-                1.0
-            } else {
-                0.0
-            },
+        let (tree_value, inspector_value) = self.dock.drive_motions(
+            tree_state == DockState::Pinned,
+            inspector_state == DockState::Pinned,
             now,
         );
-        self.inspector_motion.request(
-            if inspector_state == DockState::Pinned {
-                1.0
-            } else {
-                0.0
-            },
-            now,
-        );
-        let tree_value = self.tree_motion.value();
-        let inspector_value = self.inspector_motion.value();
-        let mut layout = crate::dock::responsive_layout(
-            self.narrow,
-            viewport_w,
-            tree_value,
-            inspector_value,
-            self.dock_widths.tree_w,
-            self.dock_widths.inspector_w,
-        );
-        // Springy give for a collapsed panel still under the finger. Applied to
-        // the SLOT as well as the body so the sliver pushes the canvas rather
-        // than floating over it, keeping the drag physically honest. Narrow
-        // mode reserves no slots and hides the splitters, so it has no give.
-        if !self.narrow {
-            let (tree_rubber, inspector_rubber) = self.dock_rubber;
-            layout.tree_body = crate::splitter::with_rubber(layout.tree_body, tree_rubber);
-            layout.left_slot = crate::splitter::with_rubber(layout.left_slot, tree_rubber);
-            layout.inspector_body =
-                crate::splitter::with_rubber(layout.inspector_body, inspector_rubber);
-            layout.right_slot = crate::splitter::with_rubber(layout.right_slot, inspector_rubber);
-        }
+        let layout = self.dock.layout_for(viewport_w);
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
@@ -445,8 +309,7 @@ impl App {
         {
             panel.set_presentation_visible(cx, crate::dock::presentation_visible(inspector_value));
         }
-        if layout != self.dock_layout {
-            self.dock_layout = layout;
+        if self.dock.commit_layout(layout) {
             if let Some(mut view) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
                 view.walk.width = Size::Fixed(layout.left_slot);
             }
@@ -481,7 +344,7 @@ impl App {
         }
         // Splitters are wide-mode only: in narrow mode the panel floats over
         // the center at a viewport-capped width, so there is no edge to drag.
-        let splitters_visible = !self.narrow;
+        let splitters_visible = !self.dock.is_narrow();
         for id in [ids!(tree_splitter), ids!(inspector_splitter)] {
             if let Some(mut view) = self
                 .ui
@@ -510,18 +373,11 @@ impl App {
                 DEFAULT_TAB_ROW_LEAD_W
             }
         };
-        let (tree_visible, row_slot_w) = tree_toggle_layout(
-            self.tree_toggle_mounted,
-            self.narrow,
-            layout.tree_body,
-            self.dock_widths.tree_w,
-            lead_w,
-        );
+        let (tree_visible, row_slot_w) = self.dock.tree_toggle_layout(lead_w);
         // The slot is what keeps the handoff smooth, so it is written every
-        // frame of the motion -- outside the `dock_layout` change guard above,
-        // which only fires when the reservation itself changes.
-        if (row_slot_w - self.tree_btn_slot_w).abs() > 0.01 {
-            self.tree_btn_slot_w = row_slot_w;
+        // frame of the motion -- outside the layout change guard above, which
+        // only fires when the reservation itself changes.
+        if self.dock.commit_tree_slot_w(row_slot_w) {
             if let Some(mut slot) = self.ui.widget(cx, ids!(tree_btn_slot)).borrow_mut::<View>() {
                 slot.walk.width = Size::Fixed(row_slot_w);
             }
@@ -561,7 +417,7 @@ impl App {
         // header below that. (The tree column is the other side of this: it sits
         // OUTSIDE `center_column`, but the caption is a non-client band, so it
         // starts at the same y rather than reaching up into the strip.)
-        let inspector_top = crate::dock::narrow_inspector_top(self.narrow, header_height);
+        let inspector_top = crate::dock::narrow_inspector_top(self.dock.is_narrow(), header_height);
         if let Some(mut view) = self
             .ui
             .widget(cx, ids!(inspector_host))
@@ -572,8 +428,8 @@ impl App {
                 cx.redraw_all();
             }
         }
-        if self.tree_motion.is_active() || self.inspector_motion.is_active() {
-            self.dock_next_frame = cx.new_next_frame();
+        if self.dock.motions_active() {
+            cx.new_next_frame();
         }
         self.sync_chrome_seam(cx);
     }
@@ -588,7 +444,8 @@ impl App {
     /// together only because opening a project is when both are needed.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) fn load_dock_widths(&mut self, cx: &mut Cx, project_root: &std::path::Path) {
-        self.dock_widths = crate::project_settings::load(project_root).dock;
+        self.dock
+            .set_widths(crate::project_settings::load(project_root).dock);
         self.chain_limits = crate::project_config::load(project_root).chain_limits();
         self.sync_dock_slots(cx);
     }
@@ -597,7 +454,7 @@ impl App {
     /// the panels float over the center at a viewport-capped width and the
     /// splitters are hidden.
     pub(super) fn observe_panel_splitters(&mut self, cx: &mut Cx, actions: &Actions) {
-        if self.narrow {
+        if self.dock.is_narrow() {
             return;
         }
         let tree = self.ui.widget(cx, ids!(tree_splitter)).as_panel_splitter();
@@ -615,9 +472,7 @@ impl App {
         // Persistence is on RELEASE only -- never per drag frame, which would
         // hammer the disk for the length of a gesture.
         if tree.released(actions) || inspector.released(actions) {
-            // The spring lets go with the finger: whatever sliver was being
-            // held out springs back flush, animated by the same DockMotion.
-            self.dock_rubber = (0.0, 0.0);
+            self.dock.release_drag();
             self.sync_dock_slots(cx);
             self.persist_dock_widths();
         }
@@ -634,48 +489,21 @@ impl App {
         edge: crate::dock::DockEdge,
         pointer_x: f64,
     ) {
-        use crate::dock::{DockEdge, DockEvent};
-        use crate::splitter::{DockLimits, DragOutcome};
+        use crate::dock::DockEdge;
+        use crate::splitter::DockLimits;
 
         let viewport_w = self.window_bounds(cx).size.x;
         let (tree_state, inspector_state) = self.dock_states(cx);
+        let layout = self.dock.layout();
         let (limits, state, other_slot_w) = match edge {
-            DockEdge::Left => (DockLimits::TREE, tree_state, self.dock_layout.right_slot),
-            DockEdge::Right => (
-                DockLimits::INSPECTOR,
-                inspector_state,
-                self.dock_layout.left_slot,
-            ),
+            DockEdge::Left => (DockLimits::TREE, tree_state, layout.right_slot),
+            DockEdge::Right => (DockLimits::INSPECTOR, inspector_state, layout.left_slot),
         };
         let collapsed = state != DockState::Pinned;
         let outcome =
             crate::splitter::drag(edge, limits, pointer_x, viewport_w, other_slot_w, collapsed);
 
-        let set_width = |widths: &mut crate::project_settings::DockWidths, w: f64| match edge {
-            DockEdge::Left => widths.tree_w = w,
-            DockEdge::Right => widths.inspector_w = w,
-        };
-        let set_rubber = |rubber: &mut (f64, f64), r: f64| match edge {
-            DockEdge::Left => rubber.0 = r,
-            DockEdge::Right => rubber.1 = r,
-        };
-        let event = match outcome {
-            DragOutcome::Width(w) => {
-                set_width(&mut self.dock_widths, w);
-                set_rubber(&mut self.dock_rubber, 0.0);
-                None
-            }
-            DragOutcome::Collapse { rubber } => {
-                set_rubber(&mut self.dock_rubber, rubber);
-                Some(DockEvent::Close)
-            }
-            DragOutcome::Reopen(w) => {
-                set_width(&mut self.dock_widths, w);
-                set_rubber(&mut self.dock_rubber, 0.0);
-                Some(DockEvent::Open)
-            }
-        };
-        if let Some(event) = event {
+        if let Some(event) = self.dock.apply_drag(edge, outcome) {
             let (tree, inspector) = match edge {
                 DockEdge::Left => (crate::dock::next(tree_state, event), inspector_state),
                 DockEdge::Right => (tree_state, crate::dock::next(inspector_state, event)),
@@ -695,7 +523,7 @@ impl App {
             return;
         };
         let mut settings = crate::project_settings::load(&root);
-        settings.dock = self.dock_widths;
+        settings.dock = self.dock.widths();
         if let Err(error) = crate::project_settings::store(&root, &settings) {
             log!("failed to store dock widths for {root:?}: {error}");
         }
@@ -778,17 +606,9 @@ impl App {
             .widget(cx, ids!(doc_tabs))
             .borrow::<crate::doc_tabs::DocTabs>()
             .and_then(|tabs| tabs.active_card_span());
-        let changed = match (span, self.seam_break) {
-            (None, None) => false,
-            (Some((a0, a1, ac)), Some((b0, b1, bc))) => {
-                (a0 - b0).abs() > 0.5 || (a1 - b1).abs() > 0.5 || ac != bc
-            }
-            _ => true,
-        };
-        if !changed {
+        if !self.dock.commit_seam_break(span) {
             return;
         }
-        self.seam_break = span;
         if let Some(mut seam) = self
             .ui
             .widget(cx, ids!(chrome_seam))

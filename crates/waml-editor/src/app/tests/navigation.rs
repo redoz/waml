@@ -1323,7 +1323,7 @@ fn breadcrumb_reveal_pins_tree_without_navigation() {
 #[test]
 fn breadcrumb_reveal_in_narrow_mode_closes_inspector() {
     let (mut cx, mut app) = navigation_app_with_active_order();
-    app.narrow = true;
+    app.dock.force_narrow(true);
     app.apply_dock_states(&mut cx, DockState::Flag, DockState::Pinned);
     let active = app.documents.active_id();
     let history_len = app.view_history.len();
@@ -1530,7 +1530,7 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
     // (distinct from every concept tab).
     let (mut cx, mut app) = navigation_app();
     let mut browser = FakeBrowser::default();
-    app.narrow = true;
+    app.dock.force_narrow(true);
     app.nav_state = NavState {
         scope: "/sales".into(),
     };
@@ -2086,7 +2086,7 @@ fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
     // The minimal harness has no mounted Window bounds, so keep responsive
     // mode explicitly narrow instead of letting a zero-width query perform
     // the initial wide-to-narrow reconciliation during the style check.
-    app.narrow = true;
+    app.dock.force_narrow(true);
     draw_document_header(&mut cx, &app, dvec2(480.0, 30.0));
     let right_button_uid = app
         .ui
