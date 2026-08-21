@@ -623,3 +623,349 @@ fn completion_is_advertised_and_returns_items_over_stdio() {
     drop(rx);
     let _ = reader.join();
 }
+
+// ---------------------------------------------------------------------------
+// Document-ownership scenarios (A20).
+//
+// These drive a real workspace root on disk, because the whole question is what
+// the server believes about disk versus what the client last sent it. The
+// scenarios above open `file:///C:/tmp/...` paths that never exist, so they
+// exercise only the in-memory half of the model.
+// ---------------------------------------------------------------------------
+
+/// A live `waml lsp --stdio` child plus the plumbing every scenario needs:
+/// framed writes, a stdout reader on its own thread so a blocking pipe read can
+/// never hang the test, and marker waits over the accumulated output.
+struct LspSession {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    rx: Option<mpsc::Receiver<String>>,
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LspSession {
+    fn spawn() -> Self {
+        let exe = env!("CARGO_BIN_EXE_waml");
+        let mut child = Command::new(exe)
+            .args(["lsp", "--stdio"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn waml lsp");
+        let stdin = child.stdin.take().unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel::<String>();
+        let reader = std::thread::spawn(move || {
+            let mut out = String::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                match stdout.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        out.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if tx.send(out.clone()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            child,
+            stdin,
+            rx: Some(rx),
+            reader: Some(reader),
+        }
+    }
+
+    fn send(&mut self, value: serde_json::Value) {
+        self.stdin
+            .write_all(frame(&value.to_string()).as_bytes())
+            .unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    fn notify(&mut self, method: &str, params: serde_json::Value) {
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0", "method": method, "params": params
+        }));
+    }
+
+    /// Accumulated stdout once `marker` shows up, or once the deadline expires.
+    /// Returning rather than panicking on timeout lets the caller assert on the
+    /// content it actually got, which is a far better failure message.
+    fn wait_for(&self, marker: &str) -> String {
+        self.wait_for_nth(marker, 1)
+    }
+
+    /// The same, for the `count`-th occurrence. Stdout accumulates for the
+    /// whole session, so a marker that already fired once cannot gate the next
+    /// round trip; counting can.
+    fn wait_for_nth(&self, marker: &str, count: usize) -> String {
+        let rx = self.rx.as_ref().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut out = String::new();
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(latest) => {
+                    out = latest;
+                    if out.matches(marker).count() >= count {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
+    /// Send a request, wait for its response, and return the response object.
+    fn request(&mut self, id: i64, method: &str, params: serde_json::Value) -> serde_json::Value {
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": params
+        }));
+        let out = self.wait_for(&format!("\"id\":{id}"));
+        framed_json(&out)
+            .into_iter()
+            .find(|value| value["id"] == id)
+            .unwrap_or_else(|| panic!("no response for {method} (id {id}); got: {out}"))
+    }
+}
+
+impl Drop for LspSession {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        drop(self.rx.take());
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+/// `file://` URI for a real local path, percent-encoded enough to survive a
+/// temp directory that contains spaces or non-ASCII.
+fn file_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let mut uri = String::from("file://");
+    if !text.starts_with('/') {
+        uri.push('/');
+    }
+    for ch in text.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '.' | '_' | '~' | '/' | ':' => uri.push(ch),
+            _ => {
+                let mut buf = [0u8; 4];
+                for byte in ch.encode_utf8(&mut buf).as_bytes() {
+                    uri.push_str(&format!("%{byte:02X}"));
+                }
+            }
+        }
+    }
+    uri
+}
+
+/// Initialize against a real workspace root, advertising the watched-files
+/// dynamic registration a modern client offers, and answering the
+/// `client/registerCapability` request the server sends back — as a real client
+/// does, and must, since the server waits for it before publishing.
+///
+/// Returns the `initialize` response and the registration request.
+fn initialize_at(
+    session: &mut LspSession,
+    root: &std::path::Path,
+) -> (serde_json::Value, serde_json::Value) {
+    let initialized = session.request(
+        1,
+        "initialize",
+        serde_json::json!({
+            "capabilities": {
+                "workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}
+            },
+            "workspaceFolders": [{"uri": file_uri(root), "name": "fixture"}]
+        }),
+    );
+    session.notify("initialized", serde_json::json!({}));
+    let out = session.wait_for("client/registerCapability");
+    let registration = framed_json(&out)
+        .into_iter()
+        .find(|value| value["method"] == "client/registerCapability")
+        .unwrap_or_else(|| panic!("server never registered file watchers; got: {out}"));
+    session.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": registration["id"], "result": serde_json::Value::Null
+    }));
+    (initialized, registration)
+}
+
+fn heading_of(symbols: &serde_json::Value) -> String {
+    symbols["result"][0]["name"]
+        .as_str()
+        .unwrap_or("<none>")
+        .to_string()
+}
+
+/// The diagnostics from the most recent `publishDiagnostics` whose URI ends in
+/// `suffix`. Matched by suffix because the server percent-encodes the drive
+/// colon on its way out (`C%3A`) and the test writes it plainly.
+fn last_diagnostics(output: &str, suffix: &str) -> Option<serde_json::Value> {
+    framed_json(output)
+        .into_iter()
+        .filter(|value| value["method"] == "textDocument/publishDiagnostics")
+        .filter(|value| {
+            value["params"]["uri"]
+                .as_str()
+                .is_some_and(|uri| uri.ends_with(suffix))
+        })
+        .map(|value| value["params"]["diagnostics"].clone())
+        .next_back()
+}
+
+/// A20: after `didClose` the disk is authoritative again, so the server must
+/// re-read it. The old server restored the bytes it ingested at `initialize`,
+/// which after any external write matched neither the disk nor anything the
+/// user ever typed.
+#[test]
+fn close_rereads_disk_rather_than_the_startup_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let order = root.path().join("order.md");
+    std::fs::write(
+        &order,
+        "---\ntype: uml.Class\ntitle: Order\n---\n# AtStartup\n",
+    )
+    .unwrap();
+
+    let mut session = LspSession::spawn();
+    let (initialized, _) = initialize_at(&mut session, root.path());
+    assert_eq!(
+        initialized["result"]["capabilities"]["textDocumentSync"]["save"]["includeText"], false,
+        "the server must ask for save notifications without the text"
+    );
+    let uri = file_uri(&order);
+
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "markdown", "version": 1,
+            "text": "---\ntype: uml.Class\ntitle: Order\n---\n# WhileOpen\n"
+        }}),
+    );
+    let open_symbols = session.request(
+        2,
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    assert_eq!(
+        heading_of(&open_symbols),
+        "WhileOpen",
+        "the client owns an open document"
+    );
+
+    // Somebody else writes the file: a git checkout, a formatter, another
+    // editor. The unresolved link is the marker that proves the new bytes,
+    // and only the new bytes, reached the analysis.
+    std::fs::write(
+        &order,
+        "---\ntype: uml.Class\ntitle: Order\n---\n# AfterCheckout\n\n## Relationships\n- depends [Ghost](./nowhere.md)\n",
+    )
+    .unwrap();
+
+    session.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    // Sequencing barrier: the close has landed once its re-analysis publishes.
+    // Not an assertion yet -- on a stale server this simply times out, and the
+    // symbol query below is the failure worth reading.
+    let after_close = session.wait_for("unresolved-target");
+
+    let closed_symbols = session.request(
+        3,
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    assert_eq!(
+        heading_of(&closed_symbols),
+        "AfterCheckout",
+        "a closed document must read as the disk does, not as the startup snapshot"
+    );
+    assert!(
+        after_close.contains("unresolved-target"),
+        "the re-read bytes did not reach the analysis; got: {after_close}"
+    );
+}
+
+/// A20: the server registers for `workspace/didChangeWatchedFiles` and acts on
+/// it, so a file the client never opened stops being frozen at whatever it said
+/// when the server booted.
+#[test]
+fn watched_file_events_refresh_documents_the_client_never_opened() {
+    let root = tempfile::tempdir().unwrap();
+    let order = root.path().join("order.md");
+    // `zz-` so this sorts after `order.md`: the server publishes the bundle in
+    // path order, so a marker on the last document proves every earlier
+    // document's publish is already in the buffer being asserted on.
+    let linked = root.path().join("zz-linked.md");
+    std::fs::write(
+        &order,
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Linked](./zz-linked.md)\n",
+    )
+    .unwrap();
+
+    let mut session = LspSession::spawn();
+    let (_, registration) = initialize_at(&mut session, root.path());
+    let watcher = &registration["params"]["registrations"][0];
+    assert_eq!(watcher["method"], "workspace/didChangeWatchedFiles");
+    assert_eq!(
+        watcher["registerOptions"]["watchers"][0]["globPattern"], "**/*.md",
+        "the registered glob must cover everything the startup walk ingests"
+    );
+
+    let before = session.wait_for("unresolved-target");
+    assert!(
+        before.contains("unresolved-target"),
+        "expected a dangling link before the target exists; got: {before}"
+    );
+
+    // Created on disk by something that is not the editor, and never opened.
+    // The malformed bullet is a marker only this file can produce.
+    std::fs::write(
+        &linked,
+        "---\ntype: uml.ActivityDiagram\ntitle: Linked\n---\n# Linked\n\n## Nodes\n\n### Ship\n- goes to Deliver\n",
+    )
+    .unwrap();
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        serde_json::json!({"changes": [{"uri": file_uri(&linked), "type": 1}]}),
+    );
+    let after_create = session.wait_for("malformed-flow-bullet");
+    assert!(
+        after_create.contains("malformed-flow-bullet"),
+        "a watched create never reached the analysis; got: {after_create}"
+    );
+    assert_eq!(
+        last_diagnostics(&after_create, "/order.md"),
+        Some(serde_json::json!([])),
+        "the link should resolve once its target exists"
+    );
+
+    // Deleted again: the document leaves the bundle, its diagnostics are
+    // retracted rather than left standing, and the dangling link comes back.
+    std::fs::remove_file(&linked).unwrap();
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        serde_json::json!({"changes": [{"uri": file_uri(&linked), "type": 3}]}),
+    );
+    let after_delete = session.wait_for_nth("unresolved-target", 2);
+    assert_eq!(
+        last_diagnostics(&after_delete, "/order.md")
+            .map(|diagnostics| diagnostics.as_array().unwrap().len()),
+        Some(1),
+        "deleting the target should dangle the link again; got: {after_delete}"
+    );
+    assert_eq!(
+        last_diagnostics(&after_delete, "/zz-linked.md"),
+        Some(serde_json::json!([])),
+        "a deleted document must have its diagnostics retracted, not left standing"
+    );
+}

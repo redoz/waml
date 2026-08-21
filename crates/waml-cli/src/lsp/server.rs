@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use tokio::sync::{Mutex, RwLock};
@@ -9,14 +12,25 @@ use tower_lsp_server::ls_types::*;
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
 use crate::lsp::{
-    bundle::{read_disk_documents, LspAnalysisState},
+    bundle::{
+        is_watched_source, read_disk_document, read_disk_documents, LspAnalysisState, WATCHED_GLOB,
+    },
     query::semantic_token_legend,
 };
+
+/// Registration id for the watched-files registration, kept as a constant so an
+/// `client/unregisterCapability` could ever name the same thing.
+const WATCHED_FILES_REGISTRATION: &str = "waml-did-change-watched-files";
 
 struct Backend {
     client: Client,
     current: Arc<RwLock<Arc<LspAnalysisState>>>,
     publication_gate: Arc<Mutex<()>>,
+    /// Whether the client said, at `initialize`, that it can take a dynamic
+    /// `workspace/didChangeWatchedFiles` registration. The protocol has no
+    /// static form for it -- a server that does not register gets no file
+    /// events at all -- so this decides between watching and not.
+    watched_files_dynamic: AtomicBool,
 }
 
 async fn ordered_publish<F, Fut>(
@@ -127,6 +141,16 @@ fn server_capabilities() -> ServerCapabilities {
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::FULL),
+                // `includeText: false` on purpose. Between `didOpen` and
+                // `didClose` the client's content reaches the server on exactly
+                // one channel -- the versioned `didChange` stream -- and
+                // `DidSaveTextDocumentParams` carries no version. Accepting its
+                // `text` would open a second, unordered content channel that
+                // could overwrite a newer `didChange`, which is precisely the
+                // class of bug this handler set exists to close.
+                save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                    include_text: Some(false),
+                })),
                 ..Default::default()
             },
         )),
@@ -213,6 +237,71 @@ impl Backend {
         }
     }
 
+    /// Ask the client to watch the workspace for us.
+    ///
+    /// `workspace/didChangeWatchedFiles` has no static server capability -- the
+    /// specification says so explicitly -- so a server that wants file events
+    /// must send `client/registerCapability` after `initialized`, and only if
+    /// the client advertised dynamic registration for it. A client that did not
+    /// gets a log line rather than silence, because on such a client every
+    /// external edit to a closed file stays invisible until the document is
+    /// opened, and that is worth being able to see in the LSP log.
+    async fn register_watched_files(&self) {
+        if !self.watched_files_dynamic.load(Ordering::Relaxed) {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "WAML: client does not support dynamic didChangeWatchedFiles \
+                     registration; external edits to closed documents will not be seen",
+                )
+                .await;
+            return;
+        }
+        let options = DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![FileSystemWatcher {
+                glob_pattern: GlobPattern::String(WATCHED_GLOB.to_string()),
+                // No `kind`, which the protocol reads as create|change|delete.
+                // All three matter: a create adds a link target, a delete
+                // removes one, a change rewrites the document.
+                kind: None,
+            }],
+        };
+        let registration = Registration {
+            id: WATCHED_FILES_REGISTRATION.to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: serde_json::to_value(options).ok(),
+        };
+        if let Err(error) = self.client.register_capability(vec![registration]).await {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("WAML: could not register file watchers: {error}"),
+                )
+                .await;
+        }
+    }
+
+    /// Reconcile one path against what a read of it returned just now, and
+    /// report whether the analysis moved. See the ownership rule on
+    /// [`crate::lsp::bundle`].
+    async fn reconcile_disk(&self, physical: PathBuf, disk: Option<String>) -> bool {
+        self.ingress(move |base| {
+            base.refresh_disk(physical.clone(), disk.clone())
+                .map_err(|error| error.to_string())
+        })
+        .await
+    }
+
+    /// Retract the diagnostics a document left behind when it dropped out of
+    /// the bundle.
+    ///
+    /// `publish_all` walks the documents that exist, so a deleted one simply
+    /// stops appearing and the client keeps showing whatever it was last told.
+    /// An empty set is how the protocol says "there is nothing here any more".
+    async fn retract_diagnostics(&self, uri: Uri) {
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+
     async fn publish_all(&self) {
         let client = self.client.clone();
         let current = self.current.clone();
@@ -246,6 +335,16 @@ impl Backend {
 
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        self.watched_files_dynamic.store(
+            params
+                .capabilities
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace.did_change_watched_files.as_ref())
+                .and_then(|watched| watched.dynamic_registration)
+                .unwrap_or(false),
+            Ordering::Relaxed,
+        );
         #[allow(deprecated)]
         if let Some(root) = params
             .workspace_folders
@@ -261,6 +360,10 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        // Watchers first: the diagnostics published below describe a bundle the
+        // server has just promised to keep current, and any write that lands
+        // between the two would otherwise never be noticed.
+        self.register_watched_files().await;
         self.publish_all().await;
     }
 
@@ -341,13 +444,86 @@ impl LanguageServer for Backend {
         let Some(expected_generation) = self.snapshot().await.open_generation(&physical) else {
             return;
         };
+        // Ownership passes back to the disk here, so the disk is what gets read
+        // -- once, before the retry loop below, so a retry cannot smear two
+        // different reads together. `None` means the file is gone (deleted or
+        // renamed while it was open) and the document goes with it.
+        let disk = read_disk_document(&physical);
+        let vanished = disk.is_none();
         if self
             .ingress(move |base| {
-                base.close_expected(&physical, expected_generation)
+                base.close_expected(&physical, expected_generation, disk.clone())
                     .map_err(|error| error.to_string())
             })
             .await
         {
+            if vanished {
+                self.retract_diagnostics(params.text_document.uri).await;
+            }
+            self.publish_all().await;
+        }
+    }
+
+    /// A save does not transfer ownership: the client still owns the buffer, so
+    /// the analysis content must not move here, and the server deliberately did
+    /// not ask for the saved text (see `server_capabilities`).
+    ///
+    /// The call below is therefore a no-op in the ordinary case --
+    /// `refresh_disk` returns `Ok(None)` for an open path. It is routed through
+    /// the same reconciliation as everything else anyway, so that a `didSave`
+    /// arriving for a path the server does not have open (a client racing a
+    /// close against a save) still lands the current bytes instead of being
+    /// dropped on the floor.
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
+            return;
+        };
+        let disk = read_disk_document(&physical);
+        if self.reconcile_disk(physical, disk).await {
+            self.publish_all().await;
+        }
+    }
+
+    /// External edits: a branch switch, a formatter, another editor, a
+    /// generator. Anything not currently open must be re-read; anything open is
+    /// the client's and is left alone until it closes.
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let root = self.snapshot().await.host.root.clone();
+        let mut moved = false;
+        let mut vanished = Vec::new();
+        for event in params.changes {
+            let Some(physical) = event.uri.to_file_path().map(|p| p.into_owned()) else {
+                continue;
+            };
+            if !is_watched_source(root.as_deref(), &physical) {
+                continue;
+            }
+            // `event.typ` is deliberately not consulted. Watch events are
+            // advisory: clients coalesce them, drop them, and deliver them out
+            // of order, so a `CREATED` can arrive for a file that has been
+            // deleted again since. A read settles it, and a failed read means
+            // "no document here" for the same reasons a delete does.
+            let disk = read_disk_document(&physical);
+            let gone = disk.is_none();
+            let changed = self.reconcile_disk(physical, disk).await;
+            moved |= changed;
+            if changed && gone {
+                vanished.push(event.uri);
+            }
+        }
+        if moved {
+            // Retract before republishing: the retraction concerns a document
+            // that no longer exists, and sending it first means the client is
+            // never briefly told both that the file is gone and that it still
+            // has problems.
+            for uri in vanished {
+                self.retract_diagnostics(uri).await;
+            }
             self.publish_all().await;
         }
     }
@@ -460,6 +636,7 @@ pub fn serve_stdio() {
             client,
             current: Arc::new(RwLock::new(initial.clone())),
             publication_gate: Arc::new(Mutex::new(())),
+            watched_files_dynamic: AtomicBool::new(false),
         });
         Server::new(stdin, stdout, socket).serve(service).await;
     });

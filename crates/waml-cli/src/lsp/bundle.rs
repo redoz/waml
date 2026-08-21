@@ -1,3 +1,35 @@
+//! The analysis state behind the language server, and the ownership rule that
+//! decides whose bytes it holds.
+//!
+//! # Document ownership
+//!
+//! Exactly one owner supplies the content for any physical path at any moment,
+//! and the LSP specification -- not this server -- picks which:
+//!
+//! * Between `textDocument/didOpen` and `textDocument/didClose` the **client**
+//!   owns the file. Its buffer can differ from disk in ways nothing on disk can
+//!   show (unsaved edits), so the server must not read the file and must not
+//!   let a disk event reach the analysis. [`LspHostIndex::open_by_physical`]
+//!   records exactly which paths are in that window.
+//! * Outside that window the **disk** owns the file. The server must serve the
+//!   bytes that are on disk *now*, and must never fall back to bytes it read
+//!   earlier. [`LspHostIndex::disk_by_physical`] is a *shadow* of the last read,
+//!   never a fallback: it is only ever written from a read that just happened.
+//!
+//! The A20 defect was one line breaking the second rule. `close_expected`
+//! restored the bytes ingested at `initialize`, so after any external write --
+//! a branch switch, another editor, a formatter -- the server served content
+//! that matched neither the disk nor anything the user had typed, silently,
+//! until the editor was restarted.
+//!
+//! Every path that learns the disk changed ([`LspAnalysisState::close_expected`]
+//! for a close, [`LspAnalysisState::refresh_disk`] for a save or a
+//! `workspace/didChangeWatchedFiles` event) takes the freshly-read bytes as an
+//! argument: the read happens in [`crate::lsp::server`], which is the layer
+//! allowed to touch the filesystem, and this module only ever reconciles what
+//! it is handed. If you add a handler that touches document content, decide
+//! which of the two owners it speaks for before you write a line of it.
+
 use std::{
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
@@ -18,7 +50,11 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Clone, Default)]
 pub struct LspHostIndex {
     pub root: Option<PathBuf>,
+    /// Shadow of what the last read of each path returned. Only ever written
+    /// from a read that just happened -- see the module-level ownership rule.
+    /// Never consulted for a path that is also in `open_by_physical`.
     pub disk_by_physical: BTreeMap<PathBuf, SourceDocument>,
+    /// The paths the client currently owns, between `didOpen` and `didClose`.
     pub open_by_physical: BTreeMap<PathBuf, OpenDocument>,
     pub next_open_generation: u64,
 }
@@ -170,18 +206,26 @@ impl LspAnalysisState {
     /// Close at whatever generation the host currently holds. Test seam, the
     /// mirror of [`Self::open`]: production goes to `close_expected`.
     #[cfg(test)]
-    pub fn close(&self, physical: &Path) -> Result<Option<Self>, BoxError> {
+    pub fn close(&self, physical: &Path, disk: Option<String>) -> Result<Option<Self>, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
         let Some(generation) = self.open_generation(&physical) else {
             return Ok(None);
         };
-        self.close_expected(&physical, generation)
+        self.close_expected(&physical, generation, disk)
     }
 
+    /// Hand the file back to the disk.
+    ///
+    /// `disk` is what a read of `physical` returned *just now*: `Some(bytes)`
+    /// if the file is there and readable, `None` if it is gone. It is not
+    /// optional and it is not a cache -- reusing an older read here is the A20
+    /// defect, and the reason the caller has to do the read rather than this
+    /// method reaching for a stored copy.
     pub fn close_expected(
         &self,
         physical: &Path,
         expected_generation: u64,
+        disk: Option<String>,
     ) -> Result<Option<Self>, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
         let Some(open) = self.host.open_by_physical.get(&physical) else {
@@ -193,10 +237,80 @@ impl LspAnalysisState {
         let logical = open.logical.clone();
         let mut next_host = self.host.clone();
         next_host.open_by_physical.remove(&physical);
-        let source = if let Some(disk) = self.host.disk_by_physical.get(&physical) {
-            host::replace_document(&self.source, disk.clone())?
-        } else {
-            host::remove_document(&self.source, &logical)?
+        let source = match disk {
+            Some(text) => {
+                let document = SourceDocument::new(logical.clone(), text);
+                next_host
+                    .disk_by_physical
+                    .insert(physical, document.clone());
+                if self.source.document(&logical).is_some() {
+                    host::replace_document(&self.source, document)?
+                } else {
+                    host::add_document(&self.source, document)?
+                }
+            }
+            None => {
+                next_host.disk_by_physical.remove(&physical);
+                host::remove_document(&self.source, &logical)?
+            }
+        };
+        self.prepare(next_host, source).map(Some)
+    }
+
+    /// Reconcile a path the server has just learned about from the filesystem:
+    /// a `workspace/didChangeWatchedFiles` event, or a `textDocument/didSave`.
+    ///
+    /// `disk` carries the result of a read that just happened, with the same
+    /// contract as [`Self::close_expected`]: `None` means the file is gone.
+    ///
+    /// `Ok(None)` means nothing the server serves would change, so the caller
+    /// should not rebuild or republish. That happens in two cases:
+    ///
+    /// * The path is **open**. The client owns it, so disk events for it are
+    ///   noise; `close_expected` re-reads when ownership comes back. Refreshing
+    ///   the shadow now would buy nothing and would tempt the next reader into
+    ///   treating the shadow as a fallback again.
+    /// * The bytes match the shadow. Editors fire watch events for touches that
+    ///   changed nothing, and a save right after a `didChange` is the common
+    ///   case; re-analyzing the whole bundle for those is pure waste.
+    pub fn refresh_disk(
+        &self,
+        physical: PathBuf,
+        disk: Option<String>,
+    ) -> Result<Option<Self>, BoxError> {
+        let physical = normalize_physical(physical);
+        if self.host.open_by_physical.contains_key(&physical) {
+            return Ok(None);
+        }
+        let mut next_host = self.host.clone();
+        let source = match disk {
+            Some(text) => {
+                if self
+                    .host
+                    .disk_by_physical
+                    .get(&physical)
+                    .is_some_and(|document| document.text() == text)
+                {
+                    return Ok(None);
+                }
+                let logical = logical_path(self.host.root.as_deref(), &physical)?;
+                self.reject_collision(&physical, &logical)?;
+                let document = SourceDocument::new(logical.clone(), text);
+                next_host
+                    .disk_by_physical
+                    .insert(physical, document.clone());
+                if self.source.document(&logical).is_some() {
+                    host::replace_document(&self.source, document)?
+                } else {
+                    host::add_document(&self.source, document)?
+                }
+            }
+            None => {
+                let Some(gone) = next_host.disk_by_physical.remove(&physical) else {
+                    return Ok(None);
+                };
+                host::remove_document(&self.source, gone.path())?
+            }
         };
         self.prepare(next_host, source).map(Some)
     }
@@ -342,6 +456,53 @@ pub fn read_disk_documents(
         .map(|(path, text)| (normalize_physical(path), text))
         .collect();
     (files, ingested.errors)
+}
+
+/// The glob the server asks the client to watch on its behalf.
+///
+/// It has to be a superset of what [`read_disk_documents`] would ingest --
+/// missing a file means missing an edit -- and [`is_watched_source`] narrows the
+/// events back down to that set.
+pub const WATCHED_GLOB: &str = "**/*.md";
+
+/// Read one file the way the startup walk would.
+///
+/// `None` covers every reason the bytes are unavailable -- absent, unreadable,
+/// not UTF-8 -- because they all mean the same thing to the bundle: there is no
+/// document here. Callers must not substitute an older read for `None`; that is
+/// the A20 defect.
+pub fn read_disk_document(physical: &Path) -> Option<String> {
+    std::fs::read_to_string(physical).ok()
+}
+
+/// Whether a path the client reported as changed is one this server would have
+/// ingested at startup.
+///
+/// The startup walk runs with [`host::ingest::IngestOptions::default`], which
+/// skips dot-directories. A client watcher glob cannot express that, so the
+/// filter is re-applied here: without it a write under `.git/` would pull a
+/// document into the bundle that the next restart would silently drop again,
+/// and the server's answers would depend on how long it had been running.
+pub fn is_watched_source(root: Option<&Path>, physical: &Path) -> bool {
+    match physical.extension() {
+        Some(extension) if extension.eq_ignore_ascii_case("md") => {}
+        _ => return false,
+    }
+    // No root means no watcher registration either, so an event for such a
+    // path did not come from a watcher this server asked for.
+    let Some(relative) = root.and_then(|root| physical.strip_prefix(root).ok()) else {
+        return false;
+    };
+    // Only the directories are checked: `ingest_markdown` skips dot-*dirs*, and
+    // reads a dotted *file* like `.notes.md` normally.
+    !relative
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .any(|component| match component {
+            Component::Normal(segment) => segment.to_string_lossy().starts_with('.'),
+            _ => false,
+        })
 }
 
 #[cfg(test)]
@@ -576,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn atomic_snapshot_open_change_close_restores_disk_and_revision_alignment() {
+    fn atomic_snapshot_open_change_close_installs_fresh_disk_and_revision_alignment() {
         let physical = PathBuf::from("C:/workspace/order.md");
         let root = PathBuf::from("C:/workspace");
         let disk = "---\ntype: uml.Class\n---\n# Disk\n";
@@ -598,9 +759,17 @@ mod tests {
                 "---\ntype: uml.Class\n---\n# Changed\n".into(),
             )
             .unwrap();
-        let closed = changed.close(&physical).unwrap().unwrap();
+        // A20: the bytes close installs are the ones the caller just read, not
+        // the ones ingested at startup. They differ here on purpose -- that is
+        // the whole difference between a fresh read and a stale snapshot.
+        let now_on_disk = "---\ntype: uml.Class\n---\n# Rewritten\n";
+        assert_ne!(now_on_disk, disk);
+        let closed = changed
+            .close(&physical, Some(now_on_disk.into()))
+            .unwrap()
+            .unwrap();
         assert_eq!(closed.revision, 3);
-        assert_eq!(closed.source.documents()[0].text(), disk);
+        assert_eq!(closed.source.documents()[0].text(), now_on_disk);
         assert_eq!(closed.okf.catalog.session_revision(), closed.revision);
         assert_eq!(closed.uml.session_revision(), closed.revision);
     }
@@ -617,9 +786,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(open.source.documents().len(), 1);
-        let closed = open.close(&physical).unwrap().unwrap();
+        let closed = open.close(&physical, None).unwrap().unwrap();
         assert!(closed.source.documents().is_empty());
-        assert!(closed.close(&physical).unwrap().is_none());
+        assert!(closed.close(&physical, None).unwrap().is_none());
         assert!(open
             .change(&PathBuf::from("C:/missing.md"), 1, 2, String::new())
             .is_err());
@@ -717,7 +886,7 @@ mod tests {
             .open(physical.clone(), 10, "# First open\n".into())
             .unwrap();
         let old_generation = opened.open_generation(&physical).unwrap();
-        let closed = opened.close(&physical).unwrap().unwrap();
+        let closed = opened.close(&physical, None).unwrap().unwrap();
         let reopened = closed
             .open(physical.clone(), 1, "# Reopened\n".into())
             .unwrap();
@@ -761,16 +930,16 @@ mod tests {
             let g2_reopened = g2_reopened.clone();
             std::thread::spawn(move || {
                 let base = current.read().unwrap().clone();
-                let _candidate = base.close_expected(&physical, g1).unwrap().unwrap();
+                let _candidate = base.close_expected(&physical, g1, None).unwrap().unwrap();
                 g1_prepared.wait();
                 g2_reopened.wait();
-                current.read().unwrap().close_expected(&physical, g1)
+                current.read().unwrap().close_expected(&physical, g1, None)
             })
         };
 
         g1_prepared.wait();
         let base = current.read().unwrap().clone();
-        let closed = base.close_expected(&physical, g1).unwrap().unwrap();
+        let closed = base.close_expected(&physical, g1, None).unwrap().unwrap();
         let reopened = closed.open(physical.clone(), 1, "# G2\n".into()).unwrap();
         let g2 = reopened.open_generation(&physical).unwrap();
         assert_ne!(g1, g2);
@@ -882,5 +1051,130 @@ mod tests {
         assert!(documents.is_empty());
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].kind, host::ingest::IngestErrorKind::NotUtf8);
+    }
+
+    /// The client half of the ownership rule: while a document is open, no
+    /// amount of disk churn may reach the analysis -- and the moment it closes,
+    /// the disk wins outright.
+    #[test]
+    fn disk_refresh_cannot_touch_a_document_the_client_owns() {
+        let root = workspace_root();
+        let physical = root.join("order.md");
+        let state = LspAnalysisState::from_documents(
+            Some(root),
+            [(
+                physical.clone(),
+                "---\ntype: uml.Class\n---\n# AtStartup\n".to_string(),
+            )],
+        )
+        .unwrap();
+        let open = state
+            .open(
+                physical.clone(),
+                1,
+                "---\ntype: uml.Class\n---\n# WhileOpen\n".into(),
+            )
+            .unwrap();
+
+        let churn = "---\ntype: uml.Class\n---\n# OnDisk\n";
+        assert!(
+            open.refresh_disk(physical.clone(), Some(churn.into()))
+                .unwrap()
+                .is_none(),
+            "an open document is the client's; a disk event for it changes nothing"
+        );
+        assert_eq!(
+            open.source.documents()[0].text(),
+            "---\ntype: uml.Class\n---\n# WhileOpen\n"
+        );
+
+        let closed = open.close(&physical, Some(churn.into())).unwrap().unwrap();
+        assert_eq!(closed.source.documents()[0].text(), churn);
+    }
+
+    /// The disk half: create, change and delete of a document the client never
+    /// opened, plus the no-op short circuit that keeps watch-event noise from
+    /// re-analyzing the bundle.
+    #[test]
+    fn disk_refresh_creates_changes_and_deletes_closed_documents() {
+        let root = workspace_root();
+        let physical = root.join("late.md");
+        let state = LspAnalysisState::from_documents(Some(root), []).unwrap();
+        assert!(state.source.documents().is_empty());
+
+        let first = "---\ntype: uml.Class\n---\n# Late\n";
+        let created = state
+            .refresh_disk(physical.clone(), Some(first.into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(created.source.documents()[0].text(), first);
+
+        assert!(
+            created
+                .refresh_disk(physical.clone(), Some(first.into()))
+                .unwrap()
+                .is_none(),
+            "identical bytes must not cost a re-analysis"
+        );
+
+        let second = "---\ntype: uml.Class\n---\n# Later\n";
+        let changed = created
+            .refresh_disk(physical.clone(), Some(second.into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(changed.source.documents()[0].text(), second);
+
+        let deleted = changed
+            .refresh_disk(physical.clone(), None)
+            .unwrap()
+            .unwrap();
+        assert!(deleted.source.documents().is_empty());
+        assert!(
+            deleted.refresh_disk(physical, None).unwrap().is_none(),
+            "deleting what is already gone must not cost a re-analysis"
+        );
+    }
+
+    /// A rename reaches the server as a delete plus a create, which has to land
+    /// as one document moving rather than two documents existing.
+    #[test]
+    fn disk_refresh_carries_a_rename_across_as_delete_plus_create() {
+        let root = workspace_root();
+        let before = root.join("before.md");
+        let after = root.join("after.md");
+        let text = "---\ntype: uml.Class\n---\n# Moved\n";
+        let state =
+            LspAnalysisState::from_documents(Some(root), [(before.clone(), text.to_string())])
+                .unwrap();
+
+        let removed = state.refresh_disk(before, None).unwrap().unwrap();
+        let added = removed
+            .refresh_disk(after, Some(text.into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(added.source.documents().len(), 1);
+        assert_eq!(added.source.documents()[0].path().as_str(), "after.md");
+    }
+
+    #[test]
+    fn watched_events_are_filtered_to_what_the_startup_walk_would_ingest() {
+        let root = workspace_root();
+        assert!(is_watched_source(Some(&root), &root.join("order.md")));
+        assert!(is_watched_source(Some(&root), &root.join("docs/order.md")));
+        // A dotted *file* is ingested; only dot-*directories* are skipped.
+        assert!(is_watched_source(Some(&root), &root.join(".notes.md")));
+        assert!(!is_watched_source(Some(&root), &root.join(".git/HEAD.md")));
+        assert!(!is_watched_source(
+            Some(&root),
+            &root.join("docs/.waml/cache.md")
+        ));
+        assert!(!is_watched_source(Some(&root), &root.join("order.txt")));
+        assert!(!is_watched_source(Some(&root), &root.join("order")));
+        // Outside the root, or with no root at all, no watcher was registered.
+        assert!(!is_watched_source(
+            Some(&root),
+            Path::new("/elsewhere/x.md")
+        ));
+        assert!(!is_watched_source(None, &root.join("order.md")));
     }
 }
