@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`███████░░░░░░░░░░░░░░░░░` **16/53 closed** — 31 open, 16 done, 6 decision
+`████████░░░░░░░░░░░░░░░░` **17/53 closed** — 30 open, 17 done, 6 decision
 
 ## Findings
 
@@ -61,7 +61,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A30 | M | Solve API | `open` | Entry-point accretion: route ×4 tiers, stress ×3 with layout/layout_grouped production-dead; no facade, 15 editor entry points into 8 submodules |
 | A31 | M | Error handling | `open` | Two incompatible regimes: structured DiagCode vs stringly EditError/BundleError::Analysis(String)/Result<_,String> family; AnalysisError flattened… |
 | A32 | M | cfg seams | `open` | 155 target_arch cfgs, 16 files, no shared facade; markdown_extensions/mod.rs = 53 cfgs interleaving both platforms |
-| A33 | M | Dead code | `open` | ~170-190 `#[allow(dead_code)]` defeat the -D warnings gate; blanket allow on DocView trait; Peek/radial/node_design_editor compiled into the shippi… |
+| A33 | M | Dead code | `done` | 190 allow sites -> 59, of which 37 were always legitimate cfg_attr platform gates: the real suppressions went 153 -> 22, every survivor field-scoped and commented with its consumer. 40 items became compiler-enforced cfg(test). Peek deleted (~230 lines); radial collapsed to the one open mode that ships (~290 lines, 19 allows -> 0) — the audit was wrong that it was superseded, RadialOpen::Dial is live; the blanket DocView allow was hiding nothing. Harness binaries and node_design_editor are behind an off-by-default harness feature. Net -862/+290 across 59 files. |
 | A34 | M | CI ordering | `done` | The documentation contract is now its own job instead of the first step of build-test, so it can no longer mask code failures behind it, and the pre-merge wasm check covers waml-editor — the crate that actually breaks the deploy (verified: it compiles for wasm32 today). |
 | A35 | M | Panic hygiene | `open` | 110-116 unwraps in the adversarial-input island parser; content-reachable expects; no catch_unwind at LSP/wasm entries |
 | A36 | M | Frontmatter grammar | `open` | YAML-subset quoting split across two crates — three quote-scanner implementations for one grammar |
@@ -74,7 +74,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A43 | L | DiagCode | `open` | Kebab-case wire names maintained twice (serde rename + 80-arm as_str) |
 | A44 | L | Solver wire | `open` | Stringly keys; `key: Option<String>` retrofit for duplicate edges |
 | A45 | L | Naming | `done` | waml-syntax's 'domain-neutral' headline now states the real trade: the core is language-parameterised, the crate exports the WAML island types on purpose because island recognition happens inside the one Markdown parse. The nav.rs/navigation.rs collision and the NavCategory/RowKind mirror ride with the shell refactor (A15). |
-| A46 | L | Dead API | `open` | validate_from_source has zero callers on a diagnostics-swallowing path; uml::lower::referrers kept alive by one test port |
+| A46 | L | Dead API | `open` | Still zero callers — verified. It is no longer on a diagnostics-swallowing path (A01 fixed that), and it now documents that it is unused and what would use it, but the choice to delete it or route the LSP through it is unmade. |
 | A47 | L | List primitives | `open` | Three copy-adapted scrollbar geometries with duplicated tests; list widgets built by lineage copying |
 | A48 | L | Arc-identity rename | `open` | Move ops must preserve text Arcs or Renamed degrades to Removed+Inserted; documented, unenforced |
 | A49 | L | Property spread | `open` | Edit-op layer example-based only; no apply→write→reparse round-trip property |

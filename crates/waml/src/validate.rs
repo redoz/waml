@@ -27,6 +27,12 @@ fn analysis_failed(error: impl std::fmt::Display) -> Vec<Diagnostic> {
     )]
 }
 
+/// Whole-bundle diagnostics for callers that already hold a `SourceBundle`.
+///
+/// Nothing in the workspace calls this today — it exists for external callers
+/// of the library, and it is the entry point the LSP should use if it ever
+/// stops assembling its own tuples. Delete it or route a caller through it;
+/// leaving it here unused is how it drifted from `validate` in the first place.
 pub fn validate_from_source(bundle: &SourceBundle) -> Vec<Diagnostic> {
     match prepare_candidate(bundle.clone(), None, 0) {
         Ok(candidate) => candidate.diagnostics(),
