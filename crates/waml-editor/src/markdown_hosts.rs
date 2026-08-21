@@ -14,7 +14,7 @@ use makepad_widgets::{
     decode_image_from_data, image_size_by_data, looks_like_svg, makepad_draw::svg::parse_svg,
     SignalToUI,
 };
-use waml::{analysis::WamlCodeRole, source::BundlePath};
+use waml::{source::BundlePath, uml::WamlCodeRole};
 use waml_markdown_editor::presentation::{
     ApprovedImageSource, AssetRequestId, CodeHighlightError, CodeHighlightHost,
     CodeHighlightRequest, CodeHighlightResult, CodeHighlightSpan, CodeTokenRole,
@@ -83,7 +83,7 @@ impl CodeHighlightHost for WamlCodeHighlightHost {
 
         let spans = self
             .snapshot
-            .okf_analysis
+            .uml_analysis
             .code_spans(request.owner, request.content_range)
             .ok_or_else(|| {
                 CodeHighlightError::Host("WAML code analysis rejected the island".into())

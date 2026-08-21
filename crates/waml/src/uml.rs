@@ -16,6 +16,7 @@ pub mod vocabulary;
 pub use complete::{completions, expectation_at, Completion, CompletionKind, Expectation};
 pub(crate) mod use_case;
 pub use format::{ActionContext, FormatError, Formatter};
+pub use highlight::{WamlCodeRole, WamlCodeSpan};
 pub use ops::{
     Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op, TraceEdit, TraceSpec, TransitionSelector,
 };

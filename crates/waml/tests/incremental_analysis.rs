@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use waml::uml::syntax::{UmlLanguage, UmlSyntaxKind};
+use waml::uml::WamlCodeRole;
 use waml::{
     analysis::{
         prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError,
         InvalidPromotedMarkdownUpdateReason, PreparedCandidate, PreviousAnalyses,
-        ProjectionFreshness, PromotedMarkdownUpdate, WamlCodeRole,
+        ProjectionFreshness, PromotedMarkdownUpdate,
     },
     edit::{
         apply_exact_source_edit, EditBatch, EditContext, ExactSourceEdit, ExactSourceEditError,
@@ -200,7 +201,7 @@ fn shared_waml_code_spans_use_exact_island_tokens_and_absolute_ranges() {
         .unwrap();
 
     let spans = candidate
-        .okf()
+        .uml()
         .code_spans(island.owner, island.content_range)
         .expect("the exact immutable WAML island must have shared code roles");
 
@@ -237,7 +238,7 @@ fn shared_waml_code_spans_use_exact_island_tokens_and_absolute_ranges() {
         island.content_range.end(),
     )
     .unwrap();
-    assert!(candidate.okf().code_spans(island.owner, clipped).is_none());
+    assert!(candidate.uml().code_spans(island.owner, clipped).is_none());
 }
 
 #[test]
@@ -259,7 +260,7 @@ fn shared_waml_code_roles_cover_layout_strings_keywords_and_recovery() {
         .find(|island| island.kind == WamlSectionKind::Layout)
         .unwrap();
     let spans = candidate
-        .okf()
+        .uml()
         .code_spans(island.owner, island.content_range)
         .unwrap();
     let classified = spans
@@ -295,7 +296,7 @@ fn shared_waml_code_roles_cover_layout_strings_keywords_and_recovery() {
         .find(|island| island.kind == WamlSectionKind::Attributes)
         .unwrap();
     let spans = recovered
-        .okf()
+        .uml()
         .code_spans(island.owner, island.content_range)
         .unwrap();
     assert!(spans.iter().any(|span| span.role == WamlCodeRole::Invalid));
@@ -329,7 +330,7 @@ fn shared_waml_code_spans_follow_the_installed_document_revision() {
         .find(|island| island.kind == WamlSectionKind::Attributes)
         .unwrap();
     let spans = current
-        .okf()
+        .uml()
         .code_spans(island.owner, island.content_range)
         .unwrap();
     let classified = spans
@@ -377,7 +378,7 @@ fn shared_waml_code_spans_include_exact_fenced_waml_and_document_parity() {
         .expect("the document must retain the matching section syntax");
 
     let spans = candidate
-        .okf()
+        .uml()
         .code_spans(fence.owner, fence.content_range)
         .expect("an exact fenced waml block must have shared code roles");
     assert!(spans.windows(2).all(|pair| {
@@ -402,7 +403,7 @@ fn shared_waml_code_spans_include_exact_fenced_waml_and_document_parity() {
     assert!(classified.contains(&("}", WamlCodeRole::Punctuation)));
 
     let section_spans = candidate
-        .okf()
+        .uml()
         .code_spans(island.owner, island.content_range)
         .expect("the matching WAML section must have shared code roles");
     let section_classified = section_spans
@@ -427,7 +428,7 @@ fn shared_waml_code_spans_include_exact_fenced_waml_and_document_parity() {
     assert_eq!(classified_syntax, section_syntax);
 
     let document_spans = candidate
-        .okf()
+        .uml()
         .document_code_spans(document)
         .expect("the document must expose its retained WAML code roles");
     let fenced_document_spans = document_spans
@@ -449,7 +450,7 @@ fn shared_waml_code_spans_include_exact_fenced_waml_and_document_parity() {
         fence.content_range.end(),
     )
     .unwrap();
-    assert!(candidate.okf().code_spans(fence.owner, clipped).is_none());
+    assert!(candidate.uml().code_spans(fence.owner, clipped).is_none());
 }
 
 #[test]

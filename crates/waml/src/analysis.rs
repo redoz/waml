@@ -15,7 +15,6 @@ use crate::{
     diagnostic::{DiagCode, Diagnostic},
     okf,
     source::{BundlePath, DocumentId, SourceBundle, SourceDocument},
-    uml::highlight::WamlCodeSyntaxSnapshot,
 };
 
 #[derive(Debug)]
@@ -119,11 +118,19 @@ impl<L: SyntaxLanguage> SyntaxSet<L> {
     }
 }
 
+/// The OKF tier of one analysis: which documents exist, their markdown syntax,
+/// and the [`okf::Bundle`] derived from them.
+///
+/// Same hard rule as [`crate::okf`]: nothing here may name a UML type. This
+/// used to be false — `code_syntax` held `uml::highlight` snapshots that
+/// `attach_code_syntax` wrote in *after* construction, so an `OkfAnalysis`
+/// handed out before that call answered `code_spans` with an empty map. Those
+/// spans are UML vocabulary read off `UmlLanguage` tokens, and they now live on
+/// [`crate::uml::Analysis`], which builds them as part of its own construction.
 pub struct OkfAnalysis {
     pub catalog: Arc<DocumentCatalog>,
     pub markdown: MarkdownSyntaxSet,
     pub bundle: okf::Bundle,
-    code_syntax: Arc<BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot>>,
     /// Documents excluded from this analysis because their shell failed
     /// (path -> rendered error). One bad document quarantines itself instead
     /// of making the whole bundle unopenable.
@@ -138,72 +145,6 @@ pub struct OkfAnalysis {
 impl OkfAnalysis {
     pub fn markdown_snapshot(&self, document: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
         self.markdown.document(document)
-    }
-
-    pub fn code_spans(
-        &self,
-        owner: SyntaxIdentity,
-        content_range: TextRange,
-    ) -> Option<Arc<[WamlCodeSpan]>> {
-        // Resolve the owning snapshot directly instead of scanning every
-        // markdown document to find the one that recognizes `owner`
-        // (issue 34, Task 4).
-        let syntax = self.code_syntax.get(&owner)?;
-        if syntax.content_range != content_range {
-            return None;
-        }
-        let markdown = self.markdown.document(syntax.document)?;
-        if syntax.revision != markdown.revision() {
-            return None;
-        }
-        let valid = if syntax.fenced {
-            markdown.queries().fenced_code(owner).is_some_and(|fence| {
-                fence.content_range == content_range
-                    && fence
-                        .language
-                        .as_deref()
-                        .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
-            })
-        } else {
-            markdown
-                .queries()
-                .island(owner)
-                .is_some_and(|island| island.content_range == content_range)
-        };
-        if !valid {
-            return None;
-        }
-        syntax.code_spans()
-    }
-
-    pub fn document_code_spans(&self, document: DocumentId) -> Option<Arc<[WamlCodeSpan]>> {
-        self.markdown_snapshot(document)?;
-        let snapshots = self
-            .code_syntax
-            .values()
-            .filter(|snapshot| snapshot.document == document)
-            .collect::<Vec<_>>();
-        let fenced_ranges = snapshots
-            .iter()
-            .filter(|snapshot| snapshot.fenced)
-            .map(|snapshot| snapshot.content_range)
-            .collect::<Vec<_>>();
-        let mut spans = Vec::new();
-        for snapshot in snapshots {
-            let code_spans = snapshot.code_spans()?;
-            spans.extend(code_spans.iter().copied().filter(|span| {
-                snapshot.fenced
-                    || !fenced_ranges.iter().any(|range| {
-                        span.range.start() < range.end() && range.start() < span.range.end()
-                    })
-            }));
-        }
-        spans.sort_by_key(|span| (span.range.start(), span.range.end()));
-        spans.dedup_by_key(|span| span.range);
-        spans
-            .windows(2)
-            .all(|pair| pair[0].range.end() <= pair[1].range.start())
-            .then(|| Arc::from(spans))
     }
 
     pub fn markdown_token_spans(&self, document: DocumentId) -> Option<Arc<[MarkdownTokenSpan]>> {
@@ -242,13 +183,6 @@ impl OkfAnalysis {
             .all(|pair| pair[0].range.end() <= pair[1].range.start())
             .then(|| Arc::from(spans))
     }
-
-    fn attach_code_syntax(&mut self, uml: &crate::uml::Analysis) {
-        self.code_syntax = Arc::new(crate::uml::highlight::build_code_syntax(
-            &self.markdown,
-            uml,
-        ));
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -264,24 +198,6 @@ pub enum MarkdownTokenRole {
 pub struct MarkdownTokenSpan {
     pub range: TextRange,
     pub role: MarkdownTokenRole,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WamlCodeRole {
-    Keyword,
-    Type,
-    Property,
-    String,
-    Number,
-    Comment,
-    Punctuation,
-    Invalid,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WamlCodeSpan {
-    pub range: TextRange,
-    pub role: WamlCodeRole,
 }
 
 #[derive(Clone)]
@@ -942,7 +858,7 @@ fn prepare_candidate_inner_with_markdown_updates(
     recovered: Option<&PromotedMarkdownUpdate>,
     hooks: &mut impl PreparationHooks,
 ) -> Result<PreparedCandidate, AnalysisError> {
-    let mut okf = analyze_okf_inner(
+    let okf = analyze_okf_inner(
         &candidate_source,
         previous.as_ref().map(|analyses| analyses.okf),
         candidate_revision,
@@ -961,7 +877,6 @@ fn prepare_candidate_inner_with_markdown_updates(
         },
         previous.as_ref().map(|analyses| analyses.uml),
     )?;
-    okf.attach_code_syntax(&uml);
     hooks.before(AnalysisStage::Claims)?;
     validate_disjoint_claims([("uml", &uml.claims)])?;
     Ok(PreparedCandidate {
@@ -1386,7 +1301,6 @@ fn analyze_okf_inner(
         catalog: candidate.clone(),
         markdown,
         bundle,
-        code_syntax: Arc::new(BTreeMap::new()),
         quarantined: Arc::new(quarantined),
     })
 }
@@ -1826,72 +1740,6 @@ mod tests {
                 Some(DocumentId::new(1))
             );
         }
-    }
-
-    /// `code_spans` resolves the owning snapshot directly and then validates
-    /// it against the owning document: cover the island branch, the fenced
-    /// branch, the `content_range` mismatch that precedes both, and the
-    /// stale-revision rejection.
-    #[test]
-    fn code_spans_validate_both_owner_branches_and_reject_a_stale_revision() {
-        let authored = "---\ntype: uml.Class\n---\n# Example\n\n## Attributes\n- unknown: Number {0..42}\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n";
-        let candidate = prepare_candidate(
-            SourceBundle::try_from_pairs([("example.md", authored)]).unwrap(),
-            None,
-            7,
-        )
-        .unwrap();
-        let analysis = candidate.okf();
-        let document = DocumentId::new(0);
-        let markdown = analysis.markdown_snapshot(document).unwrap();
-        let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).unwrap();
-        let fence_owner = markdown
-            .queries()
-            .spans(full_range)
-            .find(|span| span.semantic_role == MarkdownSemanticRole::FencedCode)
-            .expect("the fenced code must have a semantic owner")
-            .owner;
-        let fence = markdown.queries().fenced_code(fence_owner).unwrap();
-        let island = markdown
-            .structure()
-            .islands
-            .iter()
-            .find(|island| island.kind == waml_syntax::WamlSectionKind::Attributes)
-            .expect("the document must retain its attributes island");
-
-        assert!(analysis
-            .code_spans(island.owner, island.content_range)
-            .is_some());
-        assert!(analysis
-            .code_spans(fence.owner, fence.content_range)
-            .is_some());
-        // Each owner is rejected under the other's content range, before
-        // either owner branch is consulted.
-        assert!(analysis
-            .code_spans(island.owner, fence.content_range)
-            .is_none());
-        assert!(analysis
-            .code_spans(fence.owner, island.content_range)
-            .is_none());
-
-        let bumped = markdown.revision().checked_next().unwrap();
-        let stale = OkfAnalysis {
-            catalog: analysis.catalog.clone(),
-            markdown: analysis.markdown.clone(),
-            bundle: analysis.bundle.clone(),
-            code_syntax: Arc::new(
-                analysis
-                    .code_syntax
-                    .iter()
-                    .map(|(owner, snapshot)| (*owner, snapshot.with_revision(bumped)))
-                    .collect(),
-            ),
-            quarantined: analysis.quarantined.clone(),
-        };
-        assert!(stale
-            .code_spans(island.owner, island.content_range)
-            .is_none());
-        assert!(stale.code_spans(fence.owner, fence.content_range).is_none());
     }
 
     struct QuarantineHooks {

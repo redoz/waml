@@ -5,10 +5,10 @@ use std::{
 
 use tower_lsp_server::ls_types as lsp;
 use waml::{
-    analysis::{DocumentVersion, MarkdownTokenRole, TextSize, WamlCodeRole},
+    analysis::{DocumentVersion, MarkdownTokenRole, TextSize},
     okf,
     source::{BundlePath, DocumentId},
-    uml::{completions, ActionContext, CompletionKind},
+    uml::{completions, ActionContext, CompletionKind, WamlCodeRole},
 };
 
 use crate::lsp::{
@@ -241,7 +241,7 @@ impl LspAnalysisState {
             }))
             .collect::<Vec<_>>();
         let mut waml_tokens = Vec::new();
-        for span in self.okf.document_code_spans(document_id)?.iter() {
+        for span in self.uml.document_code_spans(document_id)?.iter() {
             let token_type = match span.role {
                 WamlCodeRole::Keyword => KEYWORD_TOKEN,
                 WamlCodeRole::Type => TYPE_TOKEN,

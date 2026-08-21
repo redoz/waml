@@ -1,6 +1,10 @@
 //! UML-specific syntax classification for the "waml" fenced/inline code
-//! highlighting subsystem: builds a per-owner [`WamlCodeSyntaxSnapshot`] map
-//! that `waml::analysis::OkfAnalysis` reads to answer `WamlCodeRole` queries.
+//! highlighting subsystem: builds the per-owner [`CodeSyntax`] map that
+//! [`crate::uml::Analysis`] reads to answer [`WamlCodeRole`] queries.
+//!
+//! Everything here is UML vocabulary — the roles are read off `UmlLanguage`
+//! tokens — so it belongs to the UML tier, not to the domain-agnostic OKF
+//! analysis that merely supplies the markdown the islands sit in.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -12,8 +16,31 @@ use waml_syntax::{
     SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
 };
 
-use crate::analysis::{DocumentRevision, MarkdownSyntaxSet, WamlCodeRole, WamlCodeSpan};
+use crate::analysis::{DocumentRevision, MarkdownSyntaxSet};
 use crate::source::DocumentId;
+
+/// How one token of WAML code should be coloured.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WamlCodeRole {
+    Keyword,
+    Type,
+    Property,
+    String,
+    Number,
+    Comment,
+    Punctuation,
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WamlCodeSpan {
+    pub range: TextRange,
+    pub role: WamlCodeRole,
+}
+
+/// Every WAML island and ```waml``` fence in the bundle, keyed by its markdown
+/// owner identity.
+pub(crate) type CodeSyntax = BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot>;
 
 pub(crate) struct WamlCodeSyntaxSnapshot {
     pub(crate) document: DocumentId,
@@ -59,7 +86,7 @@ impl WamlCodeSyntaxSnapshot {
     }
 
     /// Test-only copy recorded under a different revision, used to exercise
-    /// the stale-revision rejection branch of `OkfAnalysis::code_spans`.
+    /// the stale-revision rejection branch of [`code_spans`].
     #[cfg(test)]
     pub(crate) fn with_revision(&self, revision: DocumentRevision) -> Self {
         Self::new(
@@ -95,12 +122,12 @@ fn compute_waml_code_spans(
 /// the markdown owner identity.
 pub(crate) fn build_code_syntax(
     markdown: &MarkdownSyntaxSet,
-    uml: &super::Analysis,
-) -> BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot> {
+    island_syntax: &super::analysis::UmlIslandSyntaxSet,
+) -> CodeSyntax {
     let mut snapshots = BTreeMap::new();
     for (document, markdown) in markdown.documents() {
         for island in markdown.structure().islands.iter() {
-            let Some(snapshot) = uml.island_syntax.by_owner(*document, island.owner) else {
+            let Some(snapshot) = island_syntax.by_owner(*document, island.owner) else {
                 continue;
             };
             if snapshot.content_range() != island.content_range {
@@ -157,6 +184,84 @@ pub(crate) fn build_code_syntax(
         }
     }
     snapshots
+}
+
+/// The highlight spans of one island or fence, or `None` when the request does
+/// not match the analysis that is installed.
+///
+/// Every rejection below is a staleness check. The caller asks by `(owner,
+/// content_range)` for whatever revision it last rendered, and spans computed
+/// against a different revision would colour the wrong bytes.
+pub(crate) fn code_spans(
+    markdown_set: &MarkdownSyntaxSet,
+    code_syntax: &CodeSyntax,
+    owner: SyntaxIdentity,
+    content_range: TextRange,
+) -> Option<Arc<[WamlCodeSpan]>> {
+    // Resolve the owning snapshot directly instead of scanning every
+    // markdown document to find the one that recognizes `owner`
+    // (issue 34, Task 4).
+    let syntax = code_syntax.get(&owner)?;
+    if syntax.content_range != content_range {
+        return None;
+    }
+    let markdown = markdown_set.document(syntax.document)?;
+    if syntax.revision != markdown.revision() {
+        return None;
+    }
+    let valid = if syntax.fenced {
+        markdown.queries().fenced_code(owner).is_some_and(|fence| {
+            fence.content_range == content_range
+                && fence
+                    .language
+                    .as_deref()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
+        })
+    } else {
+        markdown
+            .queries()
+            .island(owner)
+            .is_some_and(|island| island.content_range == content_range)
+    };
+    if !valid {
+        return None;
+    }
+    syntax.code_spans()
+}
+
+/// Every WAML span in one document, in order and non-overlapping, or `None` if
+/// they cannot be made so.
+pub(crate) fn document_code_spans(
+    markdown_set: &MarkdownSyntaxSet,
+    code_syntax: &CodeSyntax,
+    document: DocumentId,
+) -> Option<Arc<[WamlCodeSpan]>> {
+    markdown_set.document(document)?;
+    let snapshots = code_syntax
+        .values()
+        .filter(|snapshot| snapshot.document == document)
+        .collect::<Vec<_>>();
+    let fenced_ranges = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.fenced)
+        .map(|snapshot| snapshot.content_range)
+        .collect::<Vec<_>>();
+    let mut spans = Vec::new();
+    for snapshot in snapshots {
+        let code_spans = snapshot.code_spans()?;
+        spans.extend(code_spans.iter().copied().filter(|span| {
+            snapshot.fenced
+                || !fenced_ranges.iter().any(|range| {
+                    span.range.start() < range.end() && range.start() < span.range.end()
+                })
+        }));
+    }
+    spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+    spans.dedup_by_key(|span| span.range);
+    spans
+        .windows(2)
+        .all(|pair| pair[0].range.end() <= pair[1].range.start())
+        .then(|| Arc::from(spans))
 }
 
 fn parse_fenced_waml_syntax(
@@ -316,4 +421,84 @@ fn waml_code_role(token: &SyntaxToken<super::syntax::UmlLanguage>) -> Option<Wam
         return Some(WamlCodeRole::Keyword);
     }
     (kind == Kind::RawMarkdownToken).then_some(WamlCodeRole::Comment)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::prepare_candidate;
+    use crate::source::SourceBundle;
+
+    /// `code_spans` resolves the owning snapshot directly and then validates
+    /// it against the owning document: cover the island branch, the fenced
+    /// branch, the `content_range` mismatch that precedes both, and the
+    /// stale-revision rejection.
+    #[test]
+    fn code_spans_validate_both_owner_branches_and_reject_a_stale_revision() {
+        let authored = "---\ntype: uml.Class\n---\n# Example\n\n## Attributes\n- unknown: Number {0..42}\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n";
+        let candidate = prepare_candidate(
+            SourceBundle::try_from_pairs([("example.md", authored)]).unwrap(),
+            None,
+            7,
+        )
+        .unwrap();
+        let analysis = candidate.uml();
+        let document = DocumentId::new(0);
+        let markdown = analysis.markdown.document(document).unwrap();
+        let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).unwrap();
+        let fence_owner = markdown
+            .queries()
+            .spans(full_range)
+            .find(|span| span.semantic_role == MarkdownSemanticRole::FencedCode)
+            .expect("the fenced code must have a semantic owner")
+            .owner;
+        let fence = markdown.queries().fenced_code(fence_owner).unwrap();
+        let island = markdown
+            .structure()
+            .islands
+            .iter()
+            .find(|island| island.kind == waml_syntax::WamlSectionKind::Attributes)
+            .expect("the document must retain its attributes island");
+
+        assert!(analysis
+            .code_spans(island.owner, island.content_range)
+            .is_some());
+        assert!(analysis
+            .code_spans(fence.owner, fence.content_range)
+            .is_some());
+        // Each owner is rejected under the other's content range, before
+        // either owner branch is consulted.
+        assert!(analysis
+            .code_spans(island.owner, fence.content_range)
+            .is_none());
+        assert!(analysis
+            .code_spans(fence.owner, island.content_range)
+            .is_none());
+
+        // Rebuilding the map from the analysis' own inputs reproduces what
+        // `Analysis::code_spans` serves, which is what makes the stale copy
+        // below a fair stand-in for the installed one.
+        let rebuilt = build_code_syntax(&analysis.markdown, &analysis.island_syntax);
+        assert!(code_spans(
+            &analysis.markdown,
+            &rebuilt,
+            island.owner,
+            island.content_range
+        )
+        .is_some());
+
+        let bumped = markdown.revision().checked_next().unwrap();
+        let stale = rebuilt
+            .iter()
+            .map(|(owner, snapshot)| (*owner, snapshot.with_revision(bumped)))
+            .collect::<CodeSyntax>();
+        assert!(code_spans(
+            &analysis.markdown,
+            &stale,
+            island.owner,
+            island.content_range
+        )
+        .is_none());
+        assert!(code_spans(&analysis.markdown, &stale, fence.owner, fence.content_range).is_none());
+    }
 }

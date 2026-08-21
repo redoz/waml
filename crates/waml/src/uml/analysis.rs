@@ -85,6 +85,7 @@ pub struct Analysis {
     pub projection: super::Projection,
     pub diagnostics: Arc<[Diagnostic]>,
     pub markdown: crate::analysis::MarkdownSyntaxSet,
+    code_syntax: Arc<super::highlight::CodeSyntax>,
     affected: AffectedAnalysis,
     projection_freshness: BTreeMap<SyntaxIdentity, ProjectionFreshness>,
     diagram_projections: BTreeMap<Arc<str>, Arc<crate::model::Diagram>>,
@@ -208,6 +209,25 @@ pub mod test_support {
 impl Analysis {
     pub fn session_revision(&self) -> u64 {
         self.session_revision
+    }
+
+    /// Highlight spans for one WAML island or ```waml``` fence, or `None` if
+    /// the caller is asking about a revision this analysis does not hold.
+    pub fn code_spans(
+        &self,
+        owner: SyntaxIdentity,
+        content_range: TextRange,
+    ) -> Option<Arc<[super::highlight::WamlCodeSpan]>> {
+        super::highlight::code_spans(&self.markdown, &self.code_syntax, owner, content_range)
+    }
+
+    /// Every WAML highlight span in one document, in order and
+    /// non-overlapping.
+    pub fn document_code_spans(
+        &self,
+        document: DocumentId,
+    ) -> Option<Arc<[super::highlight::WamlCodeSpan]>> {
+        super::highlight::document_code_spans(&self.markdown, &self.code_syntax, document)
     }
 
     pub fn affected(&self) -> &AffectedAnalysis {
@@ -597,16 +617,26 @@ pub fn analyze(
         &projection,
         &diagnostics,
     );
+    let island_syntax = UmlIslandSyntaxSet {
+        documents: Arc::new(island_snapshots),
+    };
+    // Built here rather than patched in afterwards: the highlight map is a
+    // pure function of the markdown and the island trees this pass just
+    // produced, so it is part of constructing the analysis, not something a
+    // later caller adds to it.
+    let code_syntax = Arc::new(super::highlight::build_code_syntax(
+        context.markdown,
+        &island_syntax,
+    ));
     Ok(Analysis {
         claims,
         syntax: SyntaxSet::from_snapshots(context.catalog.clone(), snapshots),
-        island_syntax: UmlIslandSyntaxSet {
-            documents: Arc::new(island_snapshots),
-        },
+        island_syntax,
         declared,
         projection,
         diagnostics: diagnostics.into(),
         markdown: context.markdown.clone(),
+        code_syntax,
         affected: metadata.affected,
         projection_freshness: metadata.projection_freshness,
         diagram_projections: metadata.diagram_projections,
