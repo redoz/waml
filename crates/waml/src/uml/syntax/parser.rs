@@ -1519,6 +1519,84 @@ fn flow_internal(
     GreenElement::Node(f.node(UmlSyntaxKind::FlowInternal, children).built())
 }
 
+/// What one backtick-valued clause of a transition came to.
+struct BacktickClause {
+    /// The clause node: its opener, and either the backticked expression or a
+    /// missing value token.
+    node: GreenElement<UmlLanguage>,
+    /// The end of the last token that actually took bytes.  The next token's
+    /// leading trivia starts here, so leaving it behind hands the same bytes
+    /// out twice.
+    owned: usize,
+    /// Where the scan for the following clause resumes.
+    next: usize,
+    /// Whether the clause was whole -- an opener with a closed backtick run
+    /// after it.
+    whole: bool,
+}
+
+/// A `` <opener> `expr` `` clause -- a trigger, a guard, an effect.  All three
+/// read the same: the opener the caller has already tokenized, then a
+/// backticked expression, and when no closed backtick run follows, a missing
+/// value token in its place.
+#[allow(clippy::too_many_arguments)]
+fn backtick_clause(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    owned: usize,
+    content_end: usize,
+    opener: GreenElement<UmlLanguage>,
+    clause: UmlSyntaxKind,
+    value: UmlSyntaxKind,
+) -> BacktickClause {
+    let expr = skip_ws(source, owned, content_end);
+    match scan_backtick(source, expr, content_end) {
+        Some(q) => BacktickClause {
+            node: GreenElement::Node(
+                f.node(clause, [opener, token(f, text, owned, expr, q, value)])
+                    .built(),
+            ),
+            owned: q,
+            next: q,
+            whole: true,
+        },
+        None => BacktickClause {
+            node: GreenElement::Node(
+                f.node(
+                    clause,
+                    [opener, GreenElement::Token(f.missing_token(value))],
+                )
+                .built(),
+            ),
+            owned,
+            next: expr,
+            whole: false,
+        },
+    }
+}
+
+/// A clause the author wrote nothing of: both its opener and its value are
+/// missing tokens, so the slot still holds the shape the grammar promises and
+/// takes no source bytes.
+fn missing_clause(
+    f: &GreenFactory<UmlLanguage>,
+    clause: UmlSyntaxKind,
+    opener: UmlSyntaxKind,
+    value: UmlSyntaxKind,
+) -> GreenElement<UmlLanguage> {
+    GreenElement::Node(
+        f.node(
+            clause,
+            [
+                GreenElement::Token(f.missing_token(opener)),
+                GreenElement::Token(f.missing_token(value)),
+            ],
+        )
+        .built(),
+    )
+}
+
 fn flow_transition(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -1542,78 +1620,44 @@ fn flow_transition(
     let mut valid = source.get(lead..lead + 1) == Some("-");
     if keyword_at(source, p, content_end, "on") {
         let keyword = token(f, text, lead + 1, p, p + 2, UmlSyntaxKind::FlowKeywordToken);
-        owned = p + 2;
-        let expr = skip_ws(source, p + 2, content_end);
-        if let Some(q) = scan_backtick(source, expr, content_end) {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowTrigger,
-                    [
-                        keyword,
-                        token(f, text, owned, expr, q, UmlSyntaxKind::TriggerToken),
-                    ],
-                )
-                .built(),
-            ));
-            owned = q;
-            p = skip_ws(source, q, content_end);
-        } else {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowTrigger,
-                    [
-                        keyword,
-                        GreenElement::Token(f.missing_token(UmlSyntaxKind::TriggerToken)),
-                    ],
-                )
-                .built(),
-            ));
-            p = expr;
-            valid = false;
-        }
+        let trigger = backtick_clause(
+            f,
+            text,
+            source,
+            p + 2,
+            content_end,
+            keyword,
+            UmlSyntaxKind::FlowTrigger,
+            UmlSyntaxKind::TriggerToken,
+        );
+        children.push(trigger.node);
+        owned = trigger.owned;
+        p = skip_ws(source, trigger.next, content_end);
+        valid &= trigger.whole;
     } else {
-        children.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::FlowTrigger,
-                [
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::FlowKeywordToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::TriggerToken)),
-                ],
-            )
-            .built(),
+        children.push(missing_clause(
+            f,
+            UmlSyntaxKind::FlowTrigger,
+            UmlSyntaxKind::FlowKeywordToken,
+            UmlSyntaxKind::TriggerToken,
         ));
     }
     if keyword_at(source, p, content_end, "when") {
         let keyword = token(f, text, owned, p, p + 4, UmlSyntaxKind::FlowKeywordToken);
-        owned = p + 4;
-        let expr = skip_ws(source, p + 4, content_end);
-        if let Some(q) = scan_backtick(source, expr, content_end) {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowGuard,
-                    [
-                        keyword,
-                        token(f, text, owned, expr, q, UmlSyntaxKind::GuardToken),
-                    ],
-                )
-                .built(),
-            ));
-            owned = q;
-            p = skip_ws(source, q, content_end);
-        } else {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowGuard,
-                    [
-                        keyword,
-                        GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
-                    ],
-                )
-                .built(),
-            ));
-            p = expr;
-            valid = false;
-        }
+        let guard = backtick_clause(
+            f,
+            text,
+            source,
+            p + 4,
+            content_end,
+            keyword,
+            UmlSyntaxKind::FlowGuard,
+            UmlSyntaxKind::GuardToken,
+        );
+        children.push(guard.node);
+        owned = guard.owned;
+        p = skip_ws(source, guard.next, content_end);
+        valid &= guard.whole;
     } else if keyword_at(source, p, content_end, "else") {
         children.push(GreenElement::Node(
             f.node(
@@ -1628,15 +1672,11 @@ fn flow_transition(
         owned = p + 4;
         p = skip_ws(source, p + 4, content_end);
     } else {
-        children.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::FlowGuard,
-                [
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::FlowKeywordToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
-                ],
-            )
-            .built(),
+        children.push(missing_clause(
+            f,
+            UmlSyntaxKind::FlowGuard,
+            UmlSyntaxKind::FlowKeywordToken,
+            UmlSyntaxKind::GuardToken,
         ));
     }
     if keyword_at(source, p, content_end, "transitions") {
@@ -1741,45 +1781,26 @@ fn flow_transition(
     }
     if p < content_end && source.as_bytes()[p] == b':' {
         let colon = token(f, text, owned, p, p + 1, UmlSyntaxKind::ColonToken);
-        owned = p + 1;
-        let expr = skip_ws(source, p + 1, content_end);
-        if let Some(q) = scan_backtick(source, expr, content_end) {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowEffect,
-                    [
-                        colon,
-                        token(f, text, owned, expr, q, UmlSyntaxKind::EffectToken),
-                    ],
-                )
-                .built(),
-            ));
-            owned = q;
-            p = q;
-        } else {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::FlowEffect,
-                    [
-                        colon,
-                        GreenElement::Token(f.missing_token(UmlSyntaxKind::EffectToken)),
-                    ],
-                )
-                .built(),
-            ));
-            p = expr;
-            valid = false;
-        }
+        let effect = backtick_clause(
+            f,
+            text,
+            source,
+            p + 1,
+            content_end,
+            colon,
+            UmlSyntaxKind::FlowEffect,
+            UmlSyntaxKind::EffectToken,
+        );
+        children.push(effect.node);
+        owned = effect.owned;
+        p = effect.next;
+        valid &= effect.whole;
     } else {
-        children.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::FlowEffect,
-                [
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::ColonToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::EffectToken)),
-                ],
-            )
-            .built(),
+        children.push(missing_clause(
+            f,
+            UmlSyntaxKind::FlowEffect,
+            UmlSyntaxKind::ColonToken,
+            UmlSyntaxKind::EffectToken,
         ));
     }
     p = skip_ws(source, p, content_end);
@@ -3147,16 +3168,81 @@ fn layout_statement(
         lead + 1,
         UmlSyntaxKind::BulletToken,
     )];
-    // One entry per successfully lexed atom.  The green elements retain the
-    // exact authored bytes/trivia; the parallel spellings are used only to
-    // choose their fixed grammar slots below.
-    let mut atom_words: Vec<String> = Vec::new();
-    // Authored byte span of each entry in `atom_words`, excluding the leading
-    // whitespace the green token carries as trivia.  Recovery diagnostics point
-    // at these spans so a squiggle starts on the word, not in front of it.
-    let mut atom_spans: Vec<(usize, usize)> = Vec::new();
-    let mut has_bad_atom = false;
-    let mut at = lead + 1;
+    let atoms = lex_layout_atoms(f, text, source, lead + 1, content_end, diags);
+    // Parse the authored atoms into fixed grammar slots. The shape parser
+    // consumes atom indices only; the green elements below remain the sole
+    // owners of source bytes.
+    if !atoms.elements.is_empty() && !atoms.has_bad_atom && !atoms.words.is_empty() {
+        push_layout_shape(f, &mut children, atoms, lead + 1, content_end, diags);
+    } else {
+        children.extend(atoms.elements);
+    }
+    if children.len() == 1 {
+        let bullet = children.pop().expect("layout bullet");
+        children.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::SkippedTokensSyntax, [bullet]).built(),
+        ));
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::LayoutWordToken),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            lead,
+            content_end,
+            "missing layout statement",
+        ));
+    }
+    if content_end < end {
+        children.push(token(
+            f,
+            text,
+            content_end,
+            content_end,
+            end,
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
+    f.node(UmlSyntaxKind::LayoutStatement, children).built()
+}
+
+/// What one `## Layout` line lexes into: the authored bytes, split at the
+/// boundaries of the layout mini-grammar's atoms.
+struct LayoutAtoms {
+    /// One green element per lexed atom, plus a missing token and a recovery
+    /// node for each run of bytes that lexed as no atom at all.  These retain
+    /// the exact authored bytes and trivia.
+    elements: Vec<GreenElement<UmlLanguage>>,
+    /// The lowercased spelling of each atom that lexed cleanly, used only to
+    /// choose the atoms' fixed grammar slots.
+    words: Vec<String>,
+    /// Authored byte span of each entry in `words`, excluding the leading
+    /// whitespace the green token carries as trivia.  Recovery diagnostics
+    /// point at these spans so a squiggle starts on the word, not in front of
+    /// it.
+    spans: Vec<(usize, usize)>,
+    /// Whether any run of bytes failed to lex.  A line with one is never
+    /// shaped: the shape parser reads spellings, and an unlexable run has
+    /// none.
+    has_bad_atom: bool,
+}
+
+/// Splits a layout line into its atoms, reporting each run of bytes that lexes
+/// as none of them.
+fn lex_layout_atoms(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> LayoutAtoms {
+    let mut atoms = LayoutAtoms {
+        elements: Vec::new(),
+        words: Vec::new(),
+        spans: Vec::new(),
+        has_bad_atom: false,
+    };
+    let mut at = from;
     while at < content_end {
         let token_start = at;
         at = skip_ws(source, at, content_end);
@@ -3210,15 +3296,17 @@ fn layout_statement(
             }
         };
         if kind == UmlSyntaxKind::BadToken {
-            has_bad_atom = true;
-            children.push(GreenElement::Token(f.missing_token(match ch {
-                '[' => UmlSyntaxKind::LayoutLinkToken,
-                '"' => UmlSyntaxKind::LayoutQuoteToken,
-                _ => UmlSyntaxKind::LayoutWordToken,
-            })));
+            atoms.has_bad_atom = true;
+            atoms
+                .elements
+                .push(GreenElement::Token(f.missing_token(match ch {
+                    '[' => UmlSyntaxKind::LayoutLinkToken,
+                    '"' => UmlSyntaxKind::LayoutQuoteToken,
+                    _ => UmlSyntaxKind::LayoutWordToken,
+                })));
             // As with a lexed atom, the gap in front of the unlexable bytes is
             // leading trivia so the recovery node's range starts on them.
-            children.push(skipped_tokens(
+            atoms.elements.push(skipped_tokens(
                 f,
                 text,
                 token_start,
@@ -3230,126 +3318,108 @@ fn layout_statement(
             // The gap before the atom is leading trivia, not part of the atom.
             // Folding it into the token text would make every range taken from
             // a layout node start one space early.
-            children.push(token(f, text, token_start, at, next, kind));
-            atom_words.push(
+            atoms
+                .elements
+                .push(token(f, text, token_start, at, next, kind));
+            atoms.words.push(
                 source[at..next]
                     .trim_matches(is_inline_space)
                     .to_ascii_lowercase(),
             );
-            atom_spans.push((at, next));
+            atoms.spans.push((at, next));
         }
         at = next.max(at + ch.len_utf8());
     }
-    // Parse the authored atoms into fixed grammar slots. The shape parser
-    // consumes atom indices only; the green elements below remain the sole
-    // owners of source bytes.
-    if children.len() > 1 && !has_bad_atom && !atom_words.is_empty() {
-        let atoms = children.split_off(1);
-        match parse_layout_shape(&atom_words) {
-            Ok(LayoutShape::Alignment { left, join, right }) => {
-                children.push(GreenElement::Node(
-                    f.node(
-                        UmlSyntaxKind::LayoutAlignment,
-                        [
-                            layout_anchored_node(
-                                f,
-                                atoms[left.clone()].to_vec(),
-                                &atom_words[left],
-                            ),
-                            GreenElement::Node(
-                                f.node(
-                                    UmlSyntaxKind::DirectionClause,
-                                    atoms[join.clone()].iter().cloned(),
-                                )
-                                .built(),
-                            ),
-                            layout_anchored_node(
-                                f,
-                                atoms[right.clone()].to_vec(),
-                                &atom_words[right],
-                            ),
-                        ],
-                    )
-                    .built(),
-                ));
-            }
-            Ok(LayoutShape::Placement {
-                operands,
-                directions,
-            }) => {
-                let mut slots = Vec::with_capacity(operands.len() + directions.len());
-                for (index, operand) in operands.iter().enumerate() {
-                    slots.push(layout_operand_node(
-                        f,
-                        atoms[operand.clone()].to_vec(),
-                        &atom_words[operand.clone()],
-                    ));
-                    if let Some(direction) = directions.get(index) {
-                        slots.push(GreenElement::Node(
+    atoms
+}
+
+/// Fits the lexed atoms into the layout grammar's fixed slots -- an alignment,
+/// a placement chain, or a lone operand -- or reports that they fit none of
+/// them and hands the atoms back as recovery.
+fn push_layout_shape(
+    f: &GreenFactory<UmlLanguage>,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+    parsed: LayoutAtoms,
+    from: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) {
+    let LayoutAtoms {
+        elements: atoms,
+        words: atom_words,
+        spans: atom_spans,
+        ..
+    } = parsed;
+    match parse_layout_shape(&atom_words) {
+        Ok(LayoutShape::Alignment { left, join, right }) => {
+            children.push(GreenElement::Node(
+                f.node(
+                    UmlSyntaxKind::LayoutAlignment,
+                    [
+                        layout_anchored_node(f, atoms[left.clone()].to_vec(), &atom_words[left]),
+                        GreenElement::Node(
                             f.node(
                                 UmlSyntaxKind::DirectionClause,
-                                atoms[direction.clone()].iter().cloned(),
+                                atoms[join.clone()].iter().cloned(),
                             )
                             .built(),
-                        ));
-                    }
+                        ),
+                        layout_anchored_node(f, atoms[right.clone()].to_vec(), &atom_words[right]),
+                    ],
+                )
+                .built(),
+            ));
+        }
+        Ok(LayoutShape::Placement {
+            operands,
+            directions,
+        }) => {
+            let mut slots = Vec::with_capacity(operands.len() + directions.len());
+            for (index, operand) in operands.iter().enumerate() {
+                slots.push(layout_operand_node(
+                    f,
+                    atoms[operand.clone()].to_vec(),
+                    &atom_words[operand.clone()],
+                ));
+                if let Some(direction) = directions.get(index) {
+                    slots.push(GreenElement::Node(
+                        f.node(
+                            UmlSyntaxKind::DirectionClause,
+                            atoms[direction.clone()].iter().cloned(),
+                        )
+                        .built(),
+                    ));
                 }
-                children.push(GreenElement::Node(
-                    f.node(UmlSyntaxKind::LayoutPlacement, slots).built(),
-                ));
             }
-            Ok(LayoutShape::Standalone(operand)) => {
-                children.push(GreenElement::Node(
-                    f.node(
-                        UmlSyntaxKind::LayoutStandalone,
-                        [layout_operand_node(
-                            f,
-                            atoms[operand.clone()].to_vec(),
-                            &atom_words[operand],
-                        )],
-                    )
-                    .built(),
-                ));
-            }
-            Err(error) => {
-                let (span_start, span_end) =
-                    malformed_layout_span(&error, &atom_spans, lead + 1, content_end);
-                diags.push(diag(
-                    UmlSyntaxDiagnosticCode::MalformedLayout,
-                    span_start,
-                    span_end,
-                    error.expected.message(),
-                ));
-                append_layout_recovery(f, &mut children, atoms, error)
-            }
+            children.push(GreenElement::Node(
+                f.node(UmlSyntaxKind::LayoutPlacement, slots).built(),
+            ));
+        }
+        Ok(LayoutShape::Standalone(operand)) => {
+            children.push(GreenElement::Node(
+                f.node(
+                    UmlSyntaxKind::LayoutStandalone,
+                    [layout_operand_node(
+                        f,
+                        atoms[operand.clone()].to_vec(),
+                        &atom_words[operand],
+                    )],
+                )
+                .built(),
+            ));
+        }
+        Err(error) => {
+            let (span_start, span_end) =
+                malformed_layout_span(&error, &atom_spans, from, content_end);
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::MalformedLayout,
+                span_start,
+                span_end,
+                error.expected.message(),
+            ));
+            append_layout_recovery(f, children, atoms, error)
         }
     }
-    if children.len() == 1 {
-        let bullet = children.pop().expect("layout bullet");
-        children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::SkippedTokensSyntax, [bullet]).built(),
-        ));
-        children.push(GreenElement::Token(
-            f.missing_token(UmlSyntaxKind::LayoutWordToken),
-        ));
-        diags.push(diag(
-            UmlSyntaxDiagnosticCode::UnexpectedToken,
-            lead,
-            content_end,
-            "missing layout statement",
-        ));
-    }
-    if content_end < end {
-        children.push(token(
-            f,
-            text,
-            content_end,
-            content_end,
-            end,
-            UmlSyntaxKind::NewlineToken,
-        ));
-    }
-    f.node(UmlSyntaxKind::LayoutStatement, children).built()
 }
 
 #[derive(Clone, Debug)]
@@ -4102,96 +4172,15 @@ fn inline_instance(
     }
     let mut slots = 0usize;
     while p < content_end {
-        let name_start = p;
-        let name_end = scan_name(source, p, content_end);
-        if name_start == name_end {
+        let Some((slot, value_end)) =
+            inline_slot(f, text, source, p, content_end, keyword_leading, diags)
+        else {
             break;
-        }
-        let mut slot = vec![token(
-            f,
-            text,
-            keyword_leading,
-            name_start,
-            name_end,
-            UmlSyntaxKind::IdentifierToken,
-        )];
-        keyword_leading = name_end;
-        p = skip_ws(source, name_end, content_end);
-        let mut set_to_span = None;
-        if source[p..content_end].starts_with("set to") {
-            slot.push(token(
-                f,
-                text,
-                name_end,
-                p,
-                p + 6,
-                UmlSyntaxKind::SetToToken,
-            ));
-            set_to_span = Some((p, p + 6));
-            keyword_leading = p + 6;
-            p = skip_ws(source, p + 6, content_end);
-        } else {
-            slot.push(GreenElement::Token(
-                f.missing_token(UmlSyntaxKind::SetToToken),
-            ));
-            diags.push(diag(
-                UmlSyntaxDiagnosticCode::UnexpectedToken,
-                p,
-                p,
-                "missing 'set to' in inline slot",
-            ));
-        }
-        if p < content_end && source.as_bytes()[p] == b'"' {
-            let q = source[p + 1..content_end]
-                .find('"')
-                .map(|n| p + n + 2)
-                .unwrap_or(content_end);
-            slot.push(token(
-                f,
-                text,
-                keyword_leading,
-                p,
-                q,
-                UmlSyntaxKind::TypeToken,
-            ));
-            p = q;
-        } else if p < content_end && source.as_bytes()[p] == b'[' {
-            let (link, q) =
-                relationship_link(f, text, source, p, content_end, keyword_leading, diags);
-            slot.push(link);
-            p = q;
-        } else {
-            let q = scan_name(source, p, content_end);
-            slot.push(if p == q {
-                // As with `as` above: `set to` promised a value, and when the
-                // keyword itself is missing that is already reported.
-                if let Some((set_to_start, set_to_end)) = set_to_span {
-                    diags.push(diag(
-                        UmlSyntaxDiagnosticCode::UnexpectedToken,
-                        set_to_start,
-                        set_to_end,
-                        "expected a slot value after \"set to\"",
-                    ));
-                }
-                missing_token(f, text, keyword_leading, p, UmlSyntaxKind::IdentifierToken)
-            } else {
-                token(
-                    f,
-                    text,
-                    keyword_leading,
-                    p,
-                    q,
-                    UmlSyntaxKind::IdentifierToken,
-                )
-            });
-            p = q;
-        }
-        c.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::InlineSlot, slot).built(),
-        ));
+        };
+        c.push(slot);
         slots += 1;
-        keyword_leading = p;
-        p = skip_ws(source, p, content_end);
+        keyword_leading = value_end;
+        p = skip_ws(source, value_end, content_end);
         if source[p..content_end].starts_with("and") {
             c.push(token(
                 f,
@@ -4243,6 +4232,108 @@ fn inline_instance(
         ));
     }
     f.node(UmlSyntaxKind::InlineInstance, c).built()
+}
+
+/// One `<name> set to <value>` slot of an inline instance, together with the
+/// offset just past the value it bound.  `None` when no slot name is there to
+/// start one, which is what ends the slot list.
+fn inline_slot(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    content_end: usize,
+    leading: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> Option<(GreenElement<UmlLanguage>, usize)> {
+    let name_start = from;
+    let name_end = scan_name(source, from, content_end);
+    if name_start == name_end {
+        return None;
+    }
+    let mut keyword_leading = leading;
+    let mut slot = vec![token(
+        f,
+        text,
+        keyword_leading,
+        name_start,
+        name_end,
+        UmlSyntaxKind::IdentifierToken,
+    )];
+    keyword_leading = name_end;
+    let mut p = skip_ws(source, name_end, content_end);
+    let mut set_to_span = None;
+    if source[p..content_end].starts_with("set to") {
+        slot.push(token(
+            f,
+            text,
+            name_end,
+            p,
+            p + 6,
+            UmlSyntaxKind::SetToToken,
+        ));
+        set_to_span = Some((p, p + 6));
+        keyword_leading = p + 6;
+        p = skip_ws(source, p + 6, content_end);
+    } else {
+        slot.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::SetToToken),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            p,
+            p,
+            "missing 'set to' in inline slot",
+        ));
+    }
+    if p < content_end && source.as_bytes()[p] == b'"' {
+        let q = source[p + 1..content_end]
+            .find('"')
+            .map(|n| p + n + 2)
+            .unwrap_or(content_end);
+        slot.push(token(
+            f,
+            text,
+            keyword_leading,
+            p,
+            q,
+            UmlSyntaxKind::TypeToken,
+        ));
+        p = q;
+    } else if p < content_end && source.as_bytes()[p] == b'[' {
+        let (link, q) = relationship_link(f, text, source, p, content_end, keyword_leading, diags);
+        slot.push(link);
+        p = q;
+    } else {
+        let q = scan_name(source, p, content_end);
+        slot.push(if p == q {
+            // As with `as` in the instance header: `set to` promised a value,
+            // and when the keyword itself is missing that is already reported.
+            if let Some((set_to_start, set_to_end)) = set_to_span {
+                diags.push(diag(
+                    UmlSyntaxDiagnosticCode::UnexpectedToken,
+                    set_to_start,
+                    set_to_end,
+                    "expected a slot value after \"set to\"",
+                ));
+            }
+            missing_token(f, text, keyword_leading, p, UmlSyntaxKind::IdentifierToken)
+        } else {
+            token(
+                f,
+                text,
+                keyword_leading,
+                p,
+                q,
+                UmlSyntaxKind::IdentifierToken,
+            )
+        });
+        p = q;
+    }
+    Some((
+        GreenElement::Node(f.node(UmlSyntaxKind::InlineSlot, slot).built()),
+        p,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4858,130 +4949,21 @@ fn attribute(
             ));
         }
     }
-    let type_start = skip_ws(source, p, content_end);
-    if type_start < content_end && source.as_bytes()[type_start] == b'[' {
-        let (link, next) = relationship_link(f, text, source, type_start, content_end, p, diags);
-        c.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::TypeReference, [link]).built(),
-        ));
+    if let Some((ty, next)) = attribute_type(f, text, source, p, content_end, diags) {
+        c.push(ty);
         p = next;
-    } else {
-        let type_end = source[type_start..content_end]
-            .find(['[', '{'])
-            .map(|i| type_start + i)
-            .unwrap_or(content_end)
-            .trim_end_matches_index(source, type_start);
-        if type_start < type_end {
-            let ty = f
-                .node(
-                    UmlSyntaxKind::TypeReference,
-                    [token(
-                        f,
-                        text,
-                        p,
-                        type_start,
-                        type_end,
-                        UmlSyntaxKind::TypeToken,
-                    )],
-                )
-                .built();
-            c.push(GreenElement::Node(ty));
-            p = type_end;
-        } else if colon.is_some() {
-            diags.push(diag(
-                UmlSyntaxDiagnosticCode::MissingType,
-                start,
-                content_end,
-                "missing attribute type",
-            ));
-        }
+    } else if colon.is_some() {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MissingType,
+            start,
+            content_end,
+            "missing attribute type",
+        ));
     }
-    let mstart = skip_ws(source, p, content_end);
-    if mstart < content_end && matches!(source.as_bytes()[mstart], b'[' | b'{') {
-        let close_delimiter = if source.as_bytes()[mstart] == b'{' {
-            '}'
-        } else {
-            ']'
-        };
-        if let Some(close) = source[mstart + 1..content_end]
-            .find(close_delimiter)
-            .map(|i| mstart + 1 + i)
-        {
-            let value = &source[mstart + 1..close];
-            let valid = crate::multiplicity::Multiplicity::parse(value).is_some();
-            let mc = vec![
-                token(
-                    f,
-                    text,
-                    p,
-                    mstart,
-                    mstart + 1,
-                    UmlSyntaxKind::OpenBracketToken,
-                ),
-                token(
-                    f,
-                    text,
-                    mstart + 1,
-                    mstart + 1,
-                    close,
-                    UmlSyntaxKind::IdentifierToken,
-                ),
-                token(
-                    f,
-                    text,
-                    close,
-                    close,
-                    close + 1,
-                    UmlSyntaxKind::CloseBracketToken,
-                ),
-            ];
-            if !valid {
-                diags.push(diag(
-                    UmlSyntaxDiagnosticCode::InvalidMultiplicity,
-                    mstart,
-                    close + 1,
-                    "invalid multiplicity",
-                ));
-            }
-            c.push(GreenElement::Node(
-                f.node(UmlSyntaxKind::Multiplicity, mc).built(),
-            ));
-            p = close + 1;
-        } else {
-            let value_start = mstart + 1;
-            c.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::Multiplicity,
-                    [
-                        token(
-                            f,
-                            text,
-                            p,
-                            mstart,
-                            mstart + 1,
-                            UmlSyntaxKind::OpenBracketToken,
-                        ),
-                        token(
-                            f,
-                            text,
-                            value_start,
-                            value_start,
-                            content_end,
-                            UmlSyntaxKind::IdentifierToken,
-                        ),
-                        GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
-                    ],
-                )
-                .built(),
-            ));
-            diags.push(diag(
-                UmlSyntaxDiagnosticCode::InvalidMultiplicity,
-                mstart,
-                content_end,
-                "unterminated multiplicity",
-            ));
-            p = content_end;
-        }
+    if let Some((multiplicity, next)) = multiplicity_suffix(f, text, source, p, content_end, diags)
+    {
+        c.push(multiplicity);
+        p = next;
     }
     if p < content_end {
         c.push(skipped_tokens(
@@ -5011,6 +4993,152 @@ fn attribute(
     }
     Some(f.node(UmlSyntaxKind::Attribute, c).built())
 }
+
+/// The type an attribute names after its colon -- a link, or a bare type name
+/// running up to the multiplicity suffix -- with the offset just past it.
+/// `None` when the attribute names no type at all; the caller decides whether
+/// that is worth a diagnostic.
+fn attribute_type(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> Option<(GreenElement<UmlLanguage>, usize)> {
+    let type_start = skip_ws(source, from, content_end);
+    if type_start < content_end && source.as_bytes()[type_start] == b'[' {
+        let (link, next) = relationship_link(f, text, source, type_start, content_end, from, diags);
+        return Some((
+            GreenElement::Node(f.node(UmlSyntaxKind::TypeReference, [link]).built()),
+            next,
+        ));
+    }
+    let type_end = source[type_start..content_end]
+        .find(['[', '{'])
+        .map(|i| type_start + i)
+        .unwrap_or(content_end)
+        .trim_end_matches_index(source, type_start);
+    if type_start < type_end {
+        let ty = f
+            .node(
+                UmlSyntaxKind::TypeReference,
+                [token(
+                    f,
+                    text,
+                    from,
+                    type_start,
+                    type_end,
+                    UmlSyntaxKind::TypeToken,
+                )],
+            )
+            .built();
+        Some((GreenElement::Node(ty), type_end))
+    } else {
+        None
+    }
+}
+
+/// The bracketed multiplicity an attribute may carry after its type, with the
+/// offset just past it.  `None` when no bracket opens one.  An unparseable or
+/// unterminated multiplicity still yields a node -- the authored bytes have to
+/// reach the tree either way -- along with a diagnostic saying which.
+fn multiplicity_suffix(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> Option<(GreenElement<UmlLanguage>, usize)> {
+    let mstart = skip_ws(source, from, content_end);
+    if mstart >= content_end || !matches!(source.as_bytes()[mstart], b'[' | b'{') {
+        return None;
+    }
+    let close_delimiter = if source.as_bytes()[mstart] == b'{' {
+        '}'
+    } else {
+        ']'
+    };
+    let Some(close) = source[mstart + 1..content_end]
+        .find(close_delimiter)
+        .map(|i| mstart + 1 + i)
+    else {
+        let value_start = mstart + 1;
+        let node = f
+            .node(
+                UmlSyntaxKind::Multiplicity,
+                [
+                    token(
+                        f,
+                        text,
+                        from,
+                        mstart,
+                        mstart + 1,
+                        UmlSyntaxKind::OpenBracketToken,
+                    ),
+                    token(
+                        f,
+                        text,
+                        value_start,
+                        value_start,
+                        content_end,
+                        UmlSyntaxKind::IdentifierToken,
+                    ),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
+                ],
+            )
+            .built();
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::InvalidMultiplicity,
+            mstart,
+            content_end,
+            "unterminated multiplicity",
+        ));
+        return Some((GreenElement::Node(node), content_end));
+    };
+    let value = &source[mstart + 1..close];
+    let valid = crate::multiplicity::Multiplicity::parse(value).is_some();
+    let mc = vec![
+        token(
+            f,
+            text,
+            from,
+            mstart,
+            mstart + 1,
+            UmlSyntaxKind::OpenBracketToken,
+        ),
+        token(
+            f,
+            text,
+            mstart + 1,
+            mstart + 1,
+            close,
+            UmlSyntaxKind::IdentifierToken,
+        ),
+        token(
+            f,
+            text,
+            close,
+            close,
+            close + 1,
+            UmlSyntaxKind::CloseBracketToken,
+        ),
+    ];
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::InvalidMultiplicity,
+            mstart,
+            close + 1,
+            "invalid multiplicity",
+        ));
+    }
+    Some((
+        GreenElement::Node(f.node(UmlSyntaxKind::Multiplicity, mc).built()),
+        close + 1,
+    ))
+}
+
 /// The parser's single statement of why building a green element cannot fail.
 ///
 /// `GreenFactory` rejects four things, and this file rules out all four
