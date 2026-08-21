@@ -325,6 +325,23 @@ fn list_html_has_exact_inner_opaque_range() {
     assert_red_tree(&parsed.tree, value);
 }
 
+/// Pinned counterexample for `valid_edit_sequences_match_full_parse`.
+///
+/// `.proptest-regressions` records an RNG seed, not an input, so a case the
+/// generator cannot reach on its own has to be written down as a test. The
+/// `shell_source` strategy never emits duplicate link-reference definitions,
+/// so only the `syntax_edits` fuzz target found this: appending `t` gives the
+/// last line a tail that is not a valid title, the line stops being a
+/// definition, and its `[ie]` becomes a shortcut use of the definition on
+/// line 1 -- outside the reparse window.
+#[test]
+fn a_demoted_definition_line_resolves_its_label_against_the_whole_document() {
+    assert_incremental_sequence(
+        "[ie]:/\n#\n[ie]:/ ".to_owned(),
+        vec![(16, 16, "t".to_owned())],
+    );
+}
+
 fn boundaries(value: &str) -> Vec<usize> {
     value
         .char_indices()

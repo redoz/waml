@@ -453,6 +453,39 @@ fn changed_definition_fans_out_only_its_label_and_reuses_unaffected_greens() {
 }
 
 #[test]
+fn a_definition_shaped_line_demoted_to_a_paragraph_still_resolves_its_own_label() {
+    // This fails if the window guard trusts a `[label]: dest`-shaped line to
+    // really be a definition. Appending `t` gives the last line a tail that is
+    // not a valid title, so the line stops being a definition and its `[ie]`
+    // becomes a shortcut reference use -- resolved against the definition on
+    // line 1, which sits outside the reparse window. Found by fuzzing
+    // `syntax_edits`.
+    assert_matches_full_oracle(
+        "[ie]:/\n#\n[ie]:/ ",
+        "[ie]:/\n#\n[ie]:/ t",
+        &[TextChange {
+            old_range: range(16, 16),
+            replacement: Arc::from("t"),
+        }],
+    );
+}
+
+#[test]
+fn a_reference_use_in_a_definition_line_tail_is_still_a_reference_use() {
+    // This fails if the window guard skips definition-shaped lines wholesale:
+    // the trailing `[ie]` is a use whose definition is on line 1, outside the
+    // window, whether or not the line as a whole reads as a definition.
+    assert_matches_full_oracle(
+        "[ie]:/one\n\n# h\n\n[other]:/two ",
+        "[ie]:/one\n\n# h\n\n[other]:/two [ie]",
+        &[TextChange {
+            old_range: range(29, 29),
+            replacement: Arc::from("[ie]"),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";

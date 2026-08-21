@@ -49,6 +49,14 @@ fn trailing_paragraph_lines(source: &str, range: TextRange) -> impl Iterator<Ite
 /// Returns true when an edited line can add, remove, or join a reference use.
 /// A local shell window cannot resolve such a use against definitions outside
 /// that window, so the incremental bridge must use a named full fallback.
+///
+/// This is a cheap pre-filter over the edited lines only, so it uses the
+/// use-only label scan: a line that reads as a reference definition spends its
+/// leading label defining, not using. That reading can be wrong — see
+/// [`reference_labels`] — but this guard is allowed to be, because every path
+/// that survives it still passes through
+/// [`window_reparse_may_lose_reference_resolution`], which scans the whole
+/// window with no such assumption.
 pub(crate) fn change_may_affect_reference_use(
     old: &SourceText,
     old_root: &GreenNode<OkfMarkdownLanguage>,
@@ -60,7 +68,7 @@ pub(crate) fn change_may_affect_reference_use(
     Ok(changes.iter().zip(map.segments()).any(|(change, segment)| {
         intersecting_lines(old.shared(), change.old_range)
             .chain(intersecting_lines(new.shared(), segment.new))
-            .flat_map(reference_labels)
+            .flat_map(reference_use_labels)
             .any(|label| references.definitions.contains_key(&label))
     }))
 }
@@ -74,6 +82,11 @@ pub(crate) fn change_may_affect_reference_use(
 /// resolution, so the caller must fall back to a full parse. The edited-lines
 /// guard alone is not enough: the selected window regularly spans lines the
 /// edit never touched.
+///
+/// Uses the conservative [`reference_labels`] scan, not
+/// [`reference_use_labels`]: a window reparse decides for itself which of its
+/// lines are definitions, and it decides from in-window bytes alone, so no
+/// line in the window may be assumed to be one.
 pub(crate) fn window_reparse_may_lose_reference_resolution(
     old: &SourceText,
     old_root: &GreenNode<OkfMarkdownLanguage>,
@@ -110,10 +123,39 @@ fn line_is_definition(line: &str) -> bool {
     line.starts_with('[') && line.contains("]:")
 }
 
-fn reference_labels(line: &str) -> Vec<Arc<str>> {
+/// [`reference_labels`], minus every line that reads as a reference
+/// definition.
+///
+/// Only for guards that are allowed to under-report — see
+/// [`change_may_affect_reference_use`]. Assuming a definition-shaped line
+/// holds no reference uses is not sound: the shape test is loose, and even a
+/// real definition can carry a use in its tail. [`reference_labels`] is the
+/// scan that assumes nothing.
+fn reference_use_labels(line: &str) -> Vec<Arc<str>> {
     if line_is_definition(line) {
         return Vec::new();
     }
+    reference_labels(line)
+}
+
+/// Every bracketed label on the line, as a *potential* reference use.
+///
+/// Definition-shaped lines are scanned like any other. `line_is_definition`
+/// recognises a definition by shape alone, and shape is not the whole rule:
+/// `[a]: /url` is a definition but `[a]: /url x` is not, because `x` is not a
+/// valid title — that line is a paragraph whose `[a]` is a shortcut reference
+/// use resolved against a definition somewhere else in the document. An edit
+/// flips a line between those two readings by touching only its tail, so a
+/// guard that skipped definition-shaped lines would miss exactly the case
+/// where the window's shape depends on bytes outside it.
+///
+/// Naming a real definition line's own label costs nothing where it matters:
+/// the winning definition for that label is that same line, so
+/// [`window_reparse_may_lose_reference_resolution`] sees it inside the window
+/// and stays incremental. It only forces a fallback when a *duplicate*
+/// definition of the label lives outside the window — and there the window's
+/// reading really does depend on the outside text.
+fn reference_labels(line: &str) -> Vec<Arc<str>> {
     let mut labels = Vec::new();
     let mut rest = line;
     while let Some(open) = rest.find('[') {
