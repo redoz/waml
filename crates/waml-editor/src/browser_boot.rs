@@ -18,7 +18,6 @@ use waml::source::SourceBundle;
 
 /// What the browser build should open, chosen from the page URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) enum BrowserBootSource {
     /// `#w1.<payload>`: a whole model deflated into the fragment.
     Share(String),
@@ -44,7 +43,6 @@ pub(crate) enum BrowserBootSource {
 /// `?` and `#` included or absent. An `Err` means the query string itself is
 /// malformed (bad percent-encoding); a URL that merely asks for nothing is
 /// [`BrowserBootSource::Start`], not an error.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn select_browser_boot(search: &str, hash: &str) -> Result<BrowserBootSource, String> {
     if waml::share::is_share_link(hash) {
         return Ok(BrowserBootSource::Share(hash.to_owned()));
@@ -96,7 +94,6 @@ pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 ///
 /// Only the page URL can carry a share fragment, so the config is parsed with
 /// an empty `hash` and cannot reach [`BrowserBootSource::Share`].
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn select_site_boot(config: &str) -> Result<BrowserBootSource, String> {
     let query = config.trim();
     if query.is_empty() {
@@ -117,7 +114,6 @@ pub(crate) fn select_site_boot(config: &str) -> Result<BrowserBootSource, String
 /// hand-authored link, or a future non-default export name). Suffixing
 /// works unchanged whether `bundle_url` is a bare file name or an absolute
 /// URL, since it is pure string concatenation.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn boot_index_url(bundle_url: &str) -> String {
     waml::search::asset::index_file_name(bundle_url)
 }
@@ -129,7 +125,6 @@ pub(crate) fn boot_index_url(bundle_url: &str) -> String {
 /// something else at that URL (an error page, an index.html) would otherwise
 /// open as a document full of HTML. The specific reason is carried out so the
 /// user sees why the editor came up empty.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn decode_boot_bundle(bytes: &[u8]) -> Result<SourceBundle, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "the file is not UTF-8 text".to_string())?;
     let parts = waml::bundle_envelope::split_bundle(text)
@@ -143,7 +138,6 @@ pub(crate) fn decode_boot_bundle(bytes: &[u8]) -> Result<SourceBundle, String> {
 /// `status` is `None` when the request never produced one -- a dead host, or a
 /// cross-origin response the browser refused to hand us. Those two are
 /// indistinguishable from wasm by design, so say both.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn boot_fetch_error(url: &str, status: Option<u16>) -> String {
     match status {
         Some(status) => format!("could not load {url}: HTTP {status}"),
@@ -172,7 +166,6 @@ fn fragment_token(hash: &str) -> Option<String> {
 /// `base` may be relative (`/api`) or absolute, and may or may not carry a
 /// trailing slash -- both are joined the same way, one `/` between `base` and
 /// `bundle`.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn api_bundle_request(
     base: &str,
     token: Option<&str>,
@@ -191,7 +184,6 @@ pub(crate) fn api_bundle_request(
 /// token is stale -- rather than a bare status code, because that is exactly
 /// the case the spec's tokenless `waml-boot.txt` fallback exists to recover
 /// from.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn api_boot_error(base: &str, status: Option<u16>) -> String {
     match status {
         Some(401) => {

@@ -16,6 +16,9 @@ mod api_save;
 pub mod app;
 mod attr_row;
 mod behavior_doc_view;
+/// Only the browser build boots from a URL; the module is still compiled
+/// under `test` because its selection rules are tested on the host.
+#[cfg(any(target_arch = "wasm32", test))]
 mod browser_boot;
 mod bundle_export;
 // `pub`: `crates/waml-editor/src/bin/node_editor_harness.rs` must register
