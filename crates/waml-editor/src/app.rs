@@ -771,6 +771,20 @@ script_mod! {
     }
 }
 
+/// The subject of an open context menu: which menu, and what it is about.
+///
+/// The two-field form could represent "a node menu AND a folder menu are both
+/// armed", which has no meaning — and neither field cleared the other, so a
+/// dismissed menu's subject could still be dispatched against. One value makes
+/// that state unrepresentable, which is why there is no test for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ContextMenuSubject {
+    /// A concept row's menu, keyed by concept id.
+    Node(String),
+    /// A directory row's menu, keyed by address.
+    Folder(String),
+}
+
 #[derive(Script, ScriptHook)]
 pub struct App {
     #[live]
@@ -833,16 +847,15 @@ pub struct App {
     /// on every change (see `nav.rs`).
     #[rust]
     nav_state: NavState,
-    /// The key of the node whose context menu is currently open, stashed when
-    /// the menu opens so the committed id (which carries no subject) can be
-    /// dispatched against it. Read in the `node_closed` branch (Task 4).
+    /// What the open context menu is about, stashed when it opens because the
+    /// committed menu id carries no subject.
+    ///
+    /// One value rather than a field per menu kind: opening either menu
+    /// replaces it, so a subject cannot outlive the menu that set it. As two
+    /// `Option<String>`s neither cleared the other, and both could be `Some`
+    /// at once — a state with no meaning.
     #[rust]
-    node_menu_key: Option<String>,
-    /// The folder-menu sibling of `node_menu_key`: the address of the
-    /// directory whose context menu is currently open (spec
-    /// 2026-08-11-read-as-scroll-design). Read in the `folder_closed` branch.
-    #[rust]
-    folder_menu_address: Option<String>,
+    context_menu: Option<ContextMenuSubject>,
     /// Everything the two docked columns and the caption chrome that tracks
     /// them remember between frames: responsive mode, column widths, the
     /// open/close animations, and the last-applied layout/slot/seam guards.

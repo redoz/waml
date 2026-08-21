@@ -3391,8 +3391,8 @@ fn right_clicking_a_folder_row_opens_no_tab() {
         "a menu the user may dismiss must not open a tab as a side effect"
     );
     assert_eq!(
-        app.folder_menu_address.as_deref(),
-        Some("/guide"),
+        app.context_menu,
+        Some(crate::app::ContextMenuSubject::Folder("/guide".to_string())),
         "the commit handler's subject is armed"
     );
 }
@@ -3409,7 +3409,7 @@ fn committing_read_as_scroll_opens_the_armed_folders_book() {
     app.session.replace(source).unwrap();
     app.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
     // As armed by `handle_tree_context_menu`'s `Directory` arm.
-    app.folder_menu_address = Some("/plain".to_string());
+    app.context_menu = Some(crate::app::ContextMenuSubject::Folder("/plain".to_string()));
     let popup_uid = app.ui.widget(&cx, ids!(popup_root)).widget_uid();
     let actions: ActionsBuf = vec![Box::new(WidgetAction {
         data: None,
@@ -3500,5 +3500,8 @@ fn right_clicking_a_concept_row_still_opens_it_before_the_menu() {
         Some("order"),
         "the concept path keeps its established open-then-menu behavior"
     );
-    assert_eq!(app.node_menu_key.as_deref(), Some("order"));
+    assert_eq!(
+        app.context_menu,
+        Some(crate::app::ContextMenuSubject::Node("order".to_string()))
+    );
 }

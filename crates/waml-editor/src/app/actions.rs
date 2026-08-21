@@ -316,7 +316,13 @@ impl App {
         }
         if let Some(PopupResult::Invoked(id)) = node_closed {
             if let Some(command) = crate::popup::node_menu::command_for(id) {
-                let key = self.node_menu_key.clone().unwrap_or_default();
+                // Only a Node subject can answer a node menu: a Folder one
+                // means this menu closed after another opened, and dispatching
+                // against it would act on the wrong row.
+                let Some(crate::app::ContextMenuSubject::Node(key)) = self.context_menu.clone()
+                else {
+                    return;
+                };
                 match command {
                     crate::popup::node_menu::NodeMenuCommand::ViewSource => {
                         self.open_view_source(cx, &key);
@@ -329,7 +335,11 @@ impl App {
         }
         if let Some(PopupResult::Invoked(id)) = folder_closed {
             if let Some(command) = crate::popup::node_menu::folder_command_for(id) {
-                let address = self.folder_menu_address.clone().unwrap_or_default();
+                let Some(crate::app::ContextMenuSubject::Folder(address)) =
+                    self.context_menu.clone()
+                else {
+                    return;
+                };
                 match command {
                     crate::popup::node_menu::FolderMenuCommand::ReadAsScroll => {
                         self.open_folder_as_scroll(cx, &address);
@@ -1063,7 +1073,7 @@ impl App {
                 // Established behavior, kept: right-clicking a concept row
                 // selects (opens) it before the menu shows.
                 self.transition_document(cx, &concept_id, false);
-                self.node_menu_key = Some(concept_id);
+                self.context_menu = Some(crate::app::ContextMenuSubject::Node(concept_id));
                 (
                     live_id!(node_menu),
                     crate::popup::node_menu::compose(vec![], crate::popup::node_menu::base_items()),
@@ -1072,7 +1082,7 @@ impl App {
             crate::navigation::NavigationTarget::Directory { address } => {
                 // Deliberately NO transition here: a menu the user may
                 // dismiss must not open the folder's tab as a side effect.
-                self.folder_menu_address = Some(address);
+                self.context_menu = Some(crate::app::ContextMenuSubject::Folder(address));
                 (
                     live_id!(folder_menu),
                     crate::popup::node_menu::compose(
@@ -1775,7 +1785,7 @@ impl App {
                     key,
                     context,
                 } => {
-                    self.node_menu_key = Some(key);
+                    self.context_menu = Some(crate::app::ContextMenuSubject::Node(key));
                     popup.show_at(
                         cx,
                         PopupSpec::Menu {
