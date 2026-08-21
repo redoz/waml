@@ -1,5 +1,4 @@
 use super::*;
-use crate::popup::root::RadialOpen;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActionFlow {
@@ -1833,9 +1832,7 @@ impl App {
                         PopupSpec::Radial {
                             tag: live_id!(place_dial),
                             center,
-                            bounds,
                             items,
-                            open: RadialOpen::Dial,
                         },
                     );
                 }

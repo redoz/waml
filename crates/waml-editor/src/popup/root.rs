@@ -28,7 +28,6 @@ const PALETTE_SIDE_MARGIN: f64 = 16.0;
 const PALETTE_BOTTOM_MARGIN: f64 = 40.0;
 
 /// How to open the linear card.
-#[allow(dead_code)]
 pub enum MenuOpen {
     /// Press-open (marking): the press landed at this point (tap-vs-drag origin).
     Press(DVec2),
@@ -41,22 +40,9 @@ pub enum MenuOpen {
     Sticky { max_height: Option<f64> },
 }
 
-/// How to open the wedge.
-#[allow(dead_code)]
-pub enum RadialOpen {
-    /// Right-press marking open.
-    Marking,
-    /// Drag-dwell open: marking driven by the PRIMARY button (the left-drag
-    /// that opened it is still in flight), on an unsnapped full fan.
-    Dial,
-    /// Direct latched popup open.
-    Popup,
-}
-
 /// One `show_at` request. Carries the opaque `tag`, the kind's geometry, its
 /// items, and its open-mode. (The plan's realization of the spec's `show_at` --
 /// the surfaces are widget-hosted, so the kind's data rides in this enum.)
-#[allow(dead_code)]
 pub enum PopupSpec {
     Menu {
         tag: LiveId,
@@ -65,12 +51,13 @@ pub enum PopupSpec {
         items: Vec<PopupItem>,
         open: MenuOpen,
     },
+    /// The drag-to-place dial: marking driven by the PRIMARY button (the
+    /// left-drag that opened it is still in flight), on an unsnapped full fan.
+    /// The only wedge surface anything opens today.
     Radial {
         tag: LiveId,
         center: DVec2,
-        bounds: Rect,
         items: Vec<PopupItem>,
-        open: RadialOpen,
     },
     Select {
         tag: LiveId,
@@ -223,7 +210,6 @@ impl Widget for PopupRoot {
     }
 }
 
-#[allow(dead_code)]
 impl PopupRoot {
     pub fn is_open(&self) -> bool {
         self.active.is_some()
@@ -358,24 +344,14 @@ impl PopupRoot {
                 }
                 self.active = Some((ActiveKind::Menu, tag));
             }
-            PopupSpec::Radial {
-                tag,
-                center,
-                bounds,
-                items,
-                open,
-            } => {
+            PopupSpec::Radial { tag, center, items } => {
                 let t = cx.seconds_since_app_start();
                 if let Some(mut r) = self
                     .body
                     .widget(cx, ids!(radial))
                     .borrow_mut::<RadialPopup>()
                 {
-                    match open {
-                        RadialOpen::Marking => r.open_marking(cx, center, bounds, items, t),
-                        RadialOpen::Dial => r.open_dial(cx, center, items, t),
-                        RadialOpen::Popup => r.open_popup(cx, center, bounds, items, t),
-                    }
+                    r.open_dial(cx, center, items, t);
                 }
                 self.active = Some((ActiveKind::Radial, tag));
             }

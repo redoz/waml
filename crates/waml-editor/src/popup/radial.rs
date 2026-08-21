@@ -17,25 +17,15 @@ use crate::popup::marking::{MarkOutcome, MarkingCore};
 use makepad_widgets::*;
 
 /// Central cancel zone / neutral origin radius (screen px).
-#[allow(dead_code)]
 pub const HUB_RADIUS: f64 = 30.0;
 /// Disc (rim) radius (screen px).
-#[allow(dead_code)]
 pub const DISC_RADIUS: f64 = 114.0;
-
-/// Trigger slack: an edge counts as "blocked" once the centre is within
-/// `DISC_RADIUS + EDGE_MARGIN` of it -- i.e. once a wedge would actually reach
-/// past it. Keeps the edge-snap from firing preemptively out in open space.
-#[allow(dead_code)]
-pub const EDGE_MARGIN: f64 = 16.0;
 
 /// Minimum drag (screen px) before a right-press is treated as a marking
 /// gesture rather than a tap.
-#[allow(dead_code)]
 pub const DRAG_THRESHOLD: f64 = 12.0;
 
 /// Bloom-in duration on open (seconds).
-#[allow(dead_code)]
 const BLOOM_SECS: f64 = 0.12;
 
 /// Idle recede (get-out-of-the-way): once the cursor has rested within
@@ -44,25 +34,18 @@ const BLOOM_SECS: f64 = 0.12;
 /// it read through -- the armed wedge stays legible, the rest turn ghost-like.
 /// Any move past the deadzone wakes it (fade back to full) and recenters the
 /// anchor, so the dwell timer restarts from wherever the cursor came to rest.
-#[allow(dead_code)]
 const IDLE_DEADZONE: f64 = 6.0;
-#[allow(dead_code)]
 const IDLE_DELAY: f64 = 0.35;
-#[allow(dead_code)]
 const IDLE_FADE_SECS: f64 = 0.28;
 /// Receded alpha multipliers (1.0 = never fades). The base disc + hub ghost to
 /// `DISC_FLOOR`; a non-armed wedge (fill/rim/label/icon) to `GHOST_FLOOR`; the
 /// armed wedge holds full so the choice you are on stays crisp.
-#[allow(dead_code)]
 const DISC_FLOOR: f32 = 0.34;
 /// The cancel hub keeps near-full alpha when receded so its inverted white
 /// disc + black X stays legible (a `DISC_FLOOR` hub washes out to nothing over a
 /// light canvas). It only inverts colour; it does not ghost away.
-#[allow(dead_code)]
 const HUB_FLOOR: f32 = 0.92;
-#[allow(dead_code)]
 const GHOST_FLOOR: f32 = 0.16;
-#[allow(dead_code)]
 const ARMED_FLOOR: f32 = 1.0;
 
 /// Angular layout of the wedge fan. Out in open space this is the full 360 deg
@@ -72,7 +55,6 @@ const ARMED_FLOOR: f32 = 1.0;
 /// the hub dead-zone. Pure geometry; the platform supplies the clip `bounds` (a
 /// monitor rect for the native floating popup, the window rect for the in-window
 /// radial / web).
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RadialLayout {
     /// Leading edge of wedge 0 (radians, clockwise from 12 o'clock).
@@ -89,7 +71,6 @@ impl Default for RadialLayout {
     }
 }
 
-#[allow(dead_code)]
 impl RadialLayout {
     /// Open-space full disc: `n` equal sectors, wedge 0 centred on 12 o'clock.
     pub fn full(n: usize) -> Self {
@@ -101,49 +82,6 @@ impl RadialLayout {
         Self {
             arc_start: -sector * 0.5,
             span: std::f64::consts::TAU,
-            n,
-        }
-    }
-
-    /// Snap the fan to fit inside `bounds` (same coord space as `center`). Each
-    /// edge within `radius + EDGE_MARGIN` removes the 180 deg half-plane pointing
-    /// at it; the fan fills the surviving arc, oriented at its centre: nothing
-    /// blocked -> full 360, one edge -> 180 semicircle, a corner -> 90 quadrant.
-    /// Opposing edges (a window narrower than the disc) impose no constraint on
-    /// that axis -- a minor clip is accepted rather than degenerating to a slit.
-    pub fn snap(center: DVec2, bounds: Rect, radius: f64, n: usize) -> Self {
-        use std::f64::consts::{FRAC_PI_2, PI};
-        let reach = radius + EDGE_MARGIN;
-        let near_left = center.x - bounds.pos.x < reach;
-        let near_right = (bounds.pos.x + bounds.size.x) - center.x < reach;
-        let near_top = center.y - bounds.pos.y < reach;
-        let near_bottom = (bounds.pos.y + bounds.size.y) - center.y < reach;
-        // Free direction on each axis (screen coords: +x right, +y down); 0 when
-        // both or neither side is blocked (no usable constraint on that axis).
-        let free_x: f64 = match (near_left, near_right) {
-            (true, false) => 1.0,
-            (false, true) => -1.0,
-            _ => 0.0,
-        };
-        let free_y: f64 = match (near_top, near_bottom) {
-            (true, false) => 1.0,
-            (false, true) => -1.0,
-            _ => 0.0,
-        };
-        if free_x == 0.0 && free_y == 0.0 {
-            return Self::full(n);
-        }
-        // Free direction -> clockwise-from-12 angle (atan2(dx, -dy)); span is a
-        // half for a single blocked edge, a quarter for a corner.
-        let center_dir = free_x.atan2(-free_y).rem_euclid(std::f64::consts::TAU);
-        let span = if free_x != 0.0 && free_y != 0.0 {
-            FRAC_PI_2
-        } else {
-            PI
-        };
-        Self {
-            arc_start: (center_dir - span * 0.5).rem_euclid(std::f64::consts::TAU),
-            span,
             n,
         }
     }
@@ -186,37 +124,6 @@ impl RadialLayout {
         let idx = (rel / self.wedge_width()).floor() as usize;
         Some(idx.min(self.n - 1))
     }
-}
-
-/// Wedge index under `cursor` for the open-space full disc -- compat shim over
-/// `RadialLayout::full`. `None` inside the hub dead-zone.
-#[allow(dead_code)]
-pub fn wedge_index(center: DVec2, cursor: DVec2, n: usize) -> Option<usize> {
-    RadialLayout::full(n).index_at(center, cursor)
-}
-
-/// Actionable wedge under `cursor` within `layout`: `None` in the hub, in the
-/// blocked region, or over a disabled wedge (a disabled wedge arms nothing, same
-/// as the dead-zone).
-#[allow(dead_code)]
-pub fn resolve_in(
-    items: &[PopupItem],
-    layout: &RadialLayout,
-    center: DVec2,
-    cursor: DVec2,
-) -> Option<usize> {
-    let idx = layout.index_at(center, cursor)?;
-    if items[idx].enabled {
-        Some(idx)
-    } else {
-        None
-    }
-}
-
-/// Full-disc convenience wrapper for `resolve_in` (open-space geometry tests).
-#[allow(dead_code)]
-pub fn resolve_target(items: &[PopupItem], center: DVec2, cursor: DVec2) -> Option<usize> {
-    resolve_in(items, &RadialLayout::full(items.len()), center, cursor)
 }
 
 script_mod! {
@@ -408,7 +315,6 @@ script_mod! {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Script, ScriptHook, Widget)]
 pub struct RadialPopup {
     #[uid]
@@ -490,35 +396,7 @@ impl Widget for RadialPopup {
     }
 }
 
-#[allow(dead_code)]
 impl RadialPopup {
-    pub fn is_open(&self) -> bool {
-        self.mark.is_open()
-    }
-
-    /// Node right-press open: marking mode at `center`, fan snapped into `bounds`.
-    pub fn open_marking(
-        &mut self,
-        cx: &mut Cx,
-        center: DVec2,
-        bounds: Rect,
-        items: Vec<PopupItem>,
-        time: f64,
-    ) {
-        self.center = center;
-        self.bounds = bounds;
-        self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
-        self.mark.begin_marking(center, items, DRAG_THRESHOLD);
-        self.start = time;
-        self.rest_anchor = center;
-        self.last_move_time = time;
-        self.recede = 0.0;
-        self.last_draw_time = time;
-        self.release_primary = false;
-        self.next_frame = cx.new_next_frame();
-        self.draw_wedge.redraw(cx);
-    }
-
     /// Drag-dwell open (drag-to-place): marking mode at `center`, released with
     /// the PRIMARY button since the gesture that opened it is a left-drag
     /// already in flight.
@@ -546,29 +424,6 @@ impl RadialPopup {
     pub fn armed_id(&self) -> Option<LiveId> {
         let i = self.mark.armed()?;
         self.mark.items().get(i).map(|it| it.id)
-    }
-
-    /// Direct popup open (a left-click open), same snapped fan.
-    pub fn open_popup(
-        &mut self,
-        cx: &mut Cx,
-        center: DVec2,
-        bounds: Rect,
-        items: Vec<PopupItem>,
-        time: f64,
-    ) {
-        self.center = center;
-        self.bounds = bounds;
-        self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
-        self.mark.begin_popup(items, DRAG_THRESHOLD);
-        self.start = time;
-        self.rest_anchor = center;
-        self.last_move_time = time;
-        self.recede = 0.0;
-        self.last_draw_time = time;
-        self.release_primary = false;
-        self.next_frame = cx.new_next_frame();
-        self.draw_wedge.redraw(cx);
     }
 
     fn tick(&mut self, cx: &mut Cx, event: &Event) {
@@ -860,21 +715,13 @@ fn map_outcome(o: MarkOutcome) -> PopupVerdict {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::icons::Icon;
-    use crate::popup::base::PopupItem;
-
-    fn item(id: LiveId, enabled: bool) -> PopupItem {
-        PopupItem {
-            id,
-            label: "x".into(),
-            icon: Some(Icon::PackageOpen),
-            danger: false,
-            enabled,
-            checked: None,
-        }
-    }
 
     const C: DVec2 = DVec2 { x: 500.0, y: 400.0 };
+
+    /// The full-disc fan the drag-to-place dial always opens with.
+    fn fan(n: usize) -> RadialLayout {
+        RadialLayout::full(n)
+    }
 
     // Points at radius 100 (outside hub 30, inside disc 120) in the four
     // cardinal screen directions.
@@ -893,41 +740,41 @@ mod tests {
 
     #[test]
     fn n4_cardinal_directions_map_clockwise_from_twelve() {
-        assert_eq!(wedge_index(C, up(), 4), Some(0));
-        assert_eq!(wedge_index(C, right(), 4), Some(1));
-        assert_eq!(wedge_index(C, down(), 4), Some(2));
-        assert_eq!(wedge_index(C, left(), 4), Some(3));
+        assert_eq!(fan(4).index_at(C, up()), Some(0));
+        assert_eq!(fan(4).index_at(C, right()), Some(1));
+        assert_eq!(fan(4).index_at(C, down()), Some(2));
+        assert_eq!(fan(4).index_at(C, left()), Some(3));
     }
 
     #[test]
     fn n2_splits_top_and_bottom() {
-        assert_eq!(wedge_index(C, up(), 2), Some(0));
-        assert_eq!(wedge_index(C, down(), 2), Some(1));
+        assert_eq!(fan(2).index_at(C, up()), Some(0));
+        assert_eq!(fan(2).index_at(C, down()), Some(1));
     }
 
     #[test]
     fn n3_first_wedge_centred_on_twelve() {
-        assert_eq!(wedge_index(C, up(), 3), Some(0));
+        assert_eq!(fan(3).index_at(C, up()), Some(0));
         // 120 deg clockwise (down-right) -> wedge 1; 240 (down-left) -> wedge 2.
         let dr = dvec2(C.x + 86.6, C.y + 50.0);
         let dl = dvec2(C.x - 86.6, C.y + 50.0);
-        assert_eq!(wedge_index(C, dr, 3), Some(1));
-        assert_eq!(wedge_index(C, dl, 3), Some(2));
+        assert_eq!(fan(3).index_at(C, dr), Some(1));
+        assert_eq!(fan(3).index_at(C, dl), Some(2));
     }
 
     #[test]
     fn n5_and_n6_stay_in_range() {
         for p in [up(), right(), down(), left()] {
-            assert!(wedge_index(C, p, 5).unwrap() < 5);
-            assert!(wedge_index(C, p, 6).unwrap() < 6);
+            assert!(fan(5).index_at(C, p).unwrap() < 5);
+            assert!(fan(6).index_at(C, p).unwrap() < 6);
         }
-        assert_eq!(wedge_index(C, up(), 6), Some(0));
+        assert_eq!(fan(6).index_at(C, up()), Some(0));
     }
 
     #[test]
     fn hub_dead_zone_returns_none() {
-        assert_eq!(wedge_index(C, C, 4), None);
-        assert_eq!(wedge_index(C, dvec2(C.x + 10.0, C.y), 4), None); // r=10 < 30
+        assert_eq!(fan(4).index_at(C, C), None);
+        assert_eq!(fan(4).index_at(C, dvec2(C.x + 10.0, C.y)), None); // r=10 < 30
     }
 
     #[test]
@@ -936,90 +783,7 @@ mod tests {
         // fall in wedge 0 for N=4 (span -45..45).
         let just_cw = dvec2(C.x + 8.7, C.y - 99.6); // ~5 deg
         let just_ccw = dvec2(C.x - 8.7, C.y - 99.6); // ~355 deg
-        assert_eq!(wedge_index(C, just_cw, 4), Some(0));
-        assert_eq!(wedge_index(C, just_ccw, 4), Some(0));
-    }
-
-    #[test]
-    fn disabled_wedge_resolves_to_none() {
-        let items = vec![item(live_id!(a), true), item(live_id!(b), false)];
-        // `right()` is wedge 1 for N=2? No -- N=2 top/bottom. Use down() = wedge 1.
-        assert_eq!(resolve_target(&items, C, down()), None); // wedge 1 disabled
-        assert_eq!(resolve_target(&items, C, up()), Some(0)); // wedge 0 enabled
-    }
-
-    #[test]
-    fn resolve_target_none_in_hub() {
-        let items = vec![item(live_id!(a), true), item(live_id!(b), true)];
-        assert_eq!(resolve_target(&items, C, C), None);
-    }
-
-    // --- Edge-adaptive "C" arc layout -----------------------------------------
-
-    fn approx(a: f64, b: f64) -> bool {
-        (a - b).abs() < 1e-9
-    }
-
-    // A 600x600 clip with the centre hard against an edge/corner (within
-    // DISC_RADIUS + EDGE_MARGIN) so the fan must collapse to a partial arc.
-    const TIGHT: Rect = Rect {
-        pos: DVec2 { x: 0.0, y: 0.0 },
-        size: DVec2 { x: 600.0, y: 600.0 },
-    };
-
-    fn open_bounds() -> Rect {
-        Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(2000.0, 2000.0),
-        }
-    }
-
-    #[test]
-    fn snap_open_space_is_full_disc() {
-        let l = RadialLayout::snap(C, open_bounds(), DISC_RADIUS, 4);
-        assert!(approx(l.span, std::f64::consts::TAU));
-    }
-
-    #[test]
-    fn snap_near_right_edge_opens_left_half() {
-        let center = dvec2(590.0, 300.0); // hard against the right edge
-        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
-        assert!(approx(l.span, std::f64::consts::PI));
-        // Toward the blocked (right) side -> no wedge; into the free half -> one.
-        assert_eq!(l.index_at(center, dvec2(center.x + 90.0, center.y)), None);
-        assert!(l
-            .index_at(center, dvec2(center.x - 90.0, center.y))
-            .is_some());
-    }
-
-    #[test]
-    fn snap_corner_is_quarter() {
-        let center = dvec2(590.0, 590.0); // bottom-right corner
-        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
-        assert!(approx(l.span, std::f64::consts::FRAC_PI_2));
-        // Into the corner (down-right) blocked; away from it (up-left) free.
-        assert_eq!(
-            l.index_at(center, dvec2(center.x + 70.0, center.y + 70.0)),
-            None
-        );
-        assert!(l
-            .index_at(center, dvec2(center.x - 70.0, center.y - 70.0))
-            .is_some());
-    }
-
-    #[test]
-    fn partial_arc_keeps_all_wedges_reachable() {
-        let center = dvec2(590.0, 300.0);
-        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
-        let mut seen = [false; 4];
-        // Sweep the full circle at r=90; every wedge index must appear.
-        for deg in 0..360 {
-            let a = (deg as f64).to_radians();
-            let cur = dvec2(center.x + 90.0 * a.sin(), center.y - 90.0 * a.cos());
-            if let Some(i) = l.index_at(center, cur) {
-                seen[i] = true;
-            }
-        }
-        assert!(seen.iter().all(|&s| s), "all 4 wedges reachable in the C");
+        assert_eq!(fan(4).index_at(C, just_cw), Some(0));
+        assert_eq!(fan(4).index_at(C, just_ccw), Some(0));
     }
 }
