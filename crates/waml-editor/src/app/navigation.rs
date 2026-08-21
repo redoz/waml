@@ -608,10 +608,19 @@ impl App {
 
     /// Apply a search-hit reveal once its target document's tab is active
     /// AND drawn (`handle_draw_restores`, the same `Event::Draw` gate
-    /// `apply_pending_fragment` uses). Cleared unconditionally once checked,
-    /// same as `apply_pending_fragment` -- a reveal that lands on the wrong
-    /// tab (the user navigated away before the draw) is simply dropped, not
-    /// retried against whatever opened next.
+    /// `apply_pending_fragment` uses). Cleared unconditionally once checked --
+    /// a reveal that lands on the wrong tab (the user navigated away before
+    /// the draw) is dropped, not retried against whatever opened next.
+    ///
+    /// **This is NOT what `apply_pending_fragment` does**, though this comment
+    /// claimed it was until 2026-08-21. That one takes the pending value by
+    /// reference and returns early on a tab mismatch WITHOUT clearing it, so
+    /// the fragment stays armed and fires the next time its document becomes
+    /// active -- which may be a later, unrelated visit. Whether that is a
+    /// feature (the navigation eventually completes) or a stale-navigation bug
+    /// (the document scrolls somewhere the user did not just ask for) is an
+    /// open product question, recorded here rather than settled by whichever
+    /// of the two a future refactor happens to unify onto.
     pub(super) fn apply_pending_reveal(&mut self, cx: &mut Cx) {
         let Some(pending) = self.pending_reveal.take() else {
             return;
