@@ -478,6 +478,26 @@ pub fn reparse_markdown(
         Arc::from(restored_tree.diagnostics()),
         previous.tree().dialect(),
     ));
+    // Debug-only oracle: the tree this returns is the whole of what an
+    // incremental reparse publishes, and it must be the tree a parse of the
+    // same bytes from scratch would have produced. Compare the trees
+    // themselves — a count, a length, or any other summary of a tree is shared
+    // by shapes that differ, and every splicing defect found so far has been a
+    // wrong shape carrying the right totals.
+    //
+    // Cost: one full parse per incremental reparse, the same order the tree
+    // being checked cost, plus a linear lockstep walk. Debug builds only;
+    // release publishes without it.
+    #[cfg(debug_assertions)]
+    {
+        let oracle = super::parser::parse(new_text.clone(), previous.tree().dialect())?;
+        if let Some(divergence) = crate::incremental::first_structural_divergence(
+            tree.root_green(),
+            oracle.tree.root_green(),
+        ) {
+            panic!("incremental reparse diverged from the full parse: {divergence}");
+        }
+    }
     let structure = Arc::new(super::from_tree(&tree, new_text.shared())?);
     let snapshot = MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?;
     let affected_ranges: Arc<[TextRange]> =

@@ -328,10 +328,19 @@ fn plan_window_reparse(
     if dialect.waml_sections() && public_structure.islands.len() != old_projection.islands.len() {
         return Ok(Err(FullReparseReason::IslandBoundaryChanged));
     }
-    // Debug-only oracle: cross-check the spliced result against a full parse.
-    // This used to run unconditionally in production, making every
+    // Debug-only oracle: cross-check the fallback decision against a full
+    // parse. This used to run unconditionally in production, making every
     // "incremental" reparse strictly more expensive than a full one; the
     // property suites (built with debug assertions) keep exercising it.
+    //
+    // It asks only whether the document the splice accepted is one the full
+    // parser calls malformed, because that is the whole of what this layer
+    // decides. The spliced tree itself is not yet comparable to a full parse:
+    // a window resolves reference links against the definitions inside it
+    // alone, and `reparse_markdown` repairs the ranges that depend on
+    // definitions outside it afterwards. The tree comparison therefore lives
+    // where that repair is done and the invariant is total — see
+    // `first_structural_divergence`'s caller in `markdown::snapshot`.
     #[cfg(debug_assertions)]
     if dialect.waml_sections() {
         let oracle = crate::markdown::parser::parse_with_structure(
@@ -347,11 +356,6 @@ fn plan_window_reparse(
                 .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock),
             "incremental reparse accepted a document the full parser marks malformed"
         );
-        debug_assert_eq!(
-            public_structure.islands.len(),
-            oracle.structure.islands.len(),
-            "incremental reparse island count diverged from the full parse"
-        );
     }
     Ok(Ok(WindowPlan {
         tree,
@@ -359,6 +363,125 @@ fn plan_window_reparse(
         reparsed_range: new_range,
         public_structure,
     }))
+}
+
+/// The text a green node holds, without copying it.
+///
+/// A slice into a dropped or mis-ranged source has no text to compare; the one
+/// caller reports that as a divergence like any other.
+#[cfg(debug_assertions)]
+fn green_text(text: &GreenText) -> Option<&str> {
+    match text {
+        GreenText::Static(value) => Some(value),
+        GreenText::Owned(value) => Some(value),
+        GreenText::SourceSlice { source, range } => source.slice(*range).ok(),
+    }
+}
+
+/// Describes where two green trees first disagree in document order, or `None`
+/// when they hold the same tree.
+///
+/// "The same tree" is deliberately about shape and spelling, not storage: the
+/// spliced tree keeps whatever text allocation each rebased token already had,
+/// while a full parse builds fresh slices, and that difference is meaningless
+/// to every consumer. Annotations are excluded for the same reason — they are
+/// transferred onto the splice from the previous tree, never reparsed, so the
+/// full parse legitimately carries none.
+#[cfg(debug_assertions)]
+pub(crate) fn first_structural_divergence(
+    left: &GreenNode<OkfMarkdownLanguage>,
+    right: &GreenNode<OkfMarkdownLanguage>,
+) -> Option<String> {
+    fn trivia_agree(left: &[GreenTrivia], right: &[GreenTrivia]) -> bool {
+        left.len() == right.len()
+            && left.iter().zip(right.iter()).all(|(left, right)| {
+                left.kind == right.kind
+                    && match (green_text(&left.text), green_text(&right.text)) {
+                        (Some(left), Some(right)) => left == right,
+                        _ => false,
+                    }
+            })
+    }
+
+    let mut left_stack = vec![GreenElement::Node(left.clone())];
+    let mut right_stack = vec![GreenElement::Node(right.clone())];
+    let mut at = 0usize;
+    loop {
+        let (left, right) = match (left_stack.pop(), right_stack.pop()) {
+            (None, None) => return None,
+            (left, right) => {
+                let describe = |element: Option<&GreenElement<OkfMarkdownLanguage>>| match element {
+                    Some(GreenElement::Node(node)) => format!("node {:?}", node.kind()),
+                    Some(GreenElement::Token(token)) => format!("token {:?}", token.kind()),
+                    None => "end of tree".to_owned(),
+                };
+                match (left, right) {
+                    (Some(left), Some(right)) => (left, right),
+                    (left, right) => {
+                        return Some(format!(
+                            "offset {at}: spliced has {}, full parse has {}",
+                            describe(left.as_ref()),
+                            describe(right.as_ref())
+                        ))
+                    }
+                }
+            }
+        };
+        match (&left, &right) {
+            (GreenElement::Node(left), GreenElement::Node(right)) => {
+                if left.kind() != right.kind() || left.width() != right.width() {
+                    return Some(format!(
+                        "offset {at}: spliced node {:?} width {:?}, full parse node {:?} width {:?}",
+                        left.kind(),
+                        left.width(),
+                        right.kind(),
+                        right.width()
+                    ));
+                }
+                if left.children().len() != right.children().len() {
+                    return Some(format!(
+                        "offset {at}: spliced node {:?} has {} children, full parse has {}",
+                        left.kind(),
+                        left.children().len(),
+                        right.children().len()
+                    ));
+                }
+                left_stack.extend(left.children().iter().rev().cloned());
+                right_stack.extend(right.children().iter().rev().cloned());
+            }
+            (GreenElement::Token(left), GreenElement::Token(right)) => {
+                let agree = left.kind() == right.kind()
+                    && left.flags() == right.flags()
+                    && match (green_text(left.text()), green_text(right.text())) {
+                        (Some(left), Some(right)) => left == right,
+                        _ => false,
+                    }
+                    && trivia_agree(left.leading_trivia(), right.leading_trivia())
+                    && trivia_agree(left.trailing_trivia(), right.trailing_trivia());
+                if !agree {
+                    return Some(format!(
+                        "offset {at}: spliced token {:?} {:?} != full parse token {:?} {:?}",
+                        left.kind(),
+                        left.text(),
+                        right.kind(),
+                        right.text()
+                    ));
+                }
+                at += left.width().to_usize();
+            }
+            (left, right) => {
+                let describe = |element: &GreenElement<OkfMarkdownLanguage>| match element {
+                    GreenElement::Node(node) => format!("node {:?}", node.kind()),
+                    GreenElement::Token(token) => format!("token {:?}", token.kind()),
+                };
+                return Some(format!(
+                    "offset {at}: spliced has {}, full parse has {}",
+                    describe(left),
+                    describe(right)
+                ));
+            }
+        }
+    }
 }
 
 fn rebase_text(
