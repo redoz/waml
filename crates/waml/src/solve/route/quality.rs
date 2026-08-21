@@ -351,7 +351,8 @@ fn solve_scene(rects: &BTreeMap<String, Rect>, edges: &[(String, String)]) -> Sc
         .collect();
     let keyed: Vec<KeyedEdge> = edges
         .iter()
-        .map(|(s, t)| (BoxId::Node(s.clone()), BoxId::Node(t.clone()), None, None))
+        .enumerate()
+        .map(|(i, (s, t))| KeyedEdge::at(i, BoxId::Node(s.clone()), BoxId::Node(t.clone())))
         .collect();
     Scene {
         rects: rects.clone(),

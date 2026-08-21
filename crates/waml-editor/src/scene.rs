@@ -584,7 +584,7 @@ fn route_with_groups(
     hulls: &[Rect],
     group_specs: &[stress::GroupSpec],
     group_depths: &[u8],
-    route_edges: &[(BoxId, BoxId)],
+    route_edges: &[route::KeyedEdge],
     policy: &SceneRoutePolicy,
 ) -> (
     Vec<waml::solve::Route>,
@@ -628,11 +628,7 @@ fn route_with_groups(
         })
         .collect();
 
-    let keyed = route_edges
-        .iter()
-        .map(|(source, target)| (source.clone(), target.clone(), None, None))
-        .collect::<Vec<_>>();
-    let routes = route::route(&boxes, &rect_map, &keyed, policy.cost, policy.route);
+    let routes = route::route(&boxes, &rect_map, route_edges, policy.cost, policy.route);
     (routes, rect_map, boxes)
 }
 
@@ -810,9 +806,20 @@ fn stress_layout(
         .take(compiled.group_specs.len())
         .collect();
 
-    let route_edges: Vec<(BoxId, BoxId)> = model_edges
+    // Numbered by position in `model_edges`, which is `drawable_edges(model)`:
+    // that number IS the edge's identity for this solve, and every `Route` the
+    // router emits carries it back, so the scene never has to re-derive which
+    // route belongs to which edge.
+    let route_edges: Vec<route::KeyedEdge> = model_edges
         .iter()
-        .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+        .enumerate()
+        .map(|(i, e)| {
+            route::KeyedEdge::at(
+                i,
+                BoxId::Node(e.source.clone()),
+                BoxId::Node(e.target.clone()),
+            )
+        })
         .collect();
     let group_depths: Vec<u8> = compiled.group_meta.iter().map(|(_, d, _)| *d).collect();
     let groups: Vec<SolvedGroup> = hulls
@@ -866,7 +873,7 @@ fn stress_layout(
     let routing = SolvedRouting {
         boxes,
         rects: rect_map,
-        edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
+        edges: route_edges,
         hard_obstacles,
     };
 
@@ -990,32 +997,6 @@ fn stress_layout(
     }));
 
     (solved, routing, entangled, dropped, diags)
-}
-
-/// Straight-line fallback route between two node centers, emitted as an
-/// axis-aligned L (horizontal leg to the target's column, then vertical leg).
-/// Used when the ordered route stream desyncs from the drawable-edge list.
-///
-/// The canvas strokes every segment with a single top-left->bottom-right
-/// diagonal pen (`draw_edge_down`, flip = 0), which only renders axis-aligned
-/// segments correctly; a raw diagonal `[source-center, target-center]` on a
-/// negative-slope pair would stroke the AABB's *other* diagonal and render
-/// mirrored. Keeping the fallback axis-aligned preserves the single-pen
-/// invariant. The degenerate elbow (when the centers share a column or row) is
-/// dropped so a straight vertical/horizontal fallback stays two points.
-fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
-    let sc = (source.x + source.w / 2.0, source.y + source.h / 2.0);
-    let tc = (target.x + target.w / 2.0, target.y + target.h / 2.0);
-    let elbow = (tc.0, sc.1);
-    // Drop the elbow when it coincides with an endpoint (centers aligned on an
-    // axis), avoiding a zero-length leading/trailing segment.
-    let dup_source = (elbow.0 - sc.0).abs() < f64::EPSILON;
-    let dup_target = (elbow.1 - tc.1).abs() < f64::EPSILON;
-    if dup_source || dup_target {
-        vec![sc, tc]
-    } else {
-        vec![sc, elbow, tc]
-    }
 }
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
@@ -1145,41 +1126,42 @@ pub fn build_scene(
         .map(|node| (node.key.clone(), port_geometry(node)))
         .collect::<BTreeMap<_, _>>();
 
-    // Walk the same `drawable_edges` list `route::route` was fed, so the ordered
-    // route stream and this consumption stay locked together by construction.
-    // Only edges whose endpoints both appear in the solved layout are drawable;
-    // match each to its Route by consuming solved.routes IN ORDER (key-only
-    // lookup is ambiguous for parallel edges). On a key mismatch (e.g. an edge
-    // `route::route` presence-filtered out, desyncing the stream) fall back to a
-    // straight center-to-center polyline WITHOUT advancing the cursor, so later
-    // edges stay aligned.
+    // Walk the ROUTER's output, not the edge list, and ask each route which edge
+    // it belongs to. `Route::edge` indexes the same `drawable_edges` list
+    // `route::route` was fed, so this is the router's own answer rather than a
+    // second traversal that has to be kept in step. The router's skip rule is
+    // therefore the single authority on which edges are drawable: an edge it
+    // refused (self-edge, endpoint outside this diagram) simply has no route
+    // here, instead of being drawn with substitute geometry.
     let mut drawable: Vec<DrawableEdge> = Vec::new();
-    let mut route_cursor = 0usize;
-    for e in drawable_edges(model) {
-        if let (Some(&source), Some(&target)) =
+    for route in &solved.routes {
+        // `route.edge` was minted from `model_edges`' own positions a few lines
+        // up, so this always resolves; indexing is fallible only because a
+        // slice lookup is, and a render pass must not panic over it.
+        let Some(e) = model_edges.get(route.edge.0) else {
+            continue;
+        };
+        // Both endpoints are in `solved.nodes` — `route::route` only emitted
+        // this route because they were in the rect map it was built from — but
+        // the scene edge needs their rects, so read them rather than assume.
+        let (Some(&source), Some(&target)) =
             (solved.nodes.get(&e.source), solved.nodes.get(&e.target))
-        {
-            let points = match solved.routes.get(route_cursor) {
-                Some(r) if r.source == e.source && r.target == e.target => {
-                    route_cursor += 1;
-                    r.points.clone()
-                }
-                _ => fallback_route(source, target),
-            };
-            drawable.push(DrawableEdge {
-                edge: SceneEdge {
-                    source,
-                    target,
-                    kind: e.kind,
-                    name: e.name.clone(),
-                    from_end: e.from_end.clone(),
-                    to_end: e.to_end.clone(),
-                    points,
-                },
-                source_key: e.source.clone(),
-                target_key: e.target.clone(),
-            });
-        }
+        else {
+            continue;
+        };
+        drawable.push(DrawableEdge {
+            edge: SceneEdge {
+                source,
+                target,
+                kind: e.kind,
+                name: e.name.clone(),
+                from_end: e.from_end.clone(),
+                to_end: e.to_end.clone(),
+                points: route.points.clone(),
+            },
+            source_key: e.source.clone(),
+            target_key: e.target.clone(),
+        });
     }
 
     // `requests` and the polyline lists below are VIEWS of `drawable`, each
@@ -1187,11 +1169,6 @@ pub fn build_scene(
     // is a POSITION, so a request and the polyline it is placed against are only
     // the same edge while both lists carry `drawable`'s order; deriving both from
     // the one collection is what keeps them in it.
-    //
-    // They are deliberately not views of `solved.routes`, which the loop above is
-    // free to diverge from: it presence-filters and substitutes a straight
-    // fallback, so resolving a label index against the router's list would place
-    // a label on another edge's route.
     //
     // Rerouting is part of placement: an edge whose label fits nowhere asks the
     // router for a path that leaves room for it. `place_labels_with_reroute`
@@ -2714,7 +2691,8 @@ mod tests {
             members: vec![2, 3],
             depth: 0,
         }];
-        let route_edges = vec![(
+        let route_edges = vec![route::KeyedEdge::at(
+            0,
             BoxId::Node("left".to_string()),
             BoxId::Node("right".to_string()),
         )];
@@ -2792,51 +2770,86 @@ mod tests {
     }
 
     #[test]
-    fn fallback_route_stays_axis_aligned() {
-        // Every consecutive segment must be axis-aligned: the canvas strokes the
-        // fallback with a single top-left->bottom-right diagonal pen, which would
-        // render a raw diagonal on a negative-slope pair mirrored.
-        fn assert_axis_aligned(points: &[(f64, f64)]) {
-            assert!(points.len() >= 2, "fallback needs both endpoints");
-            for w in points.windows(2) {
-                let dx = (w[1].0 - w[0].0).abs();
-                let dy = (w[1].1 - w[0].1).abs();
-                assert!(
-                    dx < f64::EPSILON || dy < f64::EPSILON,
-                    "segment {:?}->{:?} is diagonal (dx={dx}, dy={dy})",
-                    w[0],
-                    w[1]
-                );
-            }
+    fn parallel_edges_each_draw_their_own_routed_polyline() {
+        // A44. Before the router's `Route` carried its edge's identity, the
+        // scene matched routes to edges by consuming the route list with a
+        // positional cursor and, on a mismatch, substituted a straight
+        // centre-to-centre polyline for the edge WITHOUT advancing. That
+        // substitute starts and ends at a node's CENTRE, so it is drawn
+        // straight through both nodes it joins -- silently, with nothing in the
+        // scene marking it as a substitute.
+        //
+        // Parallel edges are the case the old `key: Option<String>` retrofit
+        // existed for and never served on this path (it was always `None`), so
+        // they are what this pins: two `order -> customer` edges plus one edge
+        // whose target is not a member of the diagram (the router skips it,
+        // which is what used to shift the cursor).
+        let mut model = mini();
+        let base = model.edges[0].clone();
+        assert_eq!(base.source, "order");
+        assert_eq!(base.target, "customer");
+        let mut second = base.clone();
+        second.kind = waml::model::RelationshipKind::Depends;
+        model.edges.push(second);
+        let mut dangling = base.clone();
+        dangling.target = "not-in-this-diagram".to_string();
+        model.edges.push(dangling);
+
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+
+        assert_eq!(
+            scene.edges.len(),
+            2,
+            "both parallel edges draw; the edge leaving the diagram does not"
+        );
+        // Each scene edge kept ITS OWN model edge's kind: a route resolved to
+        // the wrong parallel sibling would duplicate one kind and lose the
+        // other.
+        let kinds: Vec<_> = scene.edges.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![base.kind, waml::model::RelationshipKind::Depends],
+            "each parallel edge must keep its own kind"
+        );
+        assert_ne!(
+            scene.edges[0].points, scene.edges[1].points,
+            "two parallel edges must not share one polyline"
+        );
+
+        // The reader-visible half: a routed connector leaves its node's border.
+        // The substitute started at the centre, i.e. it was drawn through the
+        // node. `tol` allows the router's own sub-pixel port placement.
+        fn inside(p: (f64, f64), r: Rect, tol: f64) -> bool {
+            p.0 > r.x + tol && p.0 < r.x + r.w - tol && p.1 > r.y + tol && p.1 < r.y + r.h - tol
         }
-        let rect = |x, y| Rect {
-            x,
-            y,
-            w: 100.0,
-            h: 100.0,
-        };
-
-        // Negative slope (target up-and-right of source): the regression case.
-        let up_right = fallback_route(rect(0.0, 400.0), rect(400.0, 0.0));
-        assert_axis_aligned(&up_right);
-        // Endpoints preserved (centers), elbow inserted for the diagonal pair.
-        assert_eq!(up_right.first().copied(), Some((50.0, 450.0)));
-        assert_eq!(up_right.last().copied(), Some((450.0, 50.0)));
-        assert_eq!(up_right.len(), 3);
-
-        // Positive slope, plus axis-aligned pairs collapse to two points.
-        assert_axis_aligned(&fallback_route(rect(0.0, 0.0), rect(400.0, 400.0)));
-        assert_eq!(fallback_route(rect(0.0, 0.0), rect(0.0, 400.0)).len(), 2);
-        assert_eq!(fallback_route(rect(0.0, 0.0), rect(400.0, 0.0)).len(), 2);
+        for edge in &scene.edges {
+            let first = *edge.points.first().expect("polyline needs both ends");
+            let last = *edge.points.last().expect("polyline needs both ends");
+            assert!(
+                !inside(first, edge.source, 1.0),
+                "connector starts INSIDE its source node ({first:?} in {:?}): that is the straight-line substitute, drawn through the node",
+                edge.source
+            );
+            assert!(
+                !inside(last, edge.target, 1.0),
+                "connector ends INSIDE its target node ({last:?} in {:?}): that is the straight-line substitute, drawn through the node",
+                edge.target
+            );
+        }
     }
 
     #[test]
     fn drawable_edges_drops_self_loops_from_the_scene() {
-        // A self-loop (source == target) is not drawable: `drawable_edges` filters
-        // it out, so it never reaches the router's route stream nor the scene's
-        // consumption loop. Both must agree, or the ordered route-to-edge match
-        // desyncs. mini has exactly one real edge (order -> customer); injecting a
-        // self-loop must leave scene.edges unchanged.
+        // A self-loop (source == target) is not drawable. `drawable_edges` drops
+        // it, and `route::route` would refuse it anyway, so it yields no route
+        // and therefore no scene edge. mini has exactly one real edge
+        // (order -> customer); injecting a self-loop must leave scene.edges
+        // unchanged.
         let mut model = mini();
         let mut self_loop = model.edges[0].clone();
         self_loop.target = self_loop.source.clone();
@@ -3419,9 +3432,16 @@ mod tests {
                     .take(compiled.group_specs.len())
                     .collect();
 
-                let route_edges: Vec<(BoxId, BoxId)> = model_edges
+                let route_edges: Vec<route::KeyedEdge> = model_edges
                     .iter()
-                    .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+                    .enumerate()
+                    .map(|(i, e)| {
+                        route::KeyedEdge::at(
+                            i,
+                            BoxId::Node(e.source.clone()),
+                            BoxId::Node(e.target.clone()),
+                        )
+                    })
                     .collect();
                 let depths: Vec<u8> = compiled.group_meta.iter().map(|(_, d, _)| *d).collect();
                 let (routes, _rect_map, _boxes) = route_with_groups(

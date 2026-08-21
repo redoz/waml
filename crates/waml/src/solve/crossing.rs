@@ -144,13 +144,14 @@ fn segment_crossings_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solve::EdgeId;
 
     fn route(points: &[(f64, f64)], source: &str, target: &str) -> Route {
         Route {
             points: points.to_vec(),
             source: source.into(),
             target: target.into(),
-            key: None,
+            edge: EdgeId(0),
         }
     }
 

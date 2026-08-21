@@ -200,12 +200,6 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> (BehaviorScene
         .iter()
         .map(|n| (n.key.as_str(), n))
         .collect();
-    let doc_edges: Vec<&FlowEdge> = doc
-        .edges
-        .iter()
-        .filter_map(|k| model.flow_edges.iter().find(|e| &e.key == k))
-        .collect();
-
     let nodes: Vec<FlowNodeGeo> = solution
         .solved
         .nodes
@@ -246,12 +240,13 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> (BehaviorScene
         .routes
         .iter()
         .filter_map(|route| {
-            // By KEY, never by (source, target): two transitions between the
+            // By EDGE ID, never by (source, target): two transitions between the
             // same pair of nodes are legal, and matching on the pair would
             // collapse both onto the first edge's label and make the second
-            // unhittable.
-            let key = route.key.as_deref()?;
-            let edge = doc_edges.iter().find(|e| e.key == key)?;
+            // unhittable. The id is a position in `rf.edges`, and `solve_flow`
+            // resolves the same document from the same pools `rf` came from --
+            // `resolve_flow` is pure, so the two lists are the same list.
+            let edge = rf.edges.get(route.edge.0)?;
             Some(FlowEdgeGeo {
                 key: edge.key.clone(),
                 points: route.points.clone(),

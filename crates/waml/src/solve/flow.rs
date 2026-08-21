@@ -4,7 +4,9 @@
 
 use super::route;
 use super::sizing::{self, Font};
-use super::{Box, BoxId, BoxKind, FlagSet, Rect, Route, Size, SizeMap, Solved, SolvedGroup};
+use super::{
+    Box, BoxId, BoxKind, EdgeId, FlagSet, Rect, Route, Size, SizeMap, Solved, SolvedGroup,
+};
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::layout::{Margin, Shape};
 use crate::model::{ActivityNode, FlowDoc, FlowEdge, FlowFlavor, FlowNodeKind};
@@ -1096,20 +1098,23 @@ fn route_edges(
     cfg: &FlowConfig,
 ) -> Vec<Route> {
     let mut routes = Vec::new();
-    // Router-shaped from the start: endpoints, the authored edge key the Route
-    // is tagged with, and no label band (flow labels are placed by the frontend).
+    // Router-shaped from the start: endpoints, this edge's identity, and no
+    // label band (flow labels are placed by the frontend). Self-edges and
+    // reversed back-edges are routed here instead of by `route::route`, so
+    // `routes` is NOT in `rf.edges` order -- which is exactly why every route,
+    // hand-built or routed, carries its `EdgeId`.
     let mut normal_pairs: Vec<route::KeyedEdge> = Vec::new();
     let mut left_back_edges = 0usize;
     let mut right_back_edges = 0usize;
 
-    for e in &rf.edges {
+    for (i, e) in rf.edges.iter().enumerate() {
         if e.from == e.to {
             if let Some(&rect) = node_rects.get(&e.from) {
                 routes.push(Route {
                     points: self_edge_route(rect, cfg),
                     source: e.from.clone(),
                     target: e.to.clone(),
-                    key: Some(e.key.clone()),
+                    edge: EdgeId(i),
                 });
             }
             continue;
@@ -1130,16 +1135,15 @@ fn route_edges(
                     points: back_edge_route(src, tgt, node_rects, cfg, channel_index),
                     source: e.from.clone(),
                     target: e.to.clone(),
-                    key: Some(e.key.clone()),
+                    edge: EdgeId(i),
                 });
             }
             continue;
         }
-        normal_pairs.push((
+        normal_pairs.push(route::KeyedEdge::at(
+            i,
             BoxId::Node(e.from.clone()),
             BoxId::Node(e.to.clone()),
-            Some(e.key.clone()),
-            None,
         ));
     }
 

@@ -1,6 +1,7 @@
 //! Orthogonal (Manhattan) edge router: OVG -> A* (bend penalty) -> nudge.
 //! See docs/superpowers/specs/2026-07-22-orthogonal-edge-router-design.md.
 
+pub use super::EdgeId;
 use super::{Box, BoxId, Rect, Route};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -157,12 +158,36 @@ fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
     (a.0 - b.0).hypot(a.1 - b.1)
 }
 
-/// One edge as [`route`] takes it: endpoints, the authored key the produced
-/// `Route` is tagged with (callers with two edges between the same pair of
-/// boxes need it to map routes back to edges), and the `(width, height)` of the
-/// label band the router should try to keep clear beside it (`None` when
-/// unlabelled).
-pub type KeyedEdge = (BoxId, BoxId, Option<String>, Option<(f64, f64)>);
+/// One edge as [`route`] takes it.
+///
+/// `id` is the caller's identity for this edge; [`route`] copies it onto the
+/// `Route` it produces and never invents one, so a consumer maps a route back
+/// to its edge by id and never by endpoints (which cannot tell two edges
+/// between the same pair of boxes apart). Ids must be distinct within one
+/// call — [`route`] debug-asserts it.
+///
+/// `label` is the `(width, height)` of the label band the router should try to
+/// keep clear beside the edge, `None` when unlabelled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyedEdge {
+    pub id: EdgeId,
+    pub source: BoxId,
+    pub target: BoxId,
+    pub label: Option<(f64, f64)>,
+}
+
+impl KeyedEdge {
+    /// An unlabelled edge whose id is its own position in `edges`. The common
+    /// case: a caller that hands the router its whole edge list in order.
+    pub fn at(index: usize, source: BoxId, target: BoxId) -> Self {
+        KeyedEdge {
+            id: EdgeId(index),
+            source,
+            target,
+            label: None,
+        }
+    }
+}
 
 fn key_of(id: &BoxId) -> Option<String> {
     match id {
@@ -223,8 +248,10 @@ impl Default for RouteCost {
 
 /// The routing inputs an edge yields, or `None` when [`route`] emits no
 /// `Route` for it at all: a self-edge, a group-as-endpoint, or an endpoint
-/// missing from this diagram's rects. THE one place that skip rule lives, so
-/// `routable_edge_indices` can never drift out of step with the router.
+/// missing from this diagram's rects. THE one place that skip rule lives, and
+/// the only place it needs to live: a skipped edge simply has no `Route`
+/// carrying its `EdgeId`, so no consumer has to re-derive the rule to find out
+/// which edges were dropped.
 fn routable(
     rects: &BTreeMap<BoxId, Rect>,
     s: &BoxId,
@@ -238,24 +265,6 @@ fn routable(
     Some((source, target, src, tgt))
 }
 
-/// Indices into `edges` that [`route`] actually emits a `Route` for, in order:
-/// the route at position `i` came from `edges[indices[i]]`.
-///
-/// Callers that map a ROUTE position back to the edge it was built from need
-/// this: the router silently skips edges, so a route position is not an edge
-/// index and using one as the other reroutes (and overwrites) the wrong edge.
-pub fn routable_edge_indices(
-    rects: &BTreeMap<BoxId, Rect>,
-    edges: &[(BoxId, BoxId, Option<String>)],
-) -> Vec<usize> {
-    edges
-        .iter()
-        .enumerate()
-        .filter(|(_, (s, t, _))| routable(rects, s, t).is_some())
-        .map(|(i, _)| i)
-        .collect()
-}
-
 /// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
 ///
 /// THE router's one entry point. Behaviour is parameterised rather than
@@ -264,10 +273,14 @@ pub fn routable_edge_indices(
 /// that wants neither passes both defaults and gets byte-identical geometry to
 /// what the old default-spelling wrappers produced.
 ///
-/// Each edge's fourth field is the size of the label band the router should try
+/// Each edge's `label` is the size of the label band the router should try
 /// to keep clear beside it (`None` for an unlabelled edge). It is a full
 /// `(width, height)`: a label needs its HEIGHT of clearance beside a horizontal
 /// run but its WIDTH beside a vertical one.
+///
+/// Edges the router cannot route (see [`routable`]) are SKIPPED, so the result
+/// is generally shorter than `edges`. Each `Route` carries its edge's
+/// [`EdgeId`], which is how a consumer says which edge it is looking at.
 #[inline(never)]
 pub fn route(
     boxes: &[Box],
@@ -276,6 +289,11 @@ pub fn route(
     cost: &RouteCost,
     policy: &RoutePolicy,
 ) -> Vec<Route> {
+    debug_assert_eq!(
+        edges.iter().map(|e| e.id).collect::<BTreeSet<_>>().len(),
+        edges.len(),
+        "edge ids must be distinct within one route() call, or a route cannot name its edge"
+    );
     let membership = build_membership(boxes);
     let port_slots = if policy.adjacency_aware {
         stable_port_slots(rects, edges, &policy.rail_nodes)
@@ -299,7 +317,7 @@ pub fn route(
     if policy.adjacency_aware {
         edge_order.sort_by(|&a, &b| {
             let endpoint_key = |edge_index: usize| {
-                let (source, target, _, _) = &edges[edge_index];
+                let (source, target) = (&edges[edge_index].source, &edges[edge_index].target);
                 let empty = Rect {
                     x: 0.0,
                     y: 0.0,
@@ -336,7 +354,12 @@ pub fn route(
     let mut routed: Vec<(usize, Route, Vec<Rect>)> = Vec::new();
     let mut prior_routes: Vec<Route> = Vec::new();
     for edge_index in edge_order {
-        let (s, t, key, label_size) = &edges[edge_index];
+        let KeyedEdge {
+            id,
+            source: s,
+            target: t,
+            label: label_size,
+        } = &edges[edge_index];
         let Some((source, target, src, tgt)) = routable(rects, s, t) else {
             continue;
         };
@@ -397,7 +420,7 @@ pub fn route(
             points,
             source,
             target,
-            key: key.clone(),
+            edge: *id,
         };
         prior_routes.push(route.clone());
         routed.push((edge_index, route, inflated));
@@ -481,7 +504,7 @@ fn stable_port_slots(
     rail_nodes: &BTreeSet<BoxId>,
 ) -> BTreeMap<(usize, bool), PortSlot> {
     let mut groups: BTreeMap<(BoxId, Side), Vec<PortIncident>> = BTreeMap::new();
-    for (edge_index, (source, target, _, _)) in edges.iter().enumerate() {
+    for (edge_index, KeyedEdge { source, target, .. }) in edges.iter().enumerate() {
         let Some((_, _, source_rect, target_rect)) = routable(rects, source, target) else {
             continue;
         };
@@ -2337,13 +2360,13 @@ mod tests {
     fn nudge_separates_coincident_parallel_segments() {
         // Two routes both running horizontally along y = 50 via an INTERIOR
         // segment (first/last segments are anchored and excluded from nudging).
-        let mk = |src: &str| Route {
+        let mk = |i: usize, src: &str| Route {
             points: vec![(0.0, 0.0), (0.0, 50.0), (100.0, 50.0), (100.0, 0.0)],
             source: src.into(),
             target: "t".into(),
-            key: None,
+            edge: EdgeId(i),
         };
-        let mut routes = vec![mk("a"), mk("b")];
+        let mut routes = vec![mk(0, "a"), mk(1, "b")];
         let barriers = no_barriers(routes.len());
         nudge(&mut routes, &BTreeMap::new(), &barriers);
         let y0 = routes[0].points[1].1;
@@ -2376,7 +2399,7 @@ mod tests {
                 points: vec![(100.0, 45.0), (300.0, i as f64 * 40.0 + 15.0)],
                 source: "h".into(),
                 target: t,
-                key: None,
+                edge: EdgeId(i),
             });
         }
         let barriers = no_barriers(routes.len());
@@ -2399,13 +2422,13 @@ mod tests {
         rects.insert(BoxId::Node("t1".into()), r(300.0, 0.0, 60.0, 30.0));
         rects.insert(BoxId::Node("t2".into()), r(300.0, 40.0, 60.0, 30.0));
         rects.insert(BoxId::Node("t3".into()), r(300.0, 80.0, 60.0, 30.0));
-        let mk = |t: &str, ty: f64| Route {
+        let mk = |i: usize, t: &str, ty: f64| Route {
             points: vec![(100.0, 45.0), (300.0, ty)],
             source: "h".into(),
             target: t.into(),
-            key: None,
+            edge: EdgeId(i),
         };
-        let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
+        let mut routes = vec![mk(0, "t1", 15.0), mk(1, "t2", 55.0), mk(2, "t3", 95.0)];
         let barriers = no_barriers(routes.len());
         hub_spread(&mut routes, &rects, &barriers);
         let ys: Vec<f64> = routes.iter().map(|rt| rt.points[0].1).collect();
@@ -2434,13 +2457,13 @@ mod tests {
         rects.insert(BoxId::Node("t1".into()), r(300.0, 0.0, 60.0, 30.0));
         rects.insert(BoxId::Node("t2".into()), r(300.0, 40.0, 60.0, 30.0));
         rects.insert(BoxId::Node("t3".into()), r(300.0, 80.0, 60.0, 30.0));
-        let mk = |t: &str, ty: f64| Route {
+        let mk = |i: usize, t: &str, ty: f64| Route {
             points: vec![(100.0, 45.0), (300.0, ty)],
             source: "h".into(),
             target: t.into(),
-            key: None,
+            edge: EdgeId(i),
         };
-        let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
+        let mut routes = vec![mk(0, "t1", 15.0), mk(1, "t2", 55.0), mk(2, "t3", 95.0)];
         let barriers = no_barriers(routes.len());
         hub_spread(&mut routes, &rects, &barriers);
         for rt in &routes {
@@ -2492,15 +2515,21 @@ mod tests {
     /// public wrappers over it until nothing outside the tests called them.
     /// Keeping it here means a default can never quietly diverge from what
     /// production passes.
+    /// Number an unlabelled pair list by position: the ordinary caller shape.
+    fn keyed_pairs(edges: &[(BoxId, BoxId)]) -> Vec<KeyedEdge> {
+        edges
+            .iter()
+            .enumerate()
+            .map(|(i, (s, t))| KeyedEdge::at(i, s.clone(), t.clone()))
+            .collect()
+    }
+
     fn route_pairs(
         boxes: &[Box],
         rects: &BTreeMap<BoxId, Rect>,
         edges: &[(BoxId, BoxId)],
     ) -> Vec<Route> {
-        let keyed: Vec<KeyedEdge> = edges
-            .iter()
-            .map(|(s, t)| (s.clone(), t.clone(), None, None))
-            .collect();
+        let keyed = keyed_pairs(edges);
         route(
             boxes,
             rects,
@@ -2595,15 +2624,7 @@ mod tests {
     fn route_cost_default_reproduces_the_legacy_router() {
         let (boxes, rects, edges) = three_box_bent_case();
         let legacy = route_pairs(&boxes, &rects, &edges);
-        let via_cost = route_with_cost(
-            &boxes,
-            &rects,
-            &edges
-                .iter()
-                .map(|(s, t)| (s.clone(), t.clone(), None, None))
-                .collect::<Vec<_>>(),
-            &RouteCost::default(),
-        );
+        let via_cost = route_with_cost(&boxes, &rects, &keyed_pairs(&edges), &RouteCost::default());
         assert_eq!(
             legacy, via_cost,
             "default weights must not move a single point"
@@ -2641,7 +2662,11 @@ mod tests {
     fn labelled(edges: &[(BoxId, BoxId)], height: f64) -> Vec<KeyedEdge> {
         edges
             .iter()
-            .map(|(s, t)| (s.clone(), t.clone(), None, Some((height, height))))
+            .enumerate()
+            .map(|(i, (s, t))| KeyedEdge {
+                label: Some((height, height)),
+                ..KeyedEdge::at(i, s.clone(), t.clone())
+            })
             .collect()
     }
 
@@ -2710,10 +2735,7 @@ mod tests {
     #[test]
     fn an_unlabelled_edge_is_untouched_by_label_pressure() {
         let (boxes, rects, edges) = corridor_with_tight_and_roomy_paths();
-        let keyed: Vec<KeyedEdge> = edges
-            .iter()
-            .map(|(s, t)| (s.clone(), t.clone(), None, None))
-            .collect();
+        let keyed = keyed_pairs(&edges);
         let baseline = route_with_cost(&boxes, &rects, &keyed, &RouteCost::default());
         let pressured = route_with_cost(
             &boxes,
@@ -3414,7 +3436,13 @@ mod tests {
         let membership = build_membership(boxes);
         let mut routes: Vec<Route> = Vec::new();
         let mut route_obstacles: Vec<Vec<Rect>> = Vec::new();
-        for (s, t, key, label_size) in edges {
+        for KeyedEdge {
+            id,
+            source: s,
+            target: t,
+            label: label_size,
+        } in edges
+        {
             let Some((source, target, src, tgt)) = routable(rects, s, t) else {
                 continue;
             };
@@ -3439,7 +3467,7 @@ mod tests {
                 points,
                 source,
                 target,
-                key: key.clone(),
+                edge: *id,
             });
             route_obstacles.push(inflated);
         }
@@ -3504,12 +3532,14 @@ mod tests {
             } else {
                 None
             };
-            edges.push((
-                BoxId::Node(format!("n{a}")),
-                BoxId::Node(format!("n{b}")),
-                Some(format!("e{e}")),
+            edges.push(KeyedEdge {
                 label,
-            ));
+                ..KeyedEdge::at(
+                    e,
+                    BoxId::Node(format!("n{a}")),
+                    BoxId::Node(format!("n{b}")),
+                )
+            });
         }
         (boxes, rects, edges)
     }
@@ -3550,12 +3580,14 @@ mod tests {
                 continue;
             }
             let label = if e % 3 == 0 { Some((48.0, 14.0)) } else { None };
-            edges.push((
-                BoxId::Node(format!("n{a}")),
-                BoxId::Node(format!("n{b}")),
-                Some(format!("e{e}")),
+            edges.push(KeyedEdge {
                 label,
-            ));
+                ..KeyedEdge::at(
+                    e,
+                    BoxId::Node(format!("n{a}")),
+                    BoxId::Node(format!("n{b}")),
+                )
+            });
         }
         (boxes, rects, edges)
     }

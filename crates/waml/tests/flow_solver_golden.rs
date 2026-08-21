@@ -182,6 +182,16 @@ fn transition_traces_do_not_change_flow_semantics_or_geometry() {
     assert_eq!(plain.diagnostics, traced.diagnostics);
 }
 
+/// Flow-edge keys indexed by `Route::edge`. A route names its edge by POSITION
+/// in `ResolvedFlow::edges`, so recovering the key means re-running the same
+/// `resolve_flow` the solver ran over the same inputs -- a pure function, so
+/// the two lists agree by construction.
+fn edge_keys(name: &str) -> Vec<String> {
+    let (doc, nodes, edges) = load(name);
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    rf.edges.iter().map(|e| e.key.clone()).collect()
+}
+
 fn solve(name: &str, flavor: FlowFlavor) -> waml::solve::flow::FlowSolution {
     let (doc, nodes, edges) = load(name);
     let (rf, resolve_diags) = resolve_flow(&doc, &nodes, &edges);
@@ -379,6 +389,7 @@ fn mixed_partitioned_and_partitionless_rank_does_not_overlap() {
 fn aligned_activity_chain_edges_route_without_side_detours() {
     let sol = solve("activity", FlowFlavor::Activity);
     let (_, nodes, edges) = load("activity");
+    let keys = edge_keys("activity");
     let edge_key = |from: &str, to: &str| {
         let from_key = &nodes.iter().find(|node| node.id == from).unwrap().key;
         let to_key = &nodes.iter().find(|node| node.id == to).unwrap().key;
@@ -399,7 +410,7 @@ fn aligned_activity_chain_edges_route_without_side_detours() {
             .solved
             .routes
             .iter()
-            .find(|route| route.key.as_deref() == Some(edge_key(from, to)))
+            .find(|route| keys[route.edge.0] == edge_key(from, to))
             .unwrap_or_else(|| panic!("fixture has no route {from} -> {to}"));
         let x = route.points[0].0;
         assert!(
@@ -414,6 +425,7 @@ fn aligned_activity_chain_edges_route_without_side_detours() {
 fn same_lane_decision_branch_leaves_through_a_direct_channel() {
     let sol = solve("activity", FlowFlavor::Activity);
     let (_, nodes, edges) = load("activity");
+    let keys = edge_keys("activity");
     let node_key = |id: &str| {
         &nodes
             .iter()
@@ -430,7 +442,7 @@ fn same_lane_decision_branch_leaves_through_a_direct_channel() {
         .solved
         .routes
         .iter()
-        .find(|route| route.key.as_deref() == Some(edge.key.as_str()))
+        .find(|route| keys[route.edge.0] == edge.key)
         .expect("fixture has a Check -> Review route");
     assert!(
         route.points.len() <= 3,
@@ -767,12 +779,7 @@ fn multiple_back_edges_use_distinct_outside_channels() {
         .solved
         .routes
         .iter()
-        .filter(|route| {
-            route
-                .key
-                .as_ref()
-                .is_some_and(|key| sol.reversed.contains(key))
-        })
+        .filter(|route| sol.reversed.contains(&rf.edges[route.edge.0].key))
         .filter_map(|route| {
             route
                 .points
@@ -1145,7 +1152,7 @@ fn parallel_edges_between_one_pair_each_carry_their_own_route_key() {
         .solved
         .routes
         .iter()
-        .filter_map(|r| r.key.clone())
+        .map(|r| rf.edges[r.edge.0].key.clone())
         .collect();
     assert_eq!(keys, vec!["fan#e0".to_string(), "fan#e1".to_string()]);
 }
