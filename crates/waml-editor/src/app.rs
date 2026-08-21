@@ -33,7 +33,7 @@ use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
-use crate::zoom::{WheelAccumulator, ZoomState, ZoomTarget};
+use crate::zoom::Zoom;
 use makepad_widgets::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -824,19 +824,11 @@ pub struct App {
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
-    /// Accumulates Ctrl/Cmd-held wheel deltas from the reading view and the
-    /// source editor into whole zoom-ladder steps (Task 10).
+    /// Live zoom percent per target, plus the wheel accumulator and the target
+    /// it banks for — one rule, so one field (see `zoom::Zoom`). Memory is the
+    /// truth; `config` is write-through persistence.
     #[rust]
-    wheel_zoom: WheelAccumulator,
-    /// The zoom target the accumulator above is currently banking deltas for.
-    /// A change resets it, so a sub-threshold nudge in one surface cannot step
-    /// the ladder in another.
-    #[rust]
-    wheel_zoom_target: Option<ZoomTarget>,
-    /// Live zoom percent per target. Memory is the truth; `config` is
-    /// write-through persistence (see `zoom::ZoomState`).
-    #[rust]
-    zoom_state: ZoomState,
+    zoom: Zoom,
     /// Scope state for the tree panel; the app owns it and rebuilds `NavView`
     /// on every change (see `nav.rs`).
     #[rust]

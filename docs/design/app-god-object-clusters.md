@@ -32,7 +32,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | open |
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | open |
 | C3 | Command palette | 3 | 8 | `actions` (8) | open |
-| C8 | Zoom | 3 | 8 | `actions` (8) | open |
+| C8 | Zoom | 3 | 8 | `actions` (8) | **extracted** (`zoom::Zoom`) |
 | C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | open |
 | C10 | Context-menu subject | 2 | 5 | `actions` (5) | open |
 
@@ -182,7 +182,12 @@ which is an argument for doing the rest.
 Cheap-and-safe first, so the pattern is established before the risky ones; the
 untestable one last.
 
-1. **C8 Zoom (3)** — one file, pure state, `zoom.rs` already owns the types.
+1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
+   the wheel accumulator and the target it banks for, because the reset-on-
+   target-change coupling is the only reason the third field exists. The
+   caller no longer has to remember to reset: `bank_wheel` takes an
+   `Option<ZoomTarget>` and forgets the target itself when a surface has no
+   zoomable chrome.
    The cheapest possible next move.
 2. **C3 Palette (3)** — one file, one lifetime (open → commit → closed), so it
    collapses to `Option<OpenPalette>`. Covered by `app/tests/palette.rs`.

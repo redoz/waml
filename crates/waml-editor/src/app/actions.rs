@@ -1316,7 +1316,7 @@ impl App {
         let Some(target) = self.documents.active_chrome().document_header.zoom else {
             return false;
         };
-        let current = self.zoom_state.get(target);
+        let current = self.zoom.get(target);
         let next = match command {
             crate::shortcuts::ZoomCommand::In => crate::zoom::zoom_in(current),
             crate::shortcuts::ZoomCommand::Out => crate::zoom::zoom_out(current),
@@ -1328,7 +1328,7 @@ impl App {
             // chord is still consumed so it doesn't fall through.
             return true;
         }
-        self.zoom_state.set(target, next);
+        self.zoom.set(target, next);
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         match target {
             crate::zoom::ZoomTarget::Reading => body
@@ -1363,22 +1363,12 @@ impl App {
         let Some(delta) = delta else {
             return;
         };
-        // A surface with no zoomable chrome has already had its scroll claimed
-        // by the hit-test, so banking the delta would leave a wheel that
-        // neither scrolls nor zooms. Drop it instead.
+        // `bank_wheel` yields at most one rung per event by design, so this is
+        // a single step, never a device-controlled loop over the ladder. It
+        // also drops the delta for a surface with no zoomable chrome, whose
+        // scroll the hit-test has already claimed.
         let target = self.documents.active_chrome().document_header.zoom;
-        if target.is_none() {
-            self.wheel_zoom.reset();
-            self.wheel_zoom_target = None;
-            return;
-        }
-        if self.wheel_zoom_target != target {
-            self.wheel_zoom.reset();
-            self.wheel_zoom_target = target;
-        }
-        // `add` yields at most one rung per event by design, so this is a
-        // single step, never a device-controlled loop over the ladder.
-        let count = self.wheel_zoom.add(delta);
+        let count = self.zoom.bank_wheel(target, delta);
         if count == 0 {
             return;
         }

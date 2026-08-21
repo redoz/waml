@@ -145,6 +145,52 @@ impl ZoomState {
     }
 }
 
+/// The app's whole zoom state: the live percent per target, plus the wheel
+/// accumulator and the target it is banking for.
+///
+/// The three moved together out of `App` because they are one rule, not three
+/// fields: **the accumulator resets whenever the target changes**, which is the
+/// only reason the target is remembered at all. Held apart, nothing said so,
+/// and a sub-threshold nudge in one surface could step the ladder in another.
+#[derive(Default)]
+pub(crate) struct Zoom {
+    state: ZoomState,
+    wheel: WheelAccumulator,
+    /// The target the accumulator is banking deltas for. `None` once a surface
+    /// with no zoomable chrome has dropped a delta.
+    wheel_target: Option<ZoomTarget>,
+}
+
+impl Zoom {
+    pub(crate) fn get(&mut self, target: ZoomTarget) -> u32 {
+        self.state.get(target)
+    }
+
+    pub(crate) fn set(&mut self, target: ZoomTarget, percent: u32) {
+        self.state.set(target, percent);
+    }
+
+    /// Bank a wheel delta and report how many ladder rungs it completed.
+    ///
+    /// `target` is `None` for a surface with no zoomable chrome: its scroll has
+    /// already been claimed by the hit-test, so banking the delta would leave a
+    /// wheel that neither scrolls nor zooms. That drops the delta and forgets
+    /// the target in one step, which is why this takes an `Option` rather than
+    /// making the caller remember to reset.
+    pub(crate) fn bank_wheel(&mut self, target: Option<ZoomTarget>, delta: f64) -> i32 {
+        let Some(target) = target else {
+            self.wheel.reset();
+            self.wheel_target = None;
+            return 0;
+        };
+        if self.wheel_target != Some(target) {
+            self.wheel.reset();
+            self.wheel_target = Some(target);
+        }
+        self.wheel.add(delta)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
