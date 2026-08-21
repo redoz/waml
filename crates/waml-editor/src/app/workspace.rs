@@ -1,11 +1,5 @@
 use super::*;
 
-/// How long the document has to sit unchanged before `mark_dirty` turns into a
-/// `save`. Sized for a pause in editing, not for the tail of a single gesture:
-/// a save is a full deflate of the bundle, so coalescing a run of related edits
-/// into one is worth more than persisting each of them promptly.
-const SAVE_DEBOUNCE_SECS: f64 = 3.0;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(super) enum BackingTransitionError {
@@ -179,17 +173,12 @@ impl App {
     }
 
     /// The open document changed. Schedules a save; does not perform one.
-    ///
-    /// Restarts the timer rather than extending it, so a burst of ops -- a drag
-    /// that re-authors placement as it moves -- coalesces into a single save
-    /// when it settles instead of one per frame.
     pub(super) fn mark_dirty(&mut self, cx: &mut Cx) {
         self.schedule_save(cx);
     }
 
     fn schedule_save(&mut self, cx: &mut Cx) {
-        cx.stop_timer(self.save_timer);
-        self.save_timer = cx.start_timeout(SAVE_DEBOUNCE_SECS);
+        self.project.schedule_save(cx);
     }
 
     /// Persist the open bundle, by whatever means this build has.
@@ -217,7 +206,7 @@ impl App {
     }
 
     fn sync_save_error(&mut self, cx: &mut Cx) {
-        let error = self.save_feedback.save_error().map(str::to_owned);
+        let error = self.project.save_error().map(str::to_owned);
         if let Some(mut statusbar) = self
             .ui
             .widget(cx, ids!(statusbar))
@@ -239,7 +228,7 @@ impl App {
                 self.schedule_save(cx);
             }
         }
-        self.save_feedback.finish_save(&result);
+        self.project.finish_save(&result);
         self.sync_save_error(cx);
         result
     }
@@ -329,7 +318,7 @@ impl App {
     /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
     fn save_backend(&mut self, _cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveOutcome, String> {
-        let Some(root) = self.open_dir.as_deref() else {
+        let Some(root) = self.project.dir() else {
             return Err("native bundle has no opened directory".to_string());
         };
         let mut completion = crate::native_save::save_ticket_atomic(root, ticket)
@@ -341,7 +330,7 @@ impl App {
     }
 
     /// Complete a save whose write happened through the API backend: the
-    /// `session`/`save_feedback`/statusbar path a synchronous backend drives
+    /// `session`/`project`/statusbar path a synchronous backend drives
     /// inline from `save_or_retry`, run here instead once the response (or
     /// error) for the `cx.http_request` `save_backend` issued has arrived.
     #[cfg(target_arch = "wasm32")]
@@ -368,7 +357,7 @@ impl App {
                 self.schedule_save(cx);
             }
         }
-        self.save_feedback.finish_save(&result);
+        self.project.finish_save(&result);
         self.sync_save_error(cx);
     }
 
@@ -443,11 +432,11 @@ impl App {
                  reopened the server's version and discarded unsaved local edits"
                 .to_string();
             log!("{message}");
-            let opened = self.open_bundle(cx, bundle, self.open_name.clone(), None);
+            let opened = self.open_bundle(cx, bundle, self.project.name().to_string(), None);
             if opened && had_unsaved_edits {
                 // `open_bundle` resets the save feedback; re-state the loss in
                 // the statusbar so the discard is not console-only.
-                self.save_feedback.finish_save(&Err(message));
+                self.project.finish_save(&Err(message));
                 self.sync_save_error(cx);
             }
             return opened;
@@ -481,13 +470,13 @@ impl App {
             // save re-armed by the 409 would just 409 again and re-trigger
             // this reload — an unbounded ping-pong. Park the autosave and say
             // so; the user's next edit re-arms it deliberately.
-            cx.stop_timer(self.save_timer);
+            self.project.cancel_save(cx);
             let message = format!(
                 "{conflicted} document(s) changed on the server while local edits were \
                  unsaved; local edits kept, autosave paused until the next edit"
             );
             log!("{message}");
-            self.save_feedback.finish_save(&Err(message));
+            self.project.finish_save(&Err(message));
             self.sync_save_error(cx);
         }
         true
@@ -515,7 +504,7 @@ impl App {
         let bundle = match transition {
             Ok(loaded) => loaded,
             Err(BackingTransitionError::Save(error)) => {
-                self.save_feedback.finish_save(&Err(error.clone()));
+                self.project.finish_save(&Err(error.clone()));
                 self.schedule_save(cx);
                 self.sync_save_error(cx);
                 tracing::error!(error.message = %error, "failed to flush the open document before switching bundles");
@@ -524,7 +513,7 @@ impl App {
             Err(BackingTransitionError::Load(error)) => {
                 // Any old edits were successfully flushed before the new load
                 // was attempted, so the retained backing is now clean.
-                self.save_feedback.finish_save(&Ok(()));
+                self.project.finish_save(&Ok(()));
                 self.sync_save_error(cx);
                 tracing::error!(error.message = %error, "failed to load the bundle");
                 self.report_action_error(cx, &error);
@@ -566,15 +555,13 @@ impl App {
         ) {
             return false;
         }
-        self.open_dir = Some(next_root);
+        self.project.set_dir(next_root.clone());
         // The project root is only known here, so this is where the per-project
         // dock column widths are seeded (defaults if the project has no
         // `.waml/editor.json`).
-        if let Some(root) = self.open_dir.clone() {
-            self.load_dock_widths(cx, &root);
-        }
+        self.load_dock_widths(cx, &next_root);
         let root_name = if self.session.uml_projection().path.is_empty() {
-            self.open_name.as_str()
+            self.project.name()
         } else {
             self.session.uml_projection().path.as_str()
         };
@@ -620,7 +607,7 @@ impl App {
         wanted_diagram: Option<&str>,
     ) -> bool {
         self.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
-        cx.stop_timer(self.save_timer);
+        self.project.cancel_save(cx);
         let change = match self.session.replace(files) {
             Ok(change) => change,
             Err(error) => {
@@ -631,7 +618,7 @@ impl App {
             }
         };
         debug_assert_eq!(change.revision, self.session.revision());
-        self.save_feedback.opened_replacement_bundle();
+        self.project.opened_replacement_bundle();
         self.sync_save_error(cx);
         if self.pending_boot_index_hash.is_some() {
             // An export-time index asset for THIS bundle is already in flight
@@ -651,7 +638,7 @@ impl App {
         // Fresh model: reset the scope to the whole-model browse state.
         self.projection.reset_scope();
 
-        self.open_name = display_name;
+        self.project.set_name(display_name);
 
         self.refresh_nav(cx, true);
 
@@ -689,7 +676,7 @@ impl App {
                 );
                 if !opened_root_index {
                     tracing::info!(
-                        bundle = %self.open_name,
+                        bundle = %self.project.name(),
                         "no documents in bundle; opening with an empty canvas"
                     );
 
@@ -821,8 +808,8 @@ impl App {
     pub(super) fn export_current_bundle(&mut self, cx: &mut Cx) {
         let snapshot = self.session.snapshot();
         let title = self
-            .open_dir
-            .as_deref()
+            .project
+            .dir()
             .and_then(|dir| dir.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "model".to_owned());
@@ -841,7 +828,7 @@ impl App {
     pub(super) fn close_model(&mut self, cx: &mut Cx) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         let result = {
-            let root = self.open_dir.as_deref();
+            let root = self.project.dir();
             close_after_save(
                 &mut self.session,
                 |session| {
@@ -874,7 +861,7 @@ impl App {
             crate::editor_session::EditorSession::close,
         );
 
-        self.save_feedback.finish_save(&result);
+        self.project.finish_save(&result);
         if let Err(error) = &result {
             tracing::error!(error.message = %error, "failed to close open document");
             self.schedule_save(cx);
@@ -882,8 +869,7 @@ impl App {
             return false;
         }
 
-        cx.stop_timer(self.save_timer);
-        self.open_dir = None;
+        self.project.close(cx);
         // Column widths are per-project state; closing the project returns them
         // to the defaults the next one will start from unless it has its own.
         self.dock.reset_widths();

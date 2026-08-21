@@ -3,16 +3,18 @@ mod dock_chrome;
 mod event;
 mod menus;
 mod navigation;
+mod open_project;
 mod projection;
 mod shell;
 mod workspace;
 
 use self::dock_chrome::DockChrome;
 use self::navigation::{DeferredAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
+use self::open_project::OpenProject;
 use self::projection::Projection;
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
-use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
+use self::workspace::{prevent_quit_after_failed_save, should_flush_save};
 pub(crate) use menus::{burger_menu_items, logo_command_for, logo_menu_items, LogoCommand};
 use menus::{doc_switcher_items, DOC_SWITCHER_MAX_H};
 
@@ -790,26 +792,16 @@ pub struct App {
     ui: WidgetRef,
     #[rust]
     session: EditorSession,
-    /// Filesystem root backing `bundle` in native builds.
+    /// The open project: the filesystem root behind its bundle (native only),
+    /// the name to show for it, and the debounce and last error of writing it
+    /// back. See [`open_project`] for what opening and closing owe each other.
     #[rust]
-    open_dir: Option<PathBuf>,
+    project: OpenProject,
     /// `waml serve` backend, when this session booted from `?api=`. See
     /// `workspace::ApiBackend`.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     #[rust]
     api_backend: Option<workspace::ApiBackend>,
-    /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
-    #[rust]
-    save_timer: Timer,
-    #[rust]
-    save_feedback: SaveFeedback,
-    /// Basename of the currently-open bundle directory. The bundle's display
-    /// name falls back to this when the model carries no root name (`model.path`
-    /// is empty -- no root `index.md` H1 / frontmatter title), so an unnamed
-    /// bundle reads as its folder rather than a bare "bundle". Retained across a
-    /// theme live-edit reload (`rehydrate`), which has no `dir` in hand.
-    #[rust]
-    open_name: String,
     #[rust]
     documents: DocumentHost,
     /// The bundle-wide text index: built on open, refreshed per document on

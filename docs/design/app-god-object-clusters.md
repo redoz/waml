@@ -29,7 +29,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | open |
 | C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
 | C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredAnchorRestore`) |
-| C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | open |
+| C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | **extracted** → `app::open_project::OpenProject` |
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | **extracted** → `app::projection::Projection` |
 | C3 | Command palette | 3 | 8 | `actions` (8) | **extracted** (`OpenPalette`) |
 | C8 | Zoom | 3 | 8 | `actions` (8) | **extracted** (`zoom::Zoom`) |
@@ -73,13 +73,32 @@ Four in-flight-request slots and the backend one of them commits. Every one is
 `#[cfg(target_arch = "wasm32")]` in practice (all five carry a
 `cfg_attr(..., allow(dead_code))` for the native build).
 
-### C5 — Open project + save (4 fields)
+### C5 — Open project + save (4 fields) — **extracted**
 
 `open_dir`, `open_name`, `save_timer`, `save_feedback`.
 
 Where the open bundle came from, what to call it, and the debounce/feedback of
-writing it back. `prevent_quit_after_failed_save` and `should_flush_save` are
-free functions over exactly this group.
+writing it back. Now `App::project: OpenProject`, in
+`crates/waml-editor/src/app/open_project.rs`.
+
+The cluster's prediction held: opening, replacing and closing all have to touch
+every one of the four, and each of the three touched a different subset.
+`open_bundle` cancelled the debounce and reset the error but did not set the
+name (a separate statement twenty lines later did); `open_dir` set the
+directory and nothing else; `close_model` cancelled the debounce and cleared
+the directory but **left the closed project's name behind**. Nothing read that
+stale name, which is why it survived — with the fields apart there was no one
+place where "abandon the project" was written down. `OpenProject::close` is
+that place now.
+
+Note `dir` and `name` stay two fields rather than collapsing into one
+`Option`: a browser session has a bundle decoded from the URL fragment, so it
+has a real name and no directory. `dir.is_none()` does not mean "nothing is
+open".
+
+`prevent_quit_after_failed_save` and `should_flush_save` stayed free functions
+in `workspace.rs`: they are over `Event` and `Result`, and touch none of these
+fields.
 
 ### C6 — View history + deferred navigation (5 fields)
 
@@ -95,6 +114,33 @@ The back/forward stack, the three things a navigation can still owe once the
 target tab draws, and the generation counter that tells a superseded restore to
 give up. `history_controls_visible` is the caption-side mount guard for the
 history pair.
+
+#### Why C6's remainder is not a type
+
+The row above says C6 is worth finishing. Having looked at it with C7 done: the
+remaining three should **not** move as a group, and the map was wrong to say
+they should.
+
+* `view_history` is `crate::view_history::ViewHistory`, which is already a
+  type, with **nine** public methods that `app/navigation.rs` calls. Wrapping
+  it so it can carry one `bool` means writing nine forwarding methods to hold
+  one field. That is more code and one more indirection to buy nothing; the
+  `#[rust] view_history: ViewHistory` line is not the god-object problem.
+* `history_controls_visible` is a "last applied" write guard for the two
+  caption buttons — the same shape as `DockChrome::tree_btn_slot_w`, but it
+  guards the *history pair*, which `DockChrome` has nothing to do with. It is
+  one bool with two references, both adjacent, in one function.
+* `pending_fragment` is not history at all. It is a deferred apply, and its
+  real siblings are `pending_reveal` (listed under C2) and the already-extracted
+  `anchor_restore` — all three are "what a navigation still owes once the target
+  tab draws", and all three are applied together by `handle_draw_restores`.
+  **That** is the type here, cutting across C6 and C2 rather than along them.
+  Worth doing as its own move, with one caveat found while reading it: the doc
+  on `apply_pending_reveal` claims it clears "same as `apply_pending_fragment`",
+  and it does not — `apply_pending_reveal` uses `take()` and drops a reveal that
+  lands on the wrong tab, while `apply_pending_fragment` returns early and keeps
+  waiting. Decide which one is right *before* unifying them, because a type
+  that makes them share a rule will pick one.
 
 ### C7 — Projection + tree cache (4 fields) — **extracted**
 
@@ -209,8 +255,9 @@ which is an argument for doing the rest.
 Cheap-and-safe first, so the pattern is established before the risky ones; the
 untestable one last.
 
-**Next one to take: C6's remainder (3) — item 5 below.** `App` is at 33 fields
-(32 `#[rust]` plus `ui`), down from the 54 the audit found.
+**Next one to take: C2 Search sessions (5) — item 8 below.** `App` is at 30
+fields (29 `#[rust]` plus `ui`), down from the 54 the audit found. C6's
+remainder is deliberately skipped; see item 5.
 
 1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
    the wheel accumulator and the target it banks for, because the reset-on-
@@ -226,16 +273,17 @@ untestable one last.
 4. **C9 Agent marks (3)** — two files, nine references. No test coverage, but
    the behaviour is "a coloured pill in the caption", which a human verifies in
    one glance.
-5. **C6 View history + deferred navigation (5)** — the largest remaining win
-   with real coverage behind it (`app/tests/navigation.rs`, 3,504 lines). Fold
-   `history_controls_visible` in with it.
+5. **C6's remainder (3) — DO NOT extract as a group.** Attempted and rejected;
+   see "Why C6's remainder is not a type" below. Take C2 next instead.
 6. ~~**C7 Projection + tree cache (4)**~~ — **done**, and taken *before* C6
    rather than after: it turned out to be the self-contained half of
    `navigation.rs` (mask, cap, cache, scope), where C6's remainder is the
    back/forward stack threaded through `transition_to_location`. Doing the
    independent one first kept both diffs readable.
-7. **C5 Open project + save (4)** — `workspace.rs` only, but it touches disk and
-   the quit path. Land it when someone can exercise a failing save by hand.
+7. ~~**C5 Open project + save (4)**~~ — **done.** `app/tests/workspace.rs`
+   covers the free functions, `open_bundle`, and the close-then-reopen round
+   trip; the native disk write itself is still only covered by a type-check, so
+   a failing save by hand is worth doing before trusting it further.
 8. **C2 Search sessions (5)** — spread over four files and the most entangled
    with `documents` and `ui`. Last of the tractable ones.
 9. **C4 Web / remote boot (5)** — last, not because it is hard but because

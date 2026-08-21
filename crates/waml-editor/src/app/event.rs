@@ -204,7 +204,7 @@ impl App {
                 self.refresh_search_after_save(&flushed);
             }
             prevent_quit_after_failed_save(event, &result);
-        } else if self.save_timer.is_event(event).is_some() {
+        } else if self.project.save_timer_fired(event) {
             let flushed = flushed_document_paths(&self.session.snapshot());
             if self.save_or_retry(cx, true).is_ok() {
                 self.refresh_search_after_save(&flushed);

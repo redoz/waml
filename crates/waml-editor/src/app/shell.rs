@@ -520,7 +520,7 @@ impl App {
     /// failure is logged and swallowed: losing a column width must never cost
     /// an edit.
     fn persist_dock_widths(&mut self) {
-        let Some(root) = self.open_dir.clone() else {
+        let Some(root) = self.project.dir().map(Path::to_path_buf) else {
             return;
         };
         let mut settings = crate::project_settings::load(&root);
