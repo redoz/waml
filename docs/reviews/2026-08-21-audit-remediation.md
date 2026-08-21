@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████████████░░░░░░░░░░░░` **26/53 closed** — 18 open, 1 wip, 26 done, 8 decision
+`████████████░░░░░░░░░░░░` **27/53 closed** — 17 open, 1 wip, 27 done, 8 decision
 
 ## Findings
 
@@ -78,7 +78,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A47 | L | List primitives | `done` | FOUR copies, not three: the tree panel, the overlay panel, the book surface and the linear popup menu each spelled the same thumb arithmetic. One ScrollbarGeometry now answers both halves — the rect that is painted and the inverse a drag chases — with track position, inset and thumb WIDTH as parameters, because 6px in the tree and 4px in the overlay is a per-surface look decision rather than drift. Six tests pin the shared geometry, including that a drag to a painted thumb's position reproduces its scroll exactly (the property four copies could each break separately). One latent inconsistency surfaced and is fixed: the menu measured its content WITH the vertical pad but its track WITHOUT, so an unscrollable menu still computed a thumb; its thumb is now a few pixels taller at a given size, which is the only visible change. |
 | A48 | L | Arc-identity rename | `open` | Move ops must preserve text Arcs or Renamed degrades to Removed+Inserted; documented, unenforced |
 | A49 | L | Property spread | `open` | Edit-op layer example-based only; no apply→write→reparse round-trip property |
-| A50 | L | Extension packaging | `open` | No vsce/ovsx/bundler; the bundled-binary resolution branch is self-documented as dead (serverPath.ts:66). |
+| A50 | L | Extension packaging | `done` | The extension packages: pnpm run package builds and produces a .vsix (verified, 13 files). Running vsce for real surfaced two blockers the finding did not mention — vsce refuses to run with both a .vscodeignore and a files field ('does not support combining both strategies'), and it wants a LICENSE in the extension directory. files is gone, .vscodeignore is now the only guard between sources and the marketplace, and the packaging test was rewritten to pin THAT mechanism rather than the one it replaced. The bundled-binary branch is no longer dead: scripts/bundle-server.mjs copies the release binary into server/, which is what that branch has always been looking for. OWNER DECISION REMAINS: no publisher id is set, because that is a marketplace account identity, not a code choice — packaging works without it, publishing will not. |
 | A51 | L | Manifest honesty | `done` | waml-editor's description now says what it is — a native GPU editor, not a read-only viewer. |
 | A52 | L | classifier_page | `done` | The 'a CLI subcommand can emit the identical page' claim now says no CLI consumer exists and no parity test pins it. |
 | A53 | L | Parser fn size | `open` | Mis-set earlier; reopened. Parser function size is untouched. |

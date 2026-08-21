@@ -2,3 +2,5 @@ src/**
 tsconfig.json
 **/*.ts
 !dist/**
+!server/**
+scripts/**

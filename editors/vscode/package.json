@@ -18,10 +18,6 @@
     "onLanguage:markdown"
   ],
   "main": "./dist/extension.js",
-  "files": [
-    "dist/**/*.js",
-    "dist/**/*.d.ts"
-  ],
   "contributes": {
     "configuration": {
       "title": "WAML",
@@ -39,7 +35,9 @@
     "test": "vitest run",
     "lint": "eslint src",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "bundle:server": "node scripts/bundle-server.mjs",
+    "package": "pnpm run build && vsce package --no-dependencies --out waml-vscode.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.0"
@@ -48,6 +46,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/vscode": "^1.91.0",
+    "@vscode/vsce": "^3.9.2",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.9.0",
@@ -61,5 +60,10 @@
       "esbuild"
     ]
   },
-  "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184"
+  "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/redoz/waml.git",
+    "directory": "editors/vscode"
+  }
 }

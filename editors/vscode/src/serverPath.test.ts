@@ -332,13 +332,23 @@ describe("extension package", () => {
   // cmd.exe on Windows, and two process spawns do not reliably fit inside
   // vitest's default 5s timeout on a cold runner, so CI flaked.
   //
-  // What the packer would have told us is decided by `files` in package.json
-  // plus what the build actually emitted, both of which we can just read.
+  // What the packer would have told us is decided by `.vscodeignore` plus what
+  // the build actually emitted, both of which we can just read.
+  //
+  // It reads `.vscodeignore` and not `files` because vsce refuses to run at all
+  // when both strategies are present ("VSCE does not support combining both"),
+  // so `files` had to go and `.vscodeignore` is now the only thing standing
+  // between sources and the marketplace.
   const root = join(__dirname, "..");
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-    files: string[];
     main: string;
   };
+
+  const ignoreRules = (): string[] =>
+    readFileSync(join(root, ".vscodeignore"), "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
 
   const distFiles = (): string[] => {
     const walk = (dir: string, prefix: string): string[] =>
@@ -351,12 +361,13 @@ describe("extension package", () => {
   };
 
   it("publishes only built output, never sources", () => {
-    // Every include is under dist/, so no `src/` entry -- and therefore no
-    // `.ts` source -- can reach the package regardless of what is on disk.
-    expect(manifest.files.length).toBeGreaterThan(0);
-    for (const pattern of manifest.files) {
-      expect(pattern.startsWith("dist/")).toBe(true);
+    // TypeScript sources and the build scripts must be excluded, and dist must
+    // NOT be -- a `dist/**` ignore would produce an extension with no code.
+    const rules = ignoreRules();
+    for (const required of ["src/**", "**/*.ts", "scripts/**"]) {
+      expect(rules, `.vscodeignore must exclude ${required}`).toContain(required);
     }
+    expect(rules).not.toContain("dist/**");
     expect(manifest.main.startsWith("./dist/")).toBe(true);
   });
 

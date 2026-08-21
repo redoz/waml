@@ -63,7 +63,13 @@ export function resolveServerPath(ctx: ServerPathContext): ServerPathResolution 
     };
   }
 
-  // 3. Bundled binary at <extensionPath>/server/waml[.exe] (dead until step 2).
+  // 3. Bundled binary at <extensionPath>/server/waml[.exe].
+  //
+  // Populated by `pnpm run bundle:server`, which copies the release binary in
+  // before `pnpm run package`. A .vsix built without that step simply has no
+  // server/ directory and falls through to PATH below -- this branch is the
+  // difference between a self-contained extension and one that needs `waml`
+  // installed, not dead code.
   const bundled = join(ctx.extensionPath, "server", exeName);
   if (ctx.fileExists(bundled)) {
     return { command: bundled, source: "bundled", runnable: true };
