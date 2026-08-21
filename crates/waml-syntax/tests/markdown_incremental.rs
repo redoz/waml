@@ -630,19 +630,17 @@ fn a_definition_label_spelled_across_a_line_break_is_still_a_definition() {
 
 #[test]
 fn unmaking_a_repeated_definition_reparses_the_repeat() {
-    // This fails if nothing guards a definition that repeats a label. The
-    // block scanner reports the span of the *first* definition of each label
-    // and drops the rest, so a repeat falls through to a line-anchored
-    // fallback that stops at the end of its own line. `[id]: \nx` is therefore
-    // a definition whose destination is `x` on the line below when its label
-    // is fresh, and a destination-less definition trailed by a stray `x` when
-    // `id` was already defined above -- a difference in token shape, not just
-    // in what resolves.
+    // This fails if a definition that repeats a label tokenises differently
+    // from the first of its label. A definition may put its destination on the
+    // line below, so `[id]: \nx` is a definition with destination `x` -- and it
+    // has to stay one when `id` was already defined above, because CommonMark
+    // parses the repeat exactly like the first and only declines to let it win
+    // the label.
     //
     // The edit renames the first definition from `id` to ` d`, which unmakes
-    // the repeat. The second definition is in another shell window and was
-    // carried over untouched, so the incremental tree kept the empty
-    // destination and the stray `x` a full parse no longer has.
+    // the repeat. The second definition is in another shell window and is
+    // carried over untouched, so it only matches a full parse if the two
+    // readings were the same all along.
     assert_matches_full_oracle(
         "[id]: /a\n\n# M\n\n[id]: \nx\n",
         "[ d]: /a\n\n# M\n\n[id]: \nx\n",

@@ -16,9 +16,13 @@
 //!   entry points, and each is specified on its own re-export below.
 //! * [`ScanEvent::End`] names the exact kind that opened, including the
 //!   indented/fenced code-block distinction.
-//! * [`BlockScan::reference_definitions`] is returned in implementation order,
-//!   unsorted. `block.rs` validates each span before sorting, and that order of
-//!   operations is load-bearing for its recovery path. Only [`ScanProfile::Tree`]
+//! * [`BlockScan::reference_definitions`] reports *every* definition, including
+//!   one that repeats a label already defined above it: a repeat is a
+//!   definition too, and it runs over as many lines, so a caller that could not
+//!   see it would have to guess where it ended. Returned in implementation
+//!   order, unsorted. `block.rs` validates each span before sorting, and that
+//!   order of operations is load-bearing for its recovery path. Only
+//!   [`ScanProfile::Tree`]
 //!   collects them; under [`ScanProfile::Shell`] the field is `None`, because
 //!   the shell mapper never reads it. `None` is distinct from "collected and
 //!   there were none", so a consumer that reads it under the wrong profile
@@ -209,10 +213,11 @@ pub(crate) enum ScanEvent {
 #[derive(Debug, Default)]
 pub(crate) struct BlockScan {
     pub events: Vec<(ScanEvent, Range<usize>)>,
-    /// The link reference definitions, or `None` when the profile does not
-    /// collect them. [`ScanProfile::Shell`] always yields `None`; a consumer
-    /// that reads the field under that profile has to face the omission rather
-    /// than mistake it for a document with no definitions.
+    /// Every link reference definition, repeats of an already-defined label
+    /// included, or `None` when the profile does not collect them.
+    /// [`ScanProfile::Shell`] always yields `None`; a consumer that reads the
+    /// field under that profile has to face the omission rather than mistake it
+    /// for a document with no definitions.
     pub reference_definitions: Option<Vec<Range<usize>>>,
     /// Set when *any* raw event the implementation saw — including the inline
     /// and text events this vocabulary drops — carried a range that was not a
@@ -344,6 +349,42 @@ mod tests {
         );
         let expected: Vec<Range<usize>> = vec![Range { start: 0, end: 7 }];
         assert_eq!(scan.reference_definitions, Some(expected));
+    }
+
+    #[test]
+    fn a_repeated_definition_is_reported_with_its_own_span() {
+        // The underlying definition table is keyed by label and holds one entry
+        // per label, so a repeat is reported only if the scan looks for it.
+        // `[l]: \n/v` is a definition whose destination sits on the line below,
+        // and the repeat has to be measured across both lines exactly as the
+        // first of its label is.
+        let scan = scan_blocks(
+            "[l]: \n/u\n\n[l]: \n/v\n",
+            MarkdownDialect::WAML_DEFAULT,
+            ScanProfile::Tree,
+        );
+        let mut spans = scan.reference_definitions.expect("tree profile collects");
+        spans.sort_by_key(|span| span.start);
+        assert_eq!(
+            spans,
+            vec![Range { start: 0, end: 8 }, Range { start: 10, end: 18 }]
+        );
+    }
+
+    #[test]
+    fn a_repeat_the_parser_reads_as_text_is_not_reported() {
+        // The second `[l]: /v` is a lazy continuation of the paragraph above
+        // it, so it is inline text, not a definition. A repeat scan that only
+        // asked "does this look like a definition on its own" would report it.
+        let scan = scan_blocks(
+            "[l]: /u\n\ntext\n[l]: /v\n",
+            MarkdownDialect::WAML_DEFAULT,
+            ScanProfile::Tree,
+        );
+        assert_eq!(
+            scan.reference_definitions,
+            Some(vec![Range { start: 0, end: 7 }])
+        );
     }
 
     #[test]

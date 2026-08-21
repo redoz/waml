@@ -5,7 +5,7 @@
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 
-use crate::MarkdownDialect;
+use crate::{markdown::reference::repeats_a_definition_label, MarkdownDialect};
 
 use super::{BlockScan, ScanAlignment, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
@@ -101,13 +101,14 @@ pub(crate) fn scan_blocks(
     dialect: MarkdownDialect,
     profile: ScanProfile,
 ) -> BlockScan {
-    let parser = Parser::new_ext(source, options(dialect, profile));
+    let options = options(dialect, profile);
+    let parser = Parser::new_ext(source, options);
 
     // Only the tree profile reads these, and collecting them clones a range per
     // link reference, so the shell profile skips the work entirely. Must be read
     // before `into_offset_iter` consumes the parser. Order is the parser's own;
     // callers validate before sorting and that order matters.
-    let reference_definitions: Option<Vec<std::ops::Range<usize>>> = match profile {
+    let first_of_each_label: Option<Vec<std::ops::Range<usize>>> = match profile {
         ScanProfile::Tree => Some(
             parser
                 .reference_definitions()
@@ -120,6 +121,11 @@ pub(crate) fn scan_blocks(
 
     let mut events = Vec::new();
     let mut malformed_range = false;
+    // Ranges of the content events this vocabulary drops. A link reference
+    // definition produces none of them, so anything they cover is settled
+    // text, and the repeat pass below refuses to read a definition back out of
+    // it however the blanking rearranged the blocks around it.
+    let mut content = Vec::new();
     // One slot per open tag. `None` marks a construct the vocabulary drops, so
     // its end is dropped too and the stream stays balanced.
     let mut open: Vec<Option<ScanTagKind>> = Vec::new();
@@ -144,16 +150,114 @@ pub(crate) fn scan_blocks(
                     events.push((ScanEvent::End(kind), range));
                 }
             }
-            Event::Rule => events.push((ScanEvent::Rule, range)),
-            _ => {}
+            Event::Rule => {
+                content.push(range.clone());
+                events.push((ScanEvent::Rule, range));
+            }
+            _ => content.push(range),
         }
     }
+
+    let reference_definitions = first_of_each_label
+        .map(|spans| all_reference_definitions(source, options, spans, &content));
 
     BlockScan {
         events,
         reference_definitions,
         malformed_range,
     }
+}
+
+/// Grows `spans` — the first definition of each label — into the span of
+/// *every* link reference definition in `source`.
+///
+/// `Parser::reference_definitions` is keyed by normalised label, so it reports
+/// one definition per label and drops every repeat. A repeat is still a
+/// definition: CommonMark parses it exactly like the first and only declines
+/// to let it win the label, and it may run over as many lines. Leaving it out
+/// left the tree builder to rebuild the repeat from a line-anchored fallback,
+/// which stopped at the end of the line the label sat on — so `[id]: \nx` was
+/// a definition with destination `x` when its label was fresh and a
+/// destination-less definition trailed by a stray `x` when it was not.
+///
+/// Rescanning with the definitions found so far blanked out makes the next
+/// repeat of each label the first of its own, so the same parser decides the
+/// extent of every definition. Blanking keeps line breaks and every byte
+/// offset, so each pass reads the same document with some blank lines in it.
+///
+/// A pass that finds nothing new ends the loop, and the blanking is what
+/// guarantees that: found bytes can never be read as a definition again, so
+/// each pass strictly grows the blanked region. The whole loop is skipped
+/// unless the source repeats a definition label by the loosest reading, which
+/// costs one byte pass rather than one parse.
+fn all_reference_definitions(
+    source: &str,
+    options: Options,
+    spans: Vec<std::ops::Range<usize>>,
+    content: &[std::ops::Range<usize>],
+) -> Vec<std::ops::Range<usize>> {
+    if spans.is_empty() || !repeats_a_definition_label(source) {
+        return spans;
+    }
+    let mut masked = source.as_bytes().to_vec();
+    let mut definitions = spans.clone();
+    // Every span blanked so far, whether or not it was kept. A pass reads
+    // definitions out of a document some of whose blocks the blanking has
+    // rearranged, so it can name a span the real parse spends on paragraph
+    // text; blanking that one anyway is what lets the next pass see past it,
+    // since the table is keyed by label and one span per label is all it holds.
+    let mut blanked = spans;
+    let mut pending: Vec<std::ops::Range<usize>> = blanked.clone();
+    loop {
+        for span in pending.drain(..) {
+            blank(&mut masked, &span);
+        }
+        let Ok(text) = std::str::from_utf8(&masked) else {
+            // Blanking replaces whole spans with ASCII, so this cannot happen
+            // for char-aligned spans; bail rather than assert on a range the
+            // caller has not screened yet.
+            return definitions;
+        };
+        for span in Parser::new_ext(text, options)
+            .reference_definitions()
+            .iter()
+            .map(|(_, definition)| definition.span.clone())
+        {
+            if !range_is_well_formed(text, &span)
+                || span.start >= span.end
+                || blanked.iter().any(|seen| overlaps(seen, &span))
+            {
+                continue;
+            }
+            if !content.iter().any(|settled| overlaps(settled, &span)) {
+                definitions.push(span.clone());
+            }
+            blanked.push(span.clone());
+            pending.push(span);
+        }
+        if pending.is_empty() {
+            return definitions;
+        }
+    }
+}
+
+/// Replaces `span` with spaces, leaving its line breaks where they were.
+///
+/// Keeping the breaks keeps every following line on the line it was on, so a
+/// rescan of the blanked source reads the same blocks around it.
+fn blank(masked: &mut [u8], span: &std::ops::Range<usize>) {
+    let Some(bytes) = masked.get_mut(span.clone()) else {
+        return;
+    };
+    for byte in bytes {
+        if !matches!(byte, b'\n' | b'\r') {
+            *byte = b' ';
+        }
+    }
+}
+
+fn overlaps(left: &std::ops::Range<usize>, right: &std::ops::Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
 /// Whether an event range is a usable, char-aligned slice of `source`.

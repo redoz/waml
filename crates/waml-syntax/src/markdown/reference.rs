@@ -36,6 +36,31 @@ impl MarkdownReferenceMap {
         })
     }
 
+    /// The label and span of *every* definition the tree holds, repeats
+    /// included, in source order.
+    ///
+    /// Resolution keeps only the first definition of each label, which is what
+    /// CommonMark resolves against. A guard asking whether an edit could
+    /// change *which* definition that is has to see the ones resolution drops:
+    /// unmaking the first definition of a label promotes the next, and a guard
+    /// that only knows the first cannot tell that there is a next.
+    ///
+    /// Reads the label straight off the node rather than through
+    /// [`parse_definition`], so a node whose destination the parse rejects
+    /// still names its label. A guard has to over-report, and a definition
+    /// that resolves to nothing still occupies the place a later edit could
+    /// make resolve.
+    pub(crate) fn definition_sites(
+        source: &str,
+        root: &crate::GreenNode<crate::OkfMarkdownLanguage>,
+        start: usize,
+    ) -> Result<Vec<(Arc<str>, TextRange)>, crate::ParseError> {
+        let mut sites = Vec::new();
+        let mut at = start;
+        collect_sites(root, source, &mut at, &mut sites)?;
+        Ok(sites)
+    }
+
     pub(crate) fn with_backlinks(
         mut self,
         backlinks: HashMap<Arc<str>, Vec<SyntaxIdentity>>,
@@ -48,6 +73,41 @@ impl MarkdownReferenceMap {
         );
         self
     }
+}
+
+/// Whether any label in `source` is defined twice, by the loosest reading of
+/// "defined".
+///
+/// A definition's label is the text between a `[` and the `]` that a `:`
+/// follows, and CommonMark forbids an unescaped `[` inside a label, so the
+/// nearest `[` before that `]` is the one that opens it. Nothing else is
+/// checked: a container prefix, an indent, or a whole enclosing code fence all
+/// leave the label where this finds it. Naming a bracket pair that is no
+/// definition at all costs the caller one wasted rescan; missing a real repeat
+/// would leave that repeat without a span.
+///
+/// One forward pass, carrying the most recent `[` rather than searching back
+/// from every `]:` — a document of nothing but `]:` would otherwise cost a
+/// backward scan per pair.
+pub(crate) fn repeats_a_definition_label(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut seen = std::collections::HashSet::new();
+    let mut open: Option<usize> = None;
+    for at in 0..bytes.len() {
+        match bytes[at] {
+            b'[' => open = Some(at),
+            // `[`, `]` and `:` are ASCII, so these are all char boundaries.
+            b']' if bytes.get(at + 1) == Some(&b':') => {
+                if let Some(label) = open.and_then(|open| normalize_label(&source[open + 1..at])) {
+                    if !seen.insert(label) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 pub(crate) fn normalize_label(label: &str) -> Option<Arc<str>> {
@@ -98,6 +158,38 @@ fn collect_definitions(
     Ok(())
 }
 
+fn collect_sites(
+    node: &crate::GreenNode<crate::OkfMarkdownLanguage>,
+    source: &str,
+    at: &mut usize,
+    sites: &mut Vec<(Arc<str>, TextRange)>,
+) -> Result<(), crate::ParseError> {
+    let start = *at;
+    let end = start + node.width().to_usize();
+    if node.kind() == crate::OkfMarkdownSyntaxKind::LinkReferenceDefinition {
+        if let Some(label) = definition_label(&source[start..end]) {
+            sites.push((label, range(start, end)?));
+        }
+        *at = end;
+        return Ok(());
+    }
+    for child in node.children() {
+        match child {
+            crate::GreenElement::Node(child) => collect_sites(child, source, at, sites)?,
+            crate::GreenElement::Token(token) => *at += token.width().to_usize(),
+        }
+    }
+    Ok(())
+}
+
+/// The normalised label a definition's spelling opens with.
+fn definition_label(spelling: &str) -> Option<Arc<str>> {
+    let spelling = spelling.trim_end_matches(['\r', '\n']);
+    let close = spelling.find("]:")?;
+    spelling.strip_prefix('[')?;
+    normalize_label(&spelling[1..close])
+}
+
 fn identity(
     node: &crate::GreenNode<crate::OkfMarkdownLanguage>,
 ) -> Result<SyntaxIdentity, crate::ParseError> {
@@ -121,10 +213,7 @@ fn parse_definition(
     let Some(close) = spelling.find("]:") else {
         return Ok(None);
     };
-    let Some(label) = spelling.strip_prefix('[').map(|_| &spelling[1..close]) else {
-        return Ok(None);
-    };
-    let Some(label) = normalize_label(label) else {
+    let Some(label) = definition_label(&source[start..end]) else {
         return Ok(None);
     };
     let after_colon = close + 2;
@@ -198,4 +287,25 @@ pub(crate) fn decode_destination(value: &str) -> String {
         at += ch.len_utf8();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_definition_scan_names_a_label_defined_twice() {
+        // Gates the rescan that hands a repeated definition the same span
+        // treatment as the first of its label.
+        assert!(repeats_a_definition_label("[id]: /a\n\n[id]: /b\n"));
+        // Case and inner whitespace fold, exactly as the parser folds them.
+        assert!(repeats_a_definition_label("[ID]: /a\n\n[id]: /b\n"));
+        assert!(repeats_a_definition_label("[i\nd]: /a\n\n[i d]: /b\n"));
+        // A label spelled across a line break repeats one spelled on a line.
+        assert!(repeats_a_definition_label("[\nid]: /a\n\n[id]: /b\n"));
+        // Distinct labels are no repeat, however many there are.
+        assert!(!repeats_a_definition_label("[a]: /a\n\n[b]: /b\n"));
+        // A `]:` with no `[` in front of it names nothing.
+        assert!(!repeats_a_definition_label("x]: y\n\nz]: w\n"));
+    }
 }

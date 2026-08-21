@@ -309,6 +309,48 @@ fn link_definition_titles_round_trip_in_every_delimiter() {
     }
 }
 
+#[test]
+fn a_repeated_definition_tokenises_like_the_first_of_its_label() {
+    // This fails if a definition that repeats a label is read differently from
+    // one that opens it. CommonMark parses the repeat exactly like the first
+    // and only declines to let it win the label, so the two must agree on how
+    // far the definition runs -- and a definition may put its destination, and
+    // then its title, on the lines below.
+    //
+    // The pairs below spell the same trailing definition twice: once under a
+    // label already defined above it, once under a fresh one. Only the label of
+    // the opening definition differs, so the tail must tokenise identically.
+    for (repeat, fresh) in [
+        ("[id]: /a\n\n[id]: \nx\n", "[nw]: /a\n\n[id]: \nx\n"),
+        (
+            "[id]: /a\n\n[id]: \n/b\n\"t\"\n",
+            "[nw]: /a\n\n[id]: \n/b\n\"t\"\n",
+        ),
+        ("[id]: /a\n\n[id]: <b>\n", "[nw]: /a\n\n[id]: <b>\n"),
+        ("> [id]: /a\n\n> [id]: \nx\n", "> [nw]: /a\n\n> [id]: \nx\n"),
+        ("- [id]: /a\n\n- [id]: \nx\n", "- [nw]: /a\n\n- [id]: \nx\n"),
+        // A third spelling of the same label is no more special than a second.
+        (
+            "[id]: /a\n\n[id]: /b\n\n[id]: \nx\n",
+            "[nw]: /a\n\n[n2]: /b\n\n[id]: \nx\n",
+        ),
+    ] {
+        let tail = |source: &str| {
+            let shell = parse(source);
+            assert_eq!(shell.tree.write_to_string(), source);
+            let definition = descendant_nodes(&shell.tree.root())
+                .into_iter()
+                .rfind(|node| node.kind() == OkfMarkdownSyntaxKind::LinkReferenceDefinition)
+                .unwrap_or_else(|| panic!("{source:?} has no definition"));
+            direct_tokens(&definition)
+                .into_iter()
+                .map(|token| (token.kind(), token.text().write_to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tail(repeat), tail(fresh), "{repeat:?} against {fresh:?}");
+    }
+}
+
 fn token_spellings(node: &SyntaxNode<OkfMarkdownLanguage>) -> Vec<String> {
     let mut spellings = Vec::new();
     for child in node.children() {
