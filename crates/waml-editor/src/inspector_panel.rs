@@ -22,7 +22,7 @@
 //! hand-rolled (no fork `TextInput`) — same convention as `doc_tabs.rs`: rects
 //! captured during `draw_walk`, hit-tested on `FingerUp`, keyboard handled via
 //! `cx.set_key_focus`/`Hit::KeyDown`/`Hit::TextInput`. Commits go into
-//! `overrides` keyed `(subject_key, FieldId)`; the source `Model` is never
+//! `overrides` keyed `(Subject, FieldId)`; the source `Model` is never
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
@@ -32,8 +32,8 @@ use crate::cursor;
 use crate::dock::{DockEvent, DockState};
 use crate::icons::{Icon, IconSet};
 use crate::inspector::{
-    build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementKind, ElementRow,
-    FieldId, InspectorView, Subject,
+    build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementRow, FieldId,
+    InspectorView, Subject,
 };
 use crate::navigation::NavigationTarget;
 use crate::node_style::{accent_bucket, AccentBucket};
@@ -369,7 +369,7 @@ script_mod! {
 pub enum InspectorAction {
     #[default]
     None,
-    Edited(String),
+    Edited(Subject),
     AddTrace {
         selector: waml::uml::TransitionSelector,
         index: usize,
@@ -440,10 +440,10 @@ pub struct Inspector {
     view_rect: Rect,
     #[rust]
     subject: Subject,
-    /// `(subject_key, field) -> edited value`. Never touches `Model`; read
+    /// `(subject, field) -> edited value`. Never touches `Model`; read
     /// as an override layer on top of `proj` (override-or-model).
     #[rust]
-    overrides: HashMap<(String, FieldId), String>,
+    overrides: HashMap<(Subject, FieldId), String>,
     /// The field currently being edited, if any. `Some` acquires key focus.
     #[rust]
     editing: Option<FieldId>,
@@ -545,16 +545,18 @@ fn meta_line(assoc: &AssocRow) -> String {
     parts.join(" \u{b7} ")
 }
 
-/// The lead glyph for a reference card, by element kind.
-fn ref_card_icon(kind: ElementKind) -> Icon {
-    match kind {
-        ElementKind::Group => Icon::Group,
-        ElementKind::Edge => Icon::Spline,
+/// The lead glyph for a reference card, by what the card points at.
+fn ref_card_icon(subject: &Subject) -> Icon {
+    match subject {
+        Subject::Group(_) => Icon::Group,
         // The container glyph, matching the diagram's own picker row.
-        ElementKind::Diagram => Icon::Frame,
-        ElementKind::Node => Icon::PanelTop,
-        // A message/fragment is a step in a flow of control, not a container.
-        ElementKind::BehaviorElement => Icon::Spline,
+        Subject::Diagram(_) => Icon::Frame,
+        // A relationship, or a message/fragment: a step or a link, not a
+        // container.
+        Subject::Edge(_) | Subject::FlowEdge(_) | Subject::BehaviorElement(_) => Icon::Spline,
+        // Every card built today points at a classifier; the empty subject is
+        // not a card target and takes the same neutral node glyph.
+        Subject::Classifier(_) | Subject::None => Icon::PanelTop,
     }
 }
 
@@ -612,11 +614,21 @@ fn attr_item_id(i: usize, name: &str) -> LiveId {
     LiveId::from_str(&format!("{i}-{name}"))
 }
 
-/// `FlatList` item id for member row `i` (keyed `key`). Index-prefixed so two
-/// members sharing a key still key to distinct list items (mirrors
+/// `FlatList` item id for member row `i` (keyed by its label). Index-prefixed so
+/// two members sharing a label still key to distinct list items (mirrors
 /// `attr_item_id`).
-fn member_item_id(i: usize, key: &str) -> LiveId {
-    LiveId::from_str(&format!("{i}-{key}"))
+fn member_item_id(i: usize, label: &str) -> LiveId {
+    LiveId::from_str(&format!("{i}-{label}"))
+}
+
+/// `SelectBox` item id for element-picker row `i`. Positional: the row list is
+/// rebuilt as a unit and `apply_pick` resolves the id against that same list, so
+/// nothing needs the id derived from the row's contents. An edge row has no
+/// single-string key to derive one from anyway ([`crate::inspector::EdgeSubject`]),
+/// and two rows that *do* share a key (a group named after a node) must not
+/// collapse onto one item.
+fn picker_item_id(i: usize) -> LiveId {
+    LiveId::from_str(&format!("element-row-{i}"))
 }
 
 /// Leading visual for a node picker row: the shared catalog glyph for the
@@ -797,13 +809,13 @@ impl Widget for Inspector {
                 if let Some(view) = self.proj.clone() {
                     if let Some(mut list) = item.as_flat_list().borrow_mut() {
                         for (i, m) in view.members.iter().enumerate() {
-                            let item_id = member_item_id(i, &m.key);
+                            let item_id = member_item_id(i, &m.label);
                             let row = list.item(cx, item_id, id!(Row)).unwrap();
                             let rv = row.as_ref_card_view();
-                            rv.set_icon(cx, ref_card_icon(m.kind));
+                            rv.set_icon(cx, ref_card_icon(&m.subject));
                             rv.set_name(cx, &m.label);
                             rv.set_meta(cx, ""); // members are single-line
-                            rv.set_target(&m.key, m.kind);
+                            rv.set_target(m.subject.clone());
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -819,14 +831,14 @@ impl Widget for Inspector {
                             ));
                             let row = list.item(cx, item_id, id!(Row)).unwrap();
                             let rv = row.as_ref_card_view();
-                            rv.set_icon(cx, ref_card_icon(assoc.target_kind));
+                            rv.set_icon(cx, ref_card_icon(&assoc.target));
                             rv.set_name(cx, &assoc.other_label);
                             // Line 2: direction glyph + kind/role/multiplicity run.
                             rv.set_meta(
                                 cx,
                                 &format!("{} {}", dir_glyph(assoc.dir), meta_line(assoc)),
                             );
-                            rv.set_target(&assoc.target_key, assoc.target_kind);
+                            rv.set_target(assoc.target.clone());
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -1334,17 +1346,21 @@ impl Inspector {
         let mut items = Vec::new();
         for idx in 0..self.elements.len() {
             let row = self.elements[idx].clone();
-            let id = LiveId::from_str(&row.key);
+            // Keyed by row position, not by anything derived from the row's
+            // identity: two rows may legitimately share a key (a group named
+            // after a node), and the id only has to be unique within this
+            // popup's lifetime, which `apply_pick` resolves against.
+            let id = picker_item_id(idx);
             self.picker_ids.push((id, idx));
             let selected = subject_to_index(&self.elements, &self.subject) == idx;
-            let (lead, label, enabled) = match row.kind {
-                ElementKind::Node => {
+            let (lead, label, enabled) = match &row.subject {
+                Subject::Classifier(key) => {
                     let lead = model
                         .nodes
                         .iter()
-                        .find(|n| n.key == row.key)
+                        .find(|n| &n.key == key)
                         .map(|n| {
-                            let letter = build_view(model, &Subject::Classifier(row.key.clone()))
+                            let letter = build_view(model, &row.subject)
                                 .and_then(|v| v.kind_label.chars().next())
                                 .map(|c| c.to_uppercase().to_string())
                                 .unwrap_or_default();
@@ -1356,7 +1372,7 @@ impl Inspector {
                         });
                     (lead, row.label.clone(), true)
                 }
-                ElementKind::Group => (
+                Subject::Group(_) => (
                     // The Lucide group glyph -- distinct from the diagram's solid
                     // `Frame` and any node's catalog icon. Drives the collapsed
                     // select-box lead (the panel header) too.
@@ -1364,21 +1380,26 @@ impl Inspector {
                     row.label.clone(),
                     true,
                 ),
-                ElementKind::Edge => (
+                Subject::Edge(_) | Subject::FlowEdge(_) => (
                     SelectLead::Icon(Icon::Spline),
                     edge_target(&row.label).to_string(),
                     true,
                 ),
                 // The root diagram row leads with the `Frame` glyph -- distinct
                 // from any node's catalog icon, marking it as the container.
-                ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), true),
+                Subject::Diagram(_) => (SelectLead::Icon(Icon::Frame), row.label.clone(), true),
                 // A behavior element's label is already its full reading (`a
                 // calls b `start()`), so it goes through verbatim -- unlike an
                 // edge row, whose label is a `src -> tgt` pair the picker trims
                 // to the target end.
-                ElementKind::BehaviorElement => {
+                Subject::BehaviorElement(_) => {
                     (SelectLead::Icon(Icon::Spline), row.label.clone(), true)
                 }
+                // No row carries the empty subject (`diagram_elements` and
+                // `behavior_elements` only emit resolvable rows); a stray one
+                // is listed disabled rather than skipped, which would desync
+                // the item index from the element index.
+                Subject::None => (SelectLead::Icon(Icon::Frame), row.label.clone(), false),
             };
             items.push(SelectItem {
                 id,
@@ -1435,40 +1456,37 @@ impl Inspector {
             .find(|(i, _)| *i == id)
             .map(|(_, x)| *x)?;
         let row = self.elements.get(idx)?;
-        let subject = crate::inspector::subject_from(&row.key, row.kind);
+        let subject = row.subject.clone();
         self.set_subject_analysis(cx, analysis, subject.clone());
         Some(subject)
     }
 
-    fn subject_key(&self) -> Option<String> {
+    /// The subject an override attaches to. `None` only for the empty state,
+    /// which has nothing to edit. The whole `Subject` is the key -- there is no
+    /// string form of an edge subject to key on ([`crate::inspector::EdgeSubject`]).
+    fn override_subject(&self) -> Option<&Subject> {
         match &self.subject {
-            Subject::Diagram(key)
-            | Subject::Classifier(key)
-            | Subject::Group(key)
-            | Subject::Edge(key)
-            | Subject::BehaviorElement(key) => Some(key.clone()),
             Subject::None => None,
+            subject => Some(subject),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn subject_key_for_test(&self) -> Option<String> {
-        self.subject_key()
+    pub(crate) fn subject_for_test(&self) -> &Subject {
+        &self.subject
     }
 
     fn effective_title(&self, view: &InspectorView) -> String {
-        let key = self.subject_key();
-        let over = key
-            .as_ref()
-            .and_then(|k| self.overrides.get(&(k.clone(), FieldId::Title)));
+        let over = self
+            .override_subject()
+            .and_then(|s| self.overrides.get(&(s.clone(), FieldId::Title)));
         effective_field(view, FieldId::Title, over)
     }
 
     fn effective_description(&self, view: &InspectorView) -> String {
-        let key = self.subject_key();
-        let over = key
-            .as_ref()
-            .and_then(|k| self.overrides.get(&(k.clone(), FieldId::Description)));
+        let over = self
+            .override_subject()
+            .and_then(|s| self.overrides.get(&(s.clone(), FieldId::Description)));
         effective_field(view, FieldId::Description, over)
     }
 
@@ -1483,7 +1501,7 @@ impl Inspector {
     }
 
     fn begin_edit(&mut self, cx: &mut Cx, field: FieldId) {
-        if self.subject_key().is_none() {
+        if self.override_subject().is_none() {
             return; // Empty state: nothing to attach an override to.
         }
         let current = self.effective_value(field);
@@ -1498,11 +1516,11 @@ impl Inspector {
         let Some(field) = self.editing.take() else {
             return;
         };
-        if let Some(key) = self.subject_key() {
+        if let Some(subject) = self.override_subject().cloned() {
             if self.edit_buffer != self.edit_original {
                 self.overrides
-                    .insert((key.clone(), field), self.edit_buffer.clone());
-                cx.widget_action(uid, InspectorAction::Edited(key));
+                    .insert((subject.clone(), field), self.edit_buffer.clone());
+                cx.widget_action(uid, InspectorAction::Edited(subject));
             }
         }
         self.view.redraw(cx);
@@ -1514,10 +1532,10 @@ impl Inspector {
     }
 
     /// Convenience reader for `App`, mirroring `DocTabs::tab_action`.
-    pub fn edited(&self, actions: &Actions) -> Option<String> {
+    pub fn edited(&self, actions: &Actions) -> Option<Subject> {
         let item = actions.find_widget_action(self.widget_uid())?;
         match item.cast() {
-            InspectorAction::Edited(key) => Some(key),
+            InspectorAction::Edited(subject) => Some(subject),
             _ => None,
         }
     }
@@ -1535,9 +1553,9 @@ impl Inspector {
     }
 
     /// A member/association card was clicked this pass. Scans both section
-    /// FlatLists' grouped actions and returns the clicked row's `(key, kind)`.
+    /// FlatLists' grouped actions and returns the clicked row's subject.
     /// `App`/`ClassDiagramView` repoints the inspector and selects the node.
-    pub fn navigate(&mut self, cx: &mut Cx, actions: &Actions) -> Option<(String, ElementKind)> {
+    pub fn navigate(&mut self, cx: &mut Cx, actions: &Actions) -> Option<Subject> {
         let members = self.view.flat_list(cx, ids!(body.members_list));
         for (_item_id, item) in members.items_with_actions(actions) {
             if let Some(t) = item.as_ref_card_view().nav_target(actions) {
@@ -1614,7 +1632,7 @@ mod tests {
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let edge_key = prepared.uml().projection.flow_edges[0].key.clone();
 
-        inspector.set_subject_analysis(cx, prepared.uml(), Subject::Edge(edge_key));
+        inspector.set_subject_analysis(cx, prepared.uml(), Subject::FlowEdge(edge_key));
         assert_eq!(inspector.proj.as_ref().unwrap().traces.len(), 1);
         inspector.begin_trace_edit(
             cx,
@@ -1680,10 +1698,15 @@ mod tests {
         let model = &analysis.projection;
         let rows =
             crate::inspector::diagram_elements(model, "diagram", "Diagram", &["broken".into()]);
+        // Picker ids are positional, so pick the node row by where it sits.
+        let node_idx = rows
+            .iter()
+            .position(|r| r.subject == Subject::Classifier("broken".into()))
+            .expect("the Broken node row");
         inspector.set_diagram_elements(cx, model, rows);
 
         assert_eq!(
-            inspector.apply_pick(cx, analysis, LiveId::from_str("broken")),
+            inspector.apply_pick(cx, analysis, picker_item_id(node_idx)),
             Some(Subject::Classifier("broken".into()))
         );
         let projection = inspector.proj.as_ref().unwrap();
@@ -1711,19 +1734,16 @@ mod tests {
     fn rows() -> Vec<ElementRow> {
         vec![
             ElementRow {
-                key: "d1".into(),
+                subject: Subject::Diagram("d1".into()),
                 label: "Orders".into(),
-                kind: ElementKind::Diagram,
             },
             ElementRow {
-                key: "Customer".into(),
+                subject: Subject::Classifier("Customer".into()),
                 label: "Customer".into(),
-                kind: ElementKind::Node,
             },
             ElementRow {
-                key: "Order".into(),
+                subject: Subject::Classifier("Order".into()),
                 label: "Order".into(),
-                kind: ElementKind::Node,
             },
         ]
     }
@@ -1833,8 +1853,7 @@ mod tests {
             other_label: "Customer".into(),
             role: "buyer".into(),
             multiplicity: "0..1".into(),
-            target_key: "customer".into(),
-            target_kind: ElementKind::Node,
+            target: Subject::Classifier("customer".into()),
         };
         assert_eq!(meta_line(&assoc), "associates \u{b7} buyer \u{b7} 0..1");
     }
@@ -1847,8 +1866,7 @@ mod tests {
             other_label: "Order".into(),
             role: String::new(),
             multiplicity: String::new(),
-            target_key: "order".into(),
-            target_kind: ElementKind::Node,
+            target: Subject::Classifier("order".into()),
         };
         assert_eq!(meta_line(&assoc), "associates");
     }
@@ -1868,20 +1886,40 @@ mod tests {
     }
 
     #[test]
-    fn member_item_id_distinguishes_duplicate_keys() {
+    fn member_item_id_distinguishes_duplicate_labels() {
         assert_ne!(member_item_id(0, "k"), member_item_id(1, "k"));
     }
 
     #[test]
-    fn member_item_id_is_stable_for_same_index_and_key() {
+    fn member_item_id_is_stable_for_same_index_and_label() {
         assert_eq!(member_item_id(2, "k"), member_item_id(2, "k"));
     }
 
+    // Picker item ids are positional: distinct per row, stable per index, so two
+    // rows that happen to share a key (a group named after a node) stay two
+    // pickable items.
     #[test]
-    fn ref_card_icon_maps_edge_and_node() {
-        assert!(matches!(ref_card_icon(ElementKind::Edge), Icon::Spline));
-        assert!(matches!(ref_card_icon(ElementKind::Node), Icon::PanelTop));
-        assert!(matches!(ref_card_icon(ElementKind::Group), Icon::Group));
+    fn picker_item_id_is_distinct_per_row_and_stable_per_index() {
+        assert_ne!(picker_item_id(0), picker_item_id(1));
+        assert_eq!(picker_item_id(2), picker_item_id(2));
+    }
+
+    #[test]
+    fn ref_card_icon_maps_each_subject() {
+        let edge = Subject::Edge(crate::inspector::EdgeSubject {
+            source: "a".into(),
+            target: "b".into(),
+            occurrence: 0,
+        });
+        assert!(matches!(ref_card_icon(&edge), Icon::Spline));
+        assert!(matches!(
+            ref_card_icon(&Subject::Classifier("n".into())),
+            Icon::PanelTop
+        ));
+        assert!(matches!(
+            ref_card_icon(&Subject::Group("g".into())),
+            Icon::Group
+        ));
     }
 
     #[test]

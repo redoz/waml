@@ -409,7 +409,10 @@ mod tests {
         let inspector = inspector
             .borrow::<crate::inspector_panel::Inspector>()
             .expect("the inspector is mounted");
-        assert_eq!(inspector.subject_key_for_test().as_deref(), Some("order"));
+        assert_eq!(
+            inspector.subject_for_test(),
+            &crate::inspector::Subject::Classifier("order".into())
+        );
     }
 
     use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};

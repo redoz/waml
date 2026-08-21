@@ -6,8 +6,35 @@
 use waml::model::{DiagramGroup, ElementType, EndpointRef, Model, RelationshipKind};
 use waml::multiplicity::Multiplicity;
 
+/// Identity of one `Model::edges` entry, as the inspector points at it.
+///
+/// A `Model` gives its relationships no id of their own, so the subject has to
+/// carry whatever re-finds the edge after the model is re-projected: both
+/// endpoint keys plus which of that ordered pair's parallel edges this is
+/// (`occurrence`, 0-based, in `Model::edges` order). A bare `Vec` index is the
+/// solver's answer (`waml::solve::EdgeId`) and the wrong one here -- it does not
+/// survive a re-projection, since editing any earlier document shifts it. The
+/// endpoints do survive.
+///
+/// This replaces a synthetic `"src->tgt#N"` string that `build_edge_view` used
+/// to parse back. A node key is its document's bundle path minus `.md` with no
+/// sanitization, so it may contain `->` or `#`; the string form then either
+/// failed to parse (silently projecting the empty state) or -- worse -- let two
+/// structurally distinct relationships collide on one key and resolve to the
+/// wrong edge, silently. Nothing formats or parses this type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EdgeSubject {
+    /// `Edge::source` -- a node key, verbatim.
+    pub source: String,
+    /// `Edge::target` -- a node key, verbatim.
+    pub target: String,
+    /// 0-based position among the `Model::edges` entries sharing this exact
+    /// ordered pair. 0 for the common single-edge case.
+    pub occurrence: usize,
+}
+
 /// What the inspector is currently pointed at. `None` renders the empty state.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Subject {
     #[default]
     None,
@@ -18,8 +45,14 @@ pub enum Subject {
     Classifier(String),
     /// Group name (diagram-scoped; resolved by name, first match wins).
     Group(String),
-    /// Synthetic `"src->tgt"` id (the Edge picker row's key).
-    Edge(String),
+    /// A `Model::edges` relationship, by structural identity.
+    Edge(EdgeSubject),
+    /// An activity/state flow edge, by its `FlowEdge::key` -- an id the model
+    /// assigns and stores on the edge itself, matched whole and never taken
+    /// apart. Distinct from [`Subject::Edge`]: the two pools are unrelated, and
+    /// folding them into one variant is what forced `build_edge_view` to guess
+    /// which kind of id it had been handed.
+    FlowEdge(String),
     /// A behavior-LOCAL element -- an interaction's message or combined
     /// fragment, keyed `"{document}#{id}"`. These live in no model pool (design
     /// spec §6: interaction nodes are document-local), so they cannot be a
@@ -56,7 +89,7 @@ mod parser_recovery_tests {
     }
 }
 
-/// An editable inspector field. Overrides are keyed `(subject_key, FieldId)`.
+/// An editable inspector field. Overrides are keyed `(Subject, FieldId)`.
 /// UX mock scope A/B: title + description; attribute-row editing is a
 /// fast-follow (see `AttrField`, used once attribute rows gain the same
 /// inline-edit affordance).
@@ -68,33 +101,22 @@ pub enum FieldId {
 
 /// One row in the inspector's element-picker dropdown. The picker lists a
 /// diagram's whole contents; every row inspects.
+///
+/// A row *is* its subject plus a label: picking it hands `subject` straight to
+/// the panel. There is no separate key/kind pair to drift out of step with it,
+/// and no row kind whose identity has to be re-derived from a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementRow {
-    /// For `Node`, the classifier key (the `set_subject` target). For `Diagram`,
-    /// the diagram key. For `Edge`, a synthetic `"src->tgt"` id.
-    pub key: String,
+    pub subject: Subject,
     pub label: String,
-    pub kind: ElementKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ElementKind {
-    Diagram,
-    Group,
-    Node,
-    Edge,
-    /// A message or combined fragment of a behavior document
-    /// ([`Subject::BehaviorElement`]).
-    BehaviorElement,
 }
 
 /// A navigable reference to one diagram element: enough for the panel to
-/// repoint (`key` + `kind`) and to label a card (`label`). Backs both member
-/// and association cards.
+/// repoint (`subject`) and to label a card (`label`). Backs both member and
+/// association cards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementRef {
-    pub key: String,
-    pub kind: ElementKind,
+    pub subject: Subject,
     pub label: String,
 }
 
@@ -135,13 +157,12 @@ pub enum AssocDir {
 /// not an editable field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssocRow {
-    pub kind: String,             // RelationshipKind::as_str(), e.g. "associates"
-    pub dir: AssocDir,            // orientation from the subject's point of view
-    pub other_label: String,      // the far endpoint's title, falling back to its key
-    pub role: String,             // far end's role, "" when unset
-    pub multiplicity: String,     // far end's multiplicity, "" when unset or trivial "1"
-    pub target_key: String,       // the far endpoint's element key (the navigate target)
-    pub target_kind: ElementKind, // the far endpoint's kind (Node for associations)
+    pub kind: String,         // RelationshipKind::as_str(), e.g. "associates"
+    pub dir: AssocDir,        // orientation from the subject's point of view
+    pub other_label: String,  // the far endpoint's title, falling back to its key
+    pub role: String,         // far end's role, "" when unset
+    pub multiplicity: String, // far end's multiplicity, "" when unset or trivial "1"
+    pub target: Subject,      // the far endpoint (the navigate target)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,30 +227,27 @@ fn push_group_rows(groups: &[DiagramGroup], rows: &mut Vec<ElementRow>) {
     for g in groups {
         if !g.name.is_empty() {
             rows.push(ElementRow {
-                key: g.name.clone(),
+                subject: Subject::Group(g.name.clone()),
                 label: g.name.clone(),
-                kind: ElementKind::Group,
             });
         }
         push_group_rows(&g.children, rows);
     }
 }
 
-/// The synthetic picker key for the edge at `edges[idx]`: `"src->tgt"` for the
-/// first edge of that ordered pair, `"src->tgt#N"` (N = its 0-based occurrence
-/// among same-pair edges) for each later parallel edge. Keeping the first bare
-/// preserves the common single-edge case and its readable key. `build_edge_view`
-/// reverses it.
-fn edge_key(edges: &[waml::model::Edge], idx: usize) -> String {
+/// The subject identifying `edges[idx]`: its two endpoint keys plus its 0-based
+/// occurrence among the same-pair edges before it. `build_edge_view` re-finds
+/// the edge from exactly these three fields -- no string is formatted, so no
+/// endpoint key can be misread.
+fn edge_subject(edges: &[waml::model::Edge], idx: usize) -> EdgeSubject {
     let edge = &edges[idx];
-    let occ = edges[..idx]
-        .iter()
-        .filter(|e| e.source == edge.source && e.target == edge.target)
-        .count();
-    if occ == 0 {
-        format!("{}->{}", edge.source, edge.target)
-    } else {
-        format!("{}->{}#{}", edge.source, edge.target, occ)
+    EdgeSubject {
+        source: edge.source.clone(),
+        target: edge.target.clone(),
+        occurrence: edges[..idx]
+            .iter()
+            .filter(|e| e.source == edge.source && e.target == edge.target)
+            .count(),
     }
 }
 
@@ -261,9 +279,8 @@ pub fn diagram_elements(
 
     let mut rows = Vec::with_capacity(node_keys.len() + 1);
     rows.push(ElementRow {
-        key: diagram_key.to_string(),
+        subject: Subject::Diagram(diagram_key.to_string()),
         label: diagram_title.to_string(),
-        kind: ElementKind::Diagram,
     });
     // Group rows, flat and depth-first, after the diagram and before the nodes.
     if let Some(diagram) = model.diagrams.iter().find(|d| d.key == diagram_key) {
@@ -271,22 +288,20 @@ pub fn diagram_elements(
     }
     for nk in node_keys {
         rows.push(ElementRow {
-            key: nk.clone(),
+            subject: Subject::Classifier(nk.clone()),
             label: title_of(nk),
-            kind: ElementKind::Node,
         });
         // Edges anchored at this node's source end, nested right after it. A
         // diagram can hold parallel edges between the same pair (association +
-        // dependency etc.), so the synthetic key carries an occurrence ordinal
-        // (`src->tgt#N`, N omitted for the first) — keyed on `src->tgt` alone,
-        // every parallel row would collapse onto the first edge. `build_edge_view`
-        // resolves the ordinal back to the matching edge.
+        // dependency etc.), so the subject carries an occurrence ordinal —
+        // keyed on the endpoint pair alone, every parallel row would collapse
+        // onto the first edge. `build_edge_view` re-finds the edge from the
+        // pair plus that ordinal.
         for (ei, edge) in model.edges.iter().enumerate() {
             if &edge.source == nk && present.contains(edge.target.as_str()) {
                 rows.push(ElementRow {
-                    key: edge_key(&model.edges, ei),
+                    subject: Subject::Edge(edge_subject(&model.edges, ei)),
                     label: format!("{} -> {}", title_of(&edge.source), title_of(&edge.target)),
-                    kind: ElementKind::Edge,
                 });
             }
         }
@@ -294,34 +309,15 @@ pub fn diagram_elements(
     rows
 }
 
-/// The picker index for `subject`: the row whose kind+key matches, else 0.
+/// The picker index for `subject`: the row that *is* that subject, else 0.
 /// Row 0 is the diagram, so that fallback -- taken for `Subject::None` and for
-/// any key with no matching row -- lands on the diagram itself, matching the
+/// any subject with no matching row -- lands on the diagram itself, matching the
 /// rule that the diagram is selected when nothing else is.
 pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
-    let (kind, key) = match subject {
-        Subject::Diagram(k) => (ElementKind::Diagram, k),
-        Subject::Classifier(k) => (ElementKind::Node, k),
-        Subject::Group(k) => (ElementKind::Group, k),
-        Subject::Edge(k) => (ElementKind::Edge, k),
-        Subject::BehaviorElement(k) => (ElementKind::BehaviorElement, k),
-        Subject::None => return 0,
-    };
-    rows.iter()
-        .position(|r| r.kind == kind && &r.key == key)
-        .unwrap_or(0)
-}
-
-/// Build the `Subject` a navigable reference points at. Total: every element
-/// kind is inspectable now that the diagram has its own subject.
-pub fn subject_from(key: &str, kind: ElementKind) -> Subject {
-    match kind {
-        ElementKind::Diagram => Subject::Diagram(key.to_string()),
-        ElementKind::Node => Subject::Classifier(key.to_string()),
-        ElementKind::Group => Subject::Group(key.to_string()),
-        ElementKind::Edge => Subject::Edge(key.to_string()),
-        ElementKind::BehaviorElement => Subject::BehaviorElement(key.to_string()),
+    if matches!(subject, Subject::None) {
+        return 0;
     }
+    rows.iter().position(|r| &r.subject == subject).unwrap_or(0)
 }
 
 /// A node's display title, falling back to its key.
@@ -342,7 +338,8 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         Subject::Diagram(key) => build_diagram_view(model, key),
         Subject::Classifier(key) => build_classifier_view(model, key),
         Subject::Group(name) => build_group_view(model, name),
-        Subject::Edge(id) => build_edge_view(model, id),
+        Subject::Edge(edge) => build_edge_view(model, edge),
+        Subject::FlowEdge(key) => build_flow_edge_view(model, key),
         Subject::BehaviorElement(key) => build_behavior_element_view(model, key),
     }
 }
@@ -601,8 +598,7 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
             other_label: node_title(model, far_key),
             role,
             multiplicity,
-            target_key: far_key.clone(),
-            target_kind: ElementKind::Node,
+            target: Subject::Classifier(far_key.clone()),
         });
     }
 
@@ -643,8 +639,7 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
         .members
         .iter()
         .map(|k| ElementRef {
-            key: k.clone(),
-            kind: ElementKind::Node,
+            subject: Subject::Classifier(k.clone()),
             label: node_title(model, k),
         })
         .collect();
@@ -663,102 +658,102 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
     })
 }
 
-fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
-    if let Some(edge) = model.flow_edges.iter().find(|edge| edge.key == id) {
-        let node_label = |key: &str| {
-            model
-                .activity_nodes
-                .iter()
-                .find(|node| node.key == key)
-                .map(|node| node.id.clone())
-                .unwrap_or_else(|| key.to_string())
-        };
-        let kind_label = match edge.kind {
-            waml::model::FlowEdgeKind::ControlFlow => "Control flow",
-            waml::model::FlowEdgeKind::ObjectFlow => "Object flow",
-        };
-        let traces = edge
-            .traces
-            .iter()
-            .map(|trace| {
-                let (status, navigation) = match &trace.target {
-                    waml::model::TraceTarget::InternalDocument { concept_id } => (
-                        TraceStatus::ResolvedInternal,
-                        Some(crate::navigation::NavigationTarget::Document {
-                            concept_id: concept_id.clone(),
-                            surface: None,
-                            fragment: None,
-                        }),
-                    ),
-                    waml::model::TraceTarget::InternalFragment {
-                        concept_id,
-                        fragment,
-                    } => (
-                        TraceStatus::ResolvedInternal,
-                        Some(crate::navigation::NavigationTarget::Document {
-                            concept_id: concept_id.clone(),
-                            surface: None,
-                            fragment: Some(fragment.clone()),
-                        }),
-                    ),
-                    waml::model::TraceTarget::Https { url } => (
-                        TraceStatus::ResolvedExternal,
-                        Some(crate::navigation::NavigationTarget::ExternalUrl(
-                            url.clone(),
-                        )),
-                    ),
-                    waml::model::TraceTarget::Unresolved { .. } => (TraceStatus::Unresolved, None),
-                    waml::model::TraceTarget::Invalid { .. } => (TraceStatus::Invalid, None),
-                };
-                TraceRow {
-                    label: trace.label.clone(),
-                    href: trace.href.clone(),
-                    status,
-                    navigation,
-                }
-            })
-            .collect();
-        let source_node = model
+/// An activity/state flow edge, found by the key the model stored on it.
+fn build_flow_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
+    let edge = model.flow_edges.iter().find(|edge| edge.key == id)?;
+    let node_label = |key: &str| {
+        model
             .activity_nodes
             .iter()
-            .find(|node| node.key == edge.from)
+            .find(|node| node.key == key)
             .map(|node| node.id.clone())
-            .unwrap_or_else(|| edge.from.clone());
-        return Some(InspectorView {
-            title: format!("{} → {}", node_label(&edge.from), node_label(&edge.to)),
-            kind_label: kind_label.to_string(),
-            profile: String::new(),
-            abstract_flag: false,
-            stereotypes: Vec::new(),
-            description: None,
-            attributes: Vec::new(),
-            members: Vec::new(),
-            associations: Vec::new(),
-            traces,
-            transition_selector: Some(waml::uml::TransitionSelector {
-                behavior: edge.behavior.clone(),
-                source_node,
-                occurrence: edge.source_occurrence,
-            }),
-        });
-    }
-    // Split an optional `#N` occurrence ordinal off the tail (see `edge_key`);
-    // its absence means the first (occurrence 0) edge of the pair.
-    let (pair, occ) = match id.rsplit_once('#') {
-        Some((pair, n)) => (pair, n.parse::<usize>().ok()?),
-        None => (id, 0),
+            .unwrap_or_else(|| key.to_string())
     };
-    let (src, tgt) = pair.split_once("->")?;
+    let kind_label = match edge.kind {
+        waml::model::FlowEdgeKind::ControlFlow => "Control flow",
+        waml::model::FlowEdgeKind::ObjectFlow => "Object flow",
+    };
+    let traces = edge
+        .traces
+        .iter()
+        .map(|trace| {
+            let (status, navigation) = match &trace.target {
+                waml::model::TraceTarget::InternalDocument { concept_id } => (
+                    TraceStatus::ResolvedInternal,
+                    Some(crate::navigation::NavigationTarget::Document {
+                        concept_id: concept_id.clone(),
+                        surface: None,
+                        fragment: None,
+                    }),
+                ),
+                waml::model::TraceTarget::InternalFragment {
+                    concept_id,
+                    fragment,
+                } => (
+                    TraceStatus::ResolvedInternal,
+                    Some(crate::navigation::NavigationTarget::Document {
+                        concept_id: concept_id.clone(),
+                        surface: None,
+                        fragment: Some(fragment.clone()),
+                    }),
+                ),
+                waml::model::TraceTarget::Https { url } => (
+                    TraceStatus::ResolvedExternal,
+                    Some(crate::navigation::NavigationTarget::ExternalUrl(
+                        url.clone(),
+                    )),
+                ),
+                waml::model::TraceTarget::Unresolved { .. } => (TraceStatus::Unresolved, None),
+                waml::model::TraceTarget::Invalid { .. } => (TraceStatus::Invalid, None),
+            };
+            TraceRow {
+                label: trace.label.clone(),
+                href: trace.href.clone(),
+                status,
+                navigation,
+            }
+        })
+        .collect();
+    let source_node = model
+        .activity_nodes
+        .iter()
+        .find(|node| node.key == edge.from)
+        .map(|node| node.id.clone())
+        .unwrap_or_else(|| edge.from.clone());
+    Some(InspectorView {
+        title: format!("{} → {}", node_label(&edge.from), node_label(&edge.to)),
+        kind_label: kind_label.to_string(),
+        profile: String::new(),
+        abstract_flag: false,
+        stereotypes: Vec::new(),
+        description: None,
+        attributes: Vec::new(),
+        members: Vec::new(),
+        associations: Vec::new(),
+        traces,
+        transition_selector: Some(waml::uml::TransitionSelector {
+            behavior: edge.behavior.clone(),
+            source_node,
+            occurrence: edge.source_occurrence,
+        }),
+    })
+}
+
+/// One `Model::edges` relationship, re-found from its structural identity: the
+/// `occurrence`-th edge with exactly these endpoints. `None` when the model no
+/// longer holds it (a re-projection dropped the relationship), which renders the
+/// empty state -- the same as any other subject that resolves to nothing.
+fn build_edge_view(model: &Model, subject: &EdgeSubject) -> Option<InspectorView> {
     let edge = model
         .edges
         .iter()
-        .filter(|e| e.source == src && e.target == tgt)
-        .nth(occ)?;
+        .filter(|e| e.source == subject.source && e.target == subject.target)
+        .nth(subject.occurrence)?;
     Some(InspectorView {
         title: format!(
             "{} \u{2192} {}",
-            node_title(model, src),
-            node_title(model, tgt)
+            node_title(model, &subject.source),
+            node_title(model, &subject.target)
         ),
         kind_label: edge.kind.as_str().to_string(),
         profile: String::new(),
@@ -1150,8 +1145,7 @@ mod tests {
     fn picker_rows_lead_with_the_diagram() {
         let model = mini();
         let rows = diagram_elements(&model, "d1", "Orders", &node_keys(&model));
-        assert_eq!(rows[0].kind, ElementKind::Diagram);
-        assert_eq!(rows[0].key, "d1");
+        assert_eq!(rows[0].subject, Subject::Diagram("d1".into()));
         assert_eq!(rows[0].label, "Orders");
     }
 
@@ -1162,7 +1156,7 @@ mod tests {
         let rows = diagram_elements(&model, "d1", "Orders", &keys);
         let node_rows: Vec<_> = rows
             .iter()
-            .filter(|r| r.kind == ElementKind::Node)
+            .filter(|r| matches!(r.subject, Subject::Classifier(_)))
             .collect();
         assert_eq!(node_rows.len(), keys.len());
     }
@@ -1176,11 +1170,11 @@ mod tests {
 
         let order_idx = rows
             .iter()
-            .position(|r| r.kind == ElementKind::Node && r.key == order)
+            .position(|r| r.subject == Subject::Classifier(order.clone()))
             .expect("Order node row present");
         // The Order->Customer edge is listed immediately after the Order node.
         let edge = &rows[order_idx + 1];
-        assert_eq!(edge.kind, ElementKind::Edge);
+        assert!(matches!(edge.subject, Subject::Edge(_)));
         assert_eq!(edge.label, "Order -> Customer");
     }
 
@@ -1192,8 +1186,7 @@ mod tests {
         let rows = diagram_elements(&model, "d1", "Orders", &keys);
 
         let idx = subject_to_index(&rows, &Subject::Classifier(customer.clone()));
-        assert_eq!(rows[idx].kind, ElementKind::Node);
-        assert_eq!(rows[idx].key, customer);
+        assert_eq!(rows[idx].subject, Subject::Classifier(customer));
     }
 
     #[test]
@@ -1206,7 +1199,7 @@ mod tests {
             0
         );
         // Row 0 is the diagram, so both fallbacks select the diagram itself.
-        assert_eq!(rows[0].kind, ElementKind::Diagram);
+        assert!(matches!(rows[0].subject, Subject::Diagram(_)));
     }
 
     #[test]
@@ -1215,7 +1208,7 @@ mod tests {
         let rows = diagram_elements(&model, "d1", "Orders", &node_keys(&model));
         let idx = subject_to_index(&rows, &Subject::Diagram("d1".into()));
         assert_eq!(idx, 0);
-        assert_eq!(rows[idx].kind, ElementKind::Diagram);
+        assert!(matches!(rows[idx].subject, Subject::Diagram(_)));
     }
 
     #[test]
@@ -1225,30 +1218,32 @@ mod tests {
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
 
         // Row 0 = diagram, row 1 = first (only) named group.
-        assert_eq!(rows[0].kind, ElementKind::Diagram);
-        assert_eq!(rows[1].kind, ElementKind::Group);
-        assert_eq!(rows[1].key, "Sales");
+        assert!(matches!(rows[0].subject, Subject::Diagram(_)));
+        assert_eq!(rows[1].subject, Subject::Group("Sales".into()));
         assert_eq!(rows[1].label, "Sales");
 
         // Groups precede nodes.
         let first_group = rows
             .iter()
-            .position(|r| r.kind == ElementKind::Group)
+            .position(|r| matches!(r.subject, Subject::Group(_)))
             .expect("a group row");
         let first_node = rows
             .iter()
-            .position(|r| r.kind == ElementKind::Node)
+            .position(|r| matches!(r.subject, Subject::Classifier(_)))
             .expect("a node row");
         assert!(first_group < first_node, "group rows come before node rows");
 
         // Exactly one named group; the implicit "" group is skipped.
-        let group_rows: Vec<_> = rows
+        let group_names: Vec<&str> = rows
             .iter()
-            .filter(|r| r.kind == ElementKind::Group)
+            .filter_map(|r| match &r.subject {
+                Subject::Group(name) => Some(name.as_str()),
+                _ => None,
+            })
             .collect();
-        assert_eq!(group_rows.len(), 1);
+        assert_eq!(group_names.len(), 1);
         assert!(
-            group_rows.iter().all(|r| !r.key.is_empty()),
+            group_names.iter().all(|n| !n.is_empty()),
             "the implicit unnamed group must be skipped"
         );
     }
@@ -1259,15 +1254,13 @@ mod tests {
         let view = build_view(&model, &Subject::Group("Sales".into())).unwrap();
         assert_eq!(view.title, "Sales");
         assert_eq!(view.kind_label, "Group");
-        // Members are ElementRefs: node kind, key = member key, label = node title.
+        // Members are ElementRefs: classifier subject, label = node title.
         let order = key_for(&model, "Order");
         let customer = key_for(&model, "Customer");
         assert_eq!(view.members.len(), 2);
-        assert_eq!(view.members[0].key, order);
-        assert_eq!(view.members[0].kind, ElementKind::Node);
+        assert_eq!(view.members[0].subject, Subject::Classifier(order));
         assert_eq!(view.members[0].label, "Order");
-        assert_eq!(view.members[1].key, customer);
-        assert_eq!(view.members[1].kind, ElementKind::Node);
+        assert_eq!(view.members[1].subject, Subject::Classifier(customer));
         assert_eq!(view.members[1].label, "Customer");
         assert!(view.attributes.is_empty());
         assert!(view.associations.is_empty());
@@ -1283,8 +1276,7 @@ mod tests {
         assert_eq!(view.associations.len(), 1);
         let assoc = &view.associations[0];
         // Outgoing Order->Customer: far endpoint is Customer.
-        assert_eq!(assoc.target_key, customer);
-        assert_eq!(assoc.target_kind, ElementKind::Node);
+        assert_eq!(assoc.target, Subject::Classifier(customer));
         assert_eq!(assoc.other_label, "Customer");
     }
 
@@ -1297,8 +1289,7 @@ mod tests {
         assert_eq!(view.associations.len(), 1);
         let assoc = &view.associations[0];
         // Incoming (Customer is the target): far endpoint is the source, Order.
-        assert_eq!(assoc.target_key, order);
-        assert_eq!(assoc.target_kind, ElementKind::Node);
+        assert_eq!(assoc.target, Subject::Classifier(order));
     }
 
     #[test]
@@ -1312,8 +1303,15 @@ mod tests {
         let model = mini();
         let order = key_for(&model, "Order");
         let customer = key_for(&model, "Customer");
-        let id = format!("{order}->{customer}");
-        let view = build_view(&model, &Subject::Edge(id)).unwrap();
+        let view = build_view(
+            &model,
+            &Subject::Edge(EdgeSubject {
+                source: order,
+                target: customer,
+                occurrence: 0,
+            }),
+        )
+        .unwrap();
         // Title carries both endpoint titles.
         assert!(
             view.title.contains("Order"),
@@ -1344,7 +1342,7 @@ mod tests {
         let model = &prepared.uml().projection;
         let edge = &model.flow_edges[0];
 
-        let view = build_view(model, &Subject::Edge(edge.key.clone())).unwrap();
+        let view = build_view(model, &Subject::FlowEdge(edge.key.clone())).unwrap();
 
         assert_eq!(view.title, "SignedOut → SignedIn");
         assert_eq!(view.kind_label, "Control flow");
@@ -1374,10 +1372,19 @@ mod tests {
         assert_eq!(view.transition_selector.unwrap().occurrence, 1);
     }
 
+    /// The first (occurrence 0) edge between two node keys.
+    fn edge_between(source: &str, target: &str) -> EdgeSubject {
+        EdgeSubject {
+            source: source.to_string(),
+            target: target.to_string(),
+            occurrence: 0,
+        }
+    }
+
     #[test]
     fn unknown_edge_yields_empty_state() {
         let model = mini();
-        assert!(build_view(&model, &Subject::Edge("a->b".into())).is_none());
+        assert!(build_view(&model, &Subject::Edge(edge_between("a", "b"))).is_none());
     }
 
     #[test]
@@ -1393,22 +1400,19 @@ mod tests {
         let model = mini_with_group();
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         let idx = subject_to_index(&rows, &Subject::Group("Sales".into()));
-        assert_eq!(rows[idx].kind, ElementKind::Group);
-        assert_eq!(rows[idx].key, "Sales");
+        assert_eq!(rows[idx].subject, Subject::Group("Sales".into()));
     }
 
     #[test]
     fn subject_to_index_resolves_edge_row() {
         let model = mini();
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
-        let edge_key = format!(
-            "{}->{}",
-            key_for(&model, "Order"),
-            key_for(&model, "Customer")
-        );
-        let idx = subject_to_index(&rows, &Subject::Edge(edge_key.clone()));
-        assert_eq!(rows[idx].kind, ElementKind::Edge);
-        assert_eq!(rows[idx].key, edge_key);
+        let subject = Subject::Edge(edge_between(
+            &key_for(&model, "Order"),
+            &key_for(&model, "Customer"),
+        ));
+        let idx = subject_to_index(&rows, &subject);
+        assert_eq!(rows[idx].subject, subject);
     }
 
     #[test]
@@ -1416,26 +1420,9 @@ mod tests {
         let model = mini();
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         assert_eq!(subject_to_index(&rows, &Subject::Group("Nope".into())), 0);
-        assert_eq!(subject_to_index(&rows, &Subject::Edge("x->y".into())), 0);
-    }
-
-    #[test]
-    fn subject_from_maps_each_kind() {
         assert_eq!(
-            subject_from("k", ElementKind::Node),
-            Subject::Classifier("k".into())
-        );
-        assert_eq!(
-            subject_from("g", ElementKind::Group),
-            Subject::Group("g".into())
-        );
-        assert_eq!(
-            subject_from("a->b", ElementKind::Edge),
-            Subject::Edge("a->b".into())
-        );
-        assert_eq!(
-            subject_from("d", ElementKind::Diagram),
-            Subject::Diagram("d".into())
+            subject_to_index(&rows, &Subject::Edge(edge_between("x", "y"))),
+            0
         );
     }
 
@@ -1470,17 +1457,13 @@ mod tests {
         let node = build_view(&model, &Subject::Classifier(customer)).expect("a classifier view");
         assert_eq!(node.profile, "");
 
-        let edge_id = format!(
-            "{}->{}",
-            key_for(&model, "Order"),
-            key_for(&model, "Customer")
-        );
+        let edge_id = edge_between(&key_for(&model, "Order"), &key_for(&model, "Customer"));
         let edge = build_view(&model, &Subject::Edge(edge_id)).expect("an edge view");
         assert_eq!(edge.profile, "");
     }
 
     /// `mini()` with two *parallel* Order->PaymentGateway edges of different
-    /// relationship kinds. The synthetic edge key must disambiguate them so each
+    /// relationship kinds. The edge subject must disambiguate them so each
     /// picker row resolves to (and projects) its own edge — not the first match.
     fn mini_with_parallel_edges() -> Model {
         use waml::model::{Edge, RelEnd, RelationshipKind};
@@ -1515,25 +1498,29 @@ mod tests {
         let gateway = key_for(&model, "PaymentGateway");
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
 
-        let pair_prefix = format!("{order}->{gateway}");
         let parallel: Vec<&ElementRow> = rows
             .iter()
-            .filter(|r| r.kind == ElementKind::Edge && r.key.starts_with(&pair_prefix))
+            .filter(|r| {
+                matches!(&r.subject, Subject::Edge(e) if e.source == order && e.target == gateway)
+            })
             .collect();
         assert_eq!(parallel.len(), 2, "two parallel Order->PaymentGateway rows");
 
-        // Distinct picker keys — else both rows collapse onto the first edge.
+        // Distinct subjects — else both rows collapse onto the first edge.
         assert_ne!(
-            parallel[0].key, parallel[1].key,
-            "parallel edges must have distinct picker keys"
+            parallel[0].subject, parallel[1].subject,
+            "parallel edges must have distinct picker subjects"
         );
 
-        // Each key resolves back to its own row and projects its own edge kind.
+        // Each subject resolves back to its own row and projects its own kind.
         let mut kinds = Vec::new();
         for r in &parallel {
-            let idx = subject_to_index(&rows, &Subject::Edge(r.key.clone()));
-            assert_eq!(rows[idx].key, r.key, "each key resolves to its own row");
-            let view = build_view(&model, &Subject::Edge(r.key.clone())).unwrap();
+            let idx = subject_to_index(&rows, &r.subject);
+            assert_eq!(
+                rows[idx].subject, r.subject,
+                "each subject resolves to its own row"
+            );
+            let view = build_view(&model, &r.subject).unwrap();
             kinds.push(view.kind_label);
         }
         assert!(
@@ -1543,6 +1530,125 @@ mod tests {
         assert!(
             kinds.contains(&"depends".to_string()),
             "one parallel edge projects `depends`, got {kinds:?}"
+        );
+    }
+
+    /// The kind/title/key of every edge row a diagram's picker lists, resolved
+    /// the way the panel resolves them: pick a row, project its subject.
+    fn edge_rows_as_projected(model: &Model, diagram_key: &str) -> Vec<(String, String)> {
+        diagram_elements(model, diagram_key, "D", &node_keys(model))
+            .iter()
+            .filter(|r| matches!(r.subject, Subject::Edge(_)))
+            .map(|r| {
+                let view = build_view(model, &r.subject)
+                    .unwrap_or_else(|| panic!("edge row {:?} projects nothing", r.label));
+                (view.title, view.kind_label)
+            })
+            .collect()
+    }
+
+    /// A node key is `okf::id_of(path)` -- the bundle path minus `.md`, with no
+    /// sanitization (`BundlePath::parse` rejects only `:`, absolute paths and
+    /// `.`/`..` segments). So a document may legitimately be named `a->b.md` or
+    /// `x#1.md`, and its node key then carries the exact punctuation the
+    /// picker's old synthetic `"src->tgt#N"` edge key was built from.
+    fn punctuated_model() -> Model {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "a->b.md",
+                "---\ntype: uml.Class\ntitle: Arrowy\n---\n# Arrowy\n\n## Relationships\n- associates [Plain](./plain.md)\n",
+            ),
+            (
+                "x#1.md",
+                "---\ntype: uml.Class\ntitle: Hashy\n---\n# Hashy\n\n## Relationships\n- depends [Plain](./plain.md)\n",
+            ),
+            (
+                "plain.md",
+                "---\ntype: uml.Class\ntitle: Plain\n---\n# Plain\n",
+            ),
+            (
+                "d.md",
+                "---\ntype: uml.ClassDiagram\ntitle: D\n---\n# D\n\n## Members\n- [Arrowy](./a->b.md)\n- [Plain](./plain.md)\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        prepared.uml().projection.clone()
+    }
+
+    /// The reachability premise for the two tests below: nothing between a
+    /// document name and a node key strips `->` or `#`.
+    #[test]
+    fn a_document_name_puts_arrow_and_hash_into_a_node_key() {
+        let model = punctuated_model();
+        let keys: Vec<&str> = model.nodes.iter().map(|n| n.key.as_str()).collect();
+        assert!(keys.contains(&"a->b"), "node keys: {keys:?}");
+        assert!(keys.contains(&"x#1"), "node keys: {keys:?}");
+        // And those keys reach `Model::edges` verbatim, which is what the
+        // picker turns into a subject.
+        let edges: Vec<(&str, &str)> = model
+            .edges
+            .iter()
+            .map(|e| (e.source.as_str(), e.target.as_str()))
+            .collect();
+        assert!(edges.contains(&("a->b", "plain")), "edges: {edges:?}");
+        assert!(edges.contains(&("x#1", "plain")), "edges: {edges:?}");
+    }
+
+    /// Regression: an edge whose endpoint key contains `->` or `#` used to mint
+    /// a picker key (`"a->b->plain"`, `"x#1->plain"`) that `build_edge_view`
+    /// could not parse back, so the panel silently showed the empty state for a
+    /// row that was right there in the list.
+    #[test]
+    fn punctuated_endpoint_keys_still_project_their_own_edge() {
+        let model = punctuated_model();
+        let projected = edge_rows_as_projected(&model, "d");
+        assert_eq!(
+            projected,
+            vec![
+                (
+                    "Arrowy \u{2192} Plain".to_string(),
+                    "associates".to_string()
+                ),
+                ("Hashy \u{2192} Plain".to_string(), "depends".to_string()),
+            ]
+        );
+    }
+
+    /// Regression, and the sharper half of the same defect: `a associates b->c`
+    /// and `a->b depends c` are different relationships between different pairs,
+    /// but both used to mint the picker key `"a->b->c"`. Parsing it back found
+    /// the *first* one, so the second row silently projected the wrong edge --
+    /// wrong endpoints, wrong relationship kind, no diagnostic.
+    #[test]
+    fn two_relationships_that_shared_a_synthetic_key_stay_distinct() {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "a.md",
+                "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Relationships\n- associates [BC](./b->c.md)\n",
+            ),
+            ("b->c.md", "---\ntype: uml.Class\ntitle: BC\n---\n# BC\n"),
+            (
+                "a->b.md",
+                "---\ntype: uml.Class\ntitle: AB\n---\n# AB\n\n## Relationships\n- depends [C](./c.md)\n",
+            ),
+            ("c.md", "---\ntype: uml.Class\ntitle: C\n---\n# C\n"),
+            (
+                "d.md",
+                "---\ntype: uml.ClassDiagram\ntitle: D\n---\n# D\n\n## Members\n- [A](./a.md)\n- [BC](./b->c.md)\n- [AB](./a->b.md)\n- [C](./c.md)\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let model = prepared.uml().projection.clone();
+
+        let projected = edge_rows_as_projected(&model, "d");
+        assert_eq!(
+            projected,
+            vec![
+                ("A \u{2192} BC".to_string(), "associates".to_string()),
+                ("AB \u{2192} C".to_string(), "depends".to_string()),
+            ]
         );
     }
 }

@@ -16,7 +16,7 @@ use crate::doc_view::{
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
-use crate::inspector::{diagram_elements, subject_from, Subject};
+use crate::inspector::{diagram_elements, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
 use crate::view_history::ViewAnchor;
@@ -586,23 +586,28 @@ impl DocView for ClassDiagramView {
         // Reference-card navigation: a member/association card was clicked.
         // Repoint the inspector AND select the node on the canvas (edge keys
         // repoint only -- no node to select).
-        if let Some((key, kind)) = body
+        if let Some(subject) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|mut inspector| inspector.navigate(cx, actions))
         {
-            let subject = subject_from(&key, kind);
+            let node_key = match &subject {
+                Subject::Classifier(key) => Some(key.clone()),
+                _ => None,
+            };
             if let Some(mut inspector) = body
                 .inspector(cx)
                 .borrow_mut::<crate::inspector_panel::Inspector>()
             {
                 inspector.set_subject(cx, model, subject);
             }
-            if let Some(mut canvas) = body
-                .canvas(cx)
-                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-            {
-                canvas.select_by_key(cx, &key);
+            if let Some(key) = node_key {
+                if let Some(mut canvas) = body
+                    .canvas(cx)
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                {
+                    canvas.select_by_key(cx, &key);
+                }
             }
             out.break_merge_group = true;
             return out;
@@ -1777,9 +1782,8 @@ mod tests {
             body.inspector(cx)
                 .borrow::<crate::inspector_panel::Inspector>()
                 .unwrap()
-                .subject_key_for_test()
-                .as_deref(),
-            Some("customer")
+                .subject_for_test(),
+            &crate::inspector::Subject::Classifier("customer".into())
         );
         assert_eq!(
             body.selection_toolbar(cx)
@@ -1819,9 +1823,8 @@ mod tests {
             body.inspector(cx)
                 .borrow::<crate::inspector_panel::Inspector>()
                 .unwrap()
-                .subject_key_for_test()
-                .as_deref(),
-            Some("orders-diagram")
+                .subject_for_test(),
+            &crate::inspector::Subject::Diagram("orders-diagram".into())
         );
         assert_eq!(
             body.selection_toolbar(cx)

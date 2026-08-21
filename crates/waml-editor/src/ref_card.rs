@@ -14,7 +14,7 @@
 
 use crate::cursor;
 use crate::icons::{Icon, IconSet};
-use crate::inspector::ElementKind;
+use crate::inspector::Subject;
 use makepad_widgets::*;
 
 script_mod! {
@@ -111,9 +111,7 @@ pub struct RefCardView {
     icon: Option<Icon>,
     /// The navigate target this row points at (set per draw by the parent).
     #[rust]
-    nav_key: String,
-    #[rust]
-    nav_kind: Option<ElementKind>,
+    nav_subject: Option<Subject>,
     /// Pointer-over, self-managed from FingerHoverIn/Out (drives the cursor).
     #[rust]
     hovered: bool,
@@ -171,17 +169,16 @@ impl RefCardView {
             .set_visible(cx, !s.is_empty());
         self.view.label(cx, ids!(textcol.meta)).set_text(cx, s);
     }
-    pub fn set_target(&mut self, key: &str, kind: ElementKind) {
-        self.nav_key = key.to_string();
-        self.nav_kind = Some(kind);
+    pub fn set_target(&mut self, subject: Subject) {
+        self.nav_subject = Some(subject);
     }
-    /// `Some((key, kind))` when this row emitted a click in `actions`.
-    pub fn nav_target(&self, actions: &Actions) -> Option<(String, ElementKind)> {
+    /// `Some(subject)` when this row emitted a click in `actions`.
+    pub fn nav_target(&self, actions: &Actions) -> Option<Subject> {
         let clicked = actions
             .find_widget_action(self.widget_uid())
             .is_some_and(|a| matches!(a.cast(), RefCardViewAction::Clicked));
         if clicked {
-            self.nav_kind.map(|k| (self.nav_key.clone(), k))
+            self.nav_subject.clone()
         } else {
             None
         }
@@ -204,12 +201,12 @@ impl RefCardViewRef {
             i.set_meta(cx, s);
         }
     }
-    pub fn set_target(&self, key: &str, kind: ElementKind) {
+    pub fn set_target(&self, subject: Subject) {
         if let Some(mut i) = self.borrow_mut() {
-            i.set_target(key, kind);
+            i.set_target(subject);
         }
     }
-    pub fn nav_target(&self, actions: &Actions) -> Option<(String, ElementKind)> {
+    pub fn nav_target(&self, actions: &Actions) -> Option<Subject> {
         self.borrow().and_then(|i| i.nav_target(actions))
     }
 }

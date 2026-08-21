@@ -15,7 +15,7 @@ use crate::doc_view::{
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
-use crate::inspector::{ElementKind, ElementRow, Subject};
+use crate::inspector::{ElementRow, Subject};
 use crate::node_style::AccentBucket;
 use waml::analysis::ProjectionFreshness;
 use waml::diagnostic::Diagnostic;
@@ -454,7 +454,7 @@ fn subject_for_target(
                 }
             }
         }
-        BehaviorTarget::FlowEdge(key) => candidates.push(Subject::Edge(key.clone())),
+        BehaviorTarget::FlowEdge(key) => candidates.push(Subject::FlowEdge(key.clone())),
         BehaviorTarget::Lifeline(id) => {
             if let Some(ref_) = lifeline_ref_key(interaction, id) {
                 candidates.push(Subject::Classifier(ref_));
@@ -512,34 +512,22 @@ fn behavior_elements(
         interaction,
     );
     let mut rows = Vec::new();
-    match doc_subject {
-        Subject::Diagram(key) => rows.push(ElementRow {
-            key,
+    if let subject @ (Subject::Diagram(_) | Subject::Classifier(_)) = doc_subject {
+        rows.push(ElementRow {
+            subject,
             label: title,
-            kind: ElementKind::Diagram,
-        }),
-        Subject::Classifier(key) => rows.push(ElementRow {
-            key,
-            label: title,
-            kind: ElementKind::Node,
-        }),
-        _ => {}
+        });
     }
 
     let mut push_participant = |target: BehaviorTarget, label: String| {
-        if let Subject::Classifier(key) =
-            subject_for_target(model, &target, doc_key, flow, interaction)
-        {
+        let subject = subject_for_target(model, &target, doc_key, flow, interaction);
+        if matches!(subject, Subject::Classifier(_)) {
             // A participant that fell through to the document subject is not a
             // participant row -- it would duplicate row 0.
-            if rows.iter().any(|r| r.key == key) {
+            if rows.iter().any(|r| r.subject == subject) {
                 return;
             }
-            rows.push(ElementRow {
-                key,
-                label,
-                kind: ElementKind::Node,
-            });
+            rows.push(ElementRow { subject, label });
         }
     };
 
@@ -586,17 +574,18 @@ fn behavior_elements(
         };
         for edge in &doc.edges {
             rows.push(ElementRow {
-                key: behavior_element_key(doc_key, &edge.id.to_string()),
+                subject: Subject::BehaviorElement(behavior_element_key(
+                    doc_key,
+                    &edge.id.to_string(),
+                )),
                 label: crate::inspector::message_label(edge, &lifeline_title),
-                kind: ElementKind::BehaviorElement,
             });
         }
         for node in &doc.nodes {
             if let SeqNode::Fragment { id, kind, .. } = node {
                 rows.push(ElementRow {
-                    key: behavior_element_key(doc_key, id),
+                    subject: Subject::BehaviorElement(behavior_element_key(doc_key, id)),
                     label: kind.as_str().to_string(),
-                    kind: ElementKind::BehaviorElement,
                 });
             }
         }
