@@ -34,7 +34,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C3 | Command palette | 3 | 8 | `actions` (8) | open |
 | C8 | Zoom | 3 | 8 | `actions` (8) | **extracted** (`zoom::Zoom`) |
 | C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | open |
-| C10 | Context-menu subject | 2 | 5 | `actions` (5) | open |
+| C10 | Context-menu subject | 2 | 5 | `actions` (5) | **extracted** (`ContextMenuSubject`) |
 
 ### C1 — Dock chrome (11 fields) — **extracted**
 
@@ -162,6 +162,7 @@ Runners-up and why not:
   generation logic, which is the subtlest thing in the app module. Worth doing;
   not worth doing first.
 * **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
+  C8 and C10 are done; **C3 Palette is the next one to take.**
   Cheap, but they leave the shape of the problem untouched.
 
 Two fields did not survive the move, both write-only records that no code read:
