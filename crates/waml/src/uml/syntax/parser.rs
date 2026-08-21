@@ -76,8 +76,30 @@ pub(super) fn parse(
 ) -> Arc<SyntaxTree<UmlLanguage>> {
     let factory = GreenFactory::<UmlLanguage>::new();
     let source = text.shared();
-    let descriptors =
-        islands(text.len(), structure).expect("markdown structure has ordered ranges");
+    // `islands` refuses a structure map whose island ranges are unordered,
+    // reversed, or past the end of the source. That is an invariant of the
+    // markdown projection rather than of the document, but the projection reads
+    // adversarial content too, so asserting it here made a projection defect
+    // kill whichever host was parsing -- the LSP, the editor, or the CLI.
+    //
+    // `compose_full_from_islands` already treats the very same `None` as an
+    // ordinary failure and lets it surface as a typed `Specialization` error,
+    // so match that instead of panicking: hand back a tree that owns the whole
+    // source as plain markdown and claims no UML sections. It reproduces its
+    // source byte for byte, which is all the rest of the pipeline demands, and
+    // a document with no UML sections is a shape every consumer already knows.
+    let Some(descriptors) = islands(text.len(), structure) else {
+        let root = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [
+                    raw(&factory, &text, 0, text.len().to_usize()),
+                    GreenElement::Token(factory.missing_token(UmlSyntaxKind::EndOfFileToken)),
+                ],
+            )
+            .built();
+        return Arc::new(SyntaxTree::new(root, Vec::new().into(), structure.dialect));
+    };
     let mut children = Vec::with_capacity(descriptors.len() + 1);
     let mut diagnostics = Vec::new();
     for island in descriptors {
@@ -93,7 +115,7 @@ pub(super) fn parse(
     children.push(GreenElement::Token(
         factory.missing_token(UmlSyntaxKind::EndOfFileToken),
     ));
-    let root = factory.node(UmlSyntaxKind::Root, children).unwrap();
+    let root = factory.node(UmlSyntaxKind::Root, children).built();
     Arc::new(SyntaxTree::new(root, diagnostics.into(), structure.dialect))
 }
 
@@ -123,7 +145,7 @@ pub(super) fn parse_island_element(
             structure,
             diagnostics,
         )));
-        return GreenElement::Node(factory.node(island.kind, section).unwrap());
+        return GreenElement::Node(factory.node(island.kind, section).built());
     }
     if island.kind == UmlSyntaxKind::MessagesSection {
         section.extend(sequence_items(
@@ -135,7 +157,7 @@ pub(super) fn parse_island_element(
             structure,
             diagnostics,
         ));
-        return GreenElement::Node(factory.node(island.kind, section).unwrap());
+        return GreenElement::Node(factory.node(island.kind, section).built());
     }
     if island.kind == UmlSyntaxKind::MembersSection {
         section.extend(member_items(
@@ -147,7 +169,7 @@ pub(super) fn parse_island_element(
             structure,
             diagnostics,
         ));
-        return GreenElement::Node(factory.node(island.kind, section).unwrap());
+        return GreenElement::Node(factory.node(island.kind, section).built());
     }
     for (line_start, line_end) in lines_between(source, content_start, content_end) {
         let item_line = confirmed_list_item_line(structure, line_start)
@@ -204,7 +226,7 @@ pub(super) fn parse_island_element(
             section.push(raw(factory, text, line_start, line_end));
         }
     }
-    GreenElement::Node(factory.node(island.kind, section).unwrap())
+    GreenElement::Node(factory.node(island.kind, section).built())
 }
 
 fn member_group_children(
@@ -278,7 +300,7 @@ fn member_items(
         roots: &mut Vec<GreenElement<UmlLanguage>>,
     ) {
         let group = stack.pop().expect("group stack");
-        let node = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, group.children).unwrap());
+        let node = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, group.children).built());
         if let Some(parent) = stack.last_mut() {
             parent.children.push(node)
         } else {
@@ -347,7 +369,7 @@ fn member_items(
     });
     if has_root_items || first_group.is_none() {
         let explicit_groups = roots.split_off(root_end);
-        let implicit = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, roots).unwrap());
+        let implicit = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, roots).built());
         roots = vec![implicit];
         roots.extend(explicit_groups);
     }
@@ -373,7 +395,7 @@ fn flow_block(
         if *have_node {
             roots.push(GreenElement::Node(
                 f.node(UmlSyntaxKind::FlowNode, std::mem::take(current))
-                    .unwrap(),
+                    .built(),
             ));
             *have_node = false;
         }
@@ -466,7 +488,7 @@ fn flow_block(
         line_index = next_index;
     }
     close(&mut current, &mut roots, &mut have_node);
-    f.node(UmlSyntaxKind::FlowBlock, roots).unwrap()
+    f.node(UmlSyntaxKind::FlowBlock, roots).built()
 }
 
 #[derive(Clone, Copy)]
@@ -715,7 +737,7 @@ fn gate_line(
     }
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Gate, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Gate, children).built())
 }
 
 fn interaction_use(
@@ -829,10 +851,9 @@ fn interaction_use(
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
     children.push(GreenElement::Node(
-        f.node(UmlSyntaxKind::InteractionBindings, bindings)
-            .unwrap(),
+        f.node(UmlSyntaxKind::InteractionBindings, bindings).built(),
     ));
-    GreenElement::Node(f.node(UmlSyntaxKind::InteractionUse, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::InteractionUse, children).built())
 }
 
 fn binding_line(
@@ -947,7 +968,7 @@ fn binding_line(
     }
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Binding, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Binding, children).built())
 }
 
 fn lifeline_line(
@@ -967,13 +988,13 @@ fn lifeline_line(
         let leading: Vec<_> = (start < lead)
             .then(|| {
                 f.trivia(TriviaKind::Whitespace, slice(text, start, lead))
-                    .unwrap()
+                    .built()
             })
             .into_iter()
             .collect();
         GreenElement::Token(
             f.missing_token_with_leading(UmlSyntaxKind::BulletToken, leading)
-                .unwrap(),
+                .built(),
         )
     }];
     let mut p = skip_ws(source, bullet_end, content_end);
@@ -1040,13 +1061,13 @@ fn lifeline_line(
         let leading: Vec<_> = (p < as_start)
             .then(|| {
                 f.trivia(TriviaKind::Whitespace, slice(text, p, as_start))
-                    .unwrap()
+                    .built()
             })
             .into_iter()
             .collect();
         children.push(GreenElement::Token(
             f.missing_token_with_leading(UmlSyntaxKind::AsToken, leading)
-                .unwrap(),
+                .built(),
         ));
         children.push(slot(
             f,
@@ -1076,7 +1097,7 @@ fn lifeline_line(
     };
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, p, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Lifeline, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Lifeline, children).built())
 }
 
 fn recovery_line(
@@ -1104,16 +1125,7 @@ fn recovery_line_at(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     diags.push(diag(code, diagnostic_start, diagnostic_end, message));
-    GreenElement::Node(
-        f.node(
-            UmlSyntaxKind::SkippedTokensSyntax,
-            [GreenElement::Token(
-                f.bad_token(UmlSyntaxKind::BadToken, slice(text, start, end), code)
-                    .unwrap(),
-            )],
-        )
-        .unwrap(),
-    )
+    skipped_tokens(f, text, start, start, end, code)
 }
 
 fn flow_heading(
@@ -1176,7 +1188,7 @@ fn flow_heading(
             diags,
         );
         children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::FlowIdentity, [link]).unwrap(),
+            f.node(UmlSyntaxKind::FlowIdentity, [link]).built(),
         ));
         p = next;
     } else if p < content_end {
@@ -1196,7 +1208,7 @@ fn flow_heading(
                     UmlSyntaxKind::IdentityToken,
                 )],
             )
-            .unwrap(),
+            .built(),
         ));
         p = content_end;
     } else {
@@ -1207,7 +1219,7 @@ fn flow_heading(
                     f.missing_token(UmlSyntaxKind::IdentityToken),
                 )],
             )
-            .unwrap(),
+            .built(),
         ));
         if !matches!(kind, Some("initial" | "final")) {
             diags.push(diag(
@@ -1276,7 +1288,7 @@ fn flow_value_line(
         },
     ));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Value, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Value, children).built())
 }
 
 fn flow_line(
@@ -1504,7 +1516,7 @@ fn flow_internal(
     }
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, at, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::FlowInternal, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::FlowInternal, children).built())
 }
 
 fn flow_transition(
@@ -1541,7 +1553,7 @@ fn flow_transition(
                         token(f, text, owned, expr, q, UmlSyntaxKind::TriggerToken),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             owned = q;
             p = skip_ws(source, q, content_end);
@@ -1554,7 +1566,7 @@ fn flow_transition(
                         GreenElement::Token(f.missing_token(UmlSyntaxKind::TriggerToken)),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             p = expr;
             valid = false;
@@ -1568,7 +1580,7 @@ fn flow_transition(
                     GreenElement::Token(f.missing_token(UmlSyntaxKind::TriggerToken)),
                 ],
             )
-            .unwrap(),
+            .built(),
         ));
     }
     if keyword_at(source, p, content_end, "when") {
@@ -1584,7 +1596,7 @@ fn flow_transition(
                         token(f, text, owned, expr, q, UmlSyntaxKind::GuardToken),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             owned = q;
             p = skip_ws(source, q, content_end);
@@ -1597,7 +1609,7 @@ fn flow_transition(
                         GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             p = expr;
             valid = false;
@@ -1611,7 +1623,7 @@ fn flow_transition(
                     GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
                 ],
             )
-            .unwrap(),
+            .built(),
         ));
         owned = p + 4;
         p = skip_ws(source, p + 4, content_end);
@@ -1624,7 +1636,7 @@ fn flow_transition(
                     GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
                 ],
             )
-            .unwrap(),
+            .built(),
         ));
     }
     if keyword_at(source, p, content_end, "transitions") {
@@ -1710,7 +1722,7 @@ fn flow_transition(
             diags,
         );
         children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::FlowCarries, [keyword, link]).unwrap(),
+            f.node(UmlSyntaxKind::FlowCarries, [keyword, link]).built(),
         ));
         owned = next;
         valid &= link_start < link_end && source.as_bytes()[link_start] == b'[';
@@ -1724,7 +1736,7 @@ fn flow_transition(
                     missing_link(f),
                 ],
             )
-            .unwrap(),
+            .built(),
         ));
     }
     if p < content_end && source.as_bytes()[p] == b':' {
@@ -1740,7 +1752,7 @@ fn flow_transition(
                         token(f, text, owned, expr, q, UmlSyntaxKind::EffectToken),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             owned = q;
             p = q;
@@ -1753,7 +1765,7 @@ fn flow_transition(
                         GreenElement::Token(f.missing_token(UmlSyntaxKind::EffectToken)),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             p = expr;
             valid = false;
@@ -1767,7 +1779,7 @@ fn flow_transition(
                     GreenElement::Token(f.missing_token(UmlSyntaxKind::EffectToken)),
                 ],
             )
-            .unwrap(),
+            .built(),
         ));
     }
     p = skip_ws(source, p, content_end);
@@ -1794,7 +1806,7 @@ fn flow_transition(
         }
     }
     children.push(GreenElement::Node(
-        f.node(UmlSyntaxKind::FlowTraces, trace_children).unwrap(),
+        f.node(UmlSyntaxKind::FlowTraces, trace_children).built(),
     ));
     let recovery = if p < content_end {
         let recovery = skipped(
@@ -1830,7 +1842,7 @@ fn flow_transition(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    GreenElement::Node(f.node(UmlSyntaxKind::FlowTransition, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::FlowTransition, children).built())
 }
 
 fn flow_trace_clause(
@@ -1875,7 +1887,7 @@ fn flow_trace_clause(
                 UmlSyntaxKind::FlowTrace,
                 [keyword, link, behavior_recovery(f, recovery)],
             )
-            .unwrap(),
+            .built(),
         ),
         end,
         valid,
@@ -1923,7 +1935,7 @@ fn sequence_fragment(
     }
     children.push(behavior_recovery(f, None));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::SequenceFragment, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::SequenceFragment, children).built())
 }
 
 fn sequence_operand(
@@ -2045,7 +2057,7 @@ fn sequence_operand(
     }
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, p, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::SequenceOperand, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::SequenceOperand, children).built())
 }
 
 fn sequence_message(
@@ -2132,7 +2144,7 @@ fn sequence_message(
     }
     children.push(behavior_recovery(f, tail.recovery));
     push_behavior_newline(f, text, &mut children, tail.end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).built())
 }
 
 struct MessageTail {
@@ -2728,7 +2740,7 @@ fn malformed_message(
     ));
     children.push(behavior_recovery(f, recovery));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
-    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).built())
 }
 
 fn unsupported_message(
@@ -2862,16 +2874,7 @@ fn skipped(
     end: usize,
     code: UmlSyntaxDiagnosticCode,
 ) -> GreenElement<UmlLanguage> {
-    GreenElement::Node(
-        f.node(
-            UmlSyntaxKind::SkippedTokensSyntax,
-            [GreenElement::Token(
-                f.bad_token(UmlSyntaxKind::BadToken, slice(text, start, end), code)
-                    .unwrap(),
-            )],
-        )
-        .unwrap(),
-    )
+    skipped_tokens(f, text, start, start, end, code)
 }
 
 fn slot(
@@ -2879,7 +2882,7 @@ fn slot(
     kind: UmlSyntaxKind,
     child: GreenElement<UmlLanguage>,
 ) -> GreenElement<UmlLanguage> {
-    GreenElement::Node(f.node(kind, [child]).unwrap())
+    GreenElement::Node(f.node(kind, [child]).built())
 }
 
 fn missing_link(f: &GreenFactory<UmlLanguage>) -> GreenElement<UmlLanguage> {
@@ -2895,7 +2898,7 @@ fn missing_link(f: &GreenFactory<UmlLanguage>) -> GreenElement<UmlLanguage> {
                 GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
             ],
         )
-        .unwrap(),
+        .built(),
     )
 }
 
@@ -3050,19 +3053,13 @@ fn simple_item(
         children.push(link);
         let trailing = skip_ws(source, next, content_end);
         if trailing < content_end {
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::SkippedTokensSyntax,
-                    [GreenElement::Token(
-                        f.bad_token(
-                            UmlSyntaxKind::BadToken,
-                            slice(text, next, content_end),
-                            UmlSyntaxDiagnosticCode::UnexpectedToken,
-                        )
-                        .unwrap(),
-                    )],
-                )
-                .unwrap(),
+            children.push(skipped_tokens(
+                f,
+                text,
+                next,
+                next,
+                content_end,
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
             ));
             diags.push(diag(
                 UmlSyntaxDiagnosticCode::UnexpectedToken,
@@ -3128,7 +3125,7 @@ fn simple_item(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    Some(f.node(kind, children).unwrap())
+    Some(f.node(kind, children).built())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3221,26 +3218,13 @@ fn layout_statement(
             })));
             // As with a lexed atom, the gap in front of the unlexable bytes is
             // leading trivia so the recovery node's range starts on them.
-            let leading = (token_start < at)
-                .then(|| {
-                    f.trivia(TriviaKind::Whitespace, slice(text, token_start, at))
-                        .unwrap()
-                })
-                .into_iter();
-            children.push(GreenElement::Node(
-                f.node(
-                    UmlSyntaxKind::SkippedTokensSyntax,
-                    [GreenElement::Token(
-                        f.bad_token_with_leading(
-                            UmlSyntaxKind::BadToken,
-                            slice(text, at, next),
-                            leading,
-                            UmlSyntaxDiagnosticCode::UnexpectedToken,
-                        )
-                        .unwrap(),
-                    )],
-                )
-                .unwrap(),
+            children.push(skipped_tokens(
+                f,
+                text,
+                token_start,
+                at,
+                next,
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
             ));
         } else {
             // The gap before the atom is leading trivia, not part of the atom.
@@ -3277,7 +3261,7 @@ fn layout_statement(
                                     UmlSyntaxKind::DirectionClause,
                                     atoms[join.clone()].iter().cloned(),
                                 )
-                                .unwrap(),
+                                .built(),
                             ),
                             layout_anchored_node(
                                 f,
@@ -3286,7 +3270,7 @@ fn layout_statement(
                             ),
                         ],
                     )
-                    .unwrap(),
+                    .built(),
                 ));
             }
             Ok(LayoutShape::Placement {
@@ -3306,12 +3290,12 @@ fn layout_statement(
                                 UmlSyntaxKind::DirectionClause,
                                 atoms[direction.clone()].iter().cloned(),
                             )
-                            .unwrap(),
+                            .built(),
                         ));
                     }
                 }
                 children.push(GreenElement::Node(
-                    f.node(UmlSyntaxKind::LayoutPlacement, slots).unwrap(),
+                    f.node(UmlSyntaxKind::LayoutPlacement, slots).built(),
                 ));
             }
             Ok(LayoutShape::Standalone(operand)) => {
@@ -3324,7 +3308,7 @@ fn layout_statement(
                             &atom_words[operand],
                         )],
                     )
-                    .unwrap(),
+                    .built(),
                 ));
             }
             Err(error) => {
@@ -3343,8 +3327,7 @@ fn layout_statement(
     if children.len() == 1 {
         let bullet = children.pop().expect("layout bullet");
         children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::SkippedTokensSyntax, [bullet])
-                .unwrap(),
+            f.node(UmlSyntaxKind::SkippedTokensSyntax, [bullet]).built(),
         ));
         children.push(GreenElement::Token(
             f.missing_token(UmlSyntaxKind::LayoutWordToken),
@@ -3366,7 +3349,7 @@ fn layout_statement(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    f.node(UmlSyntaxKind::LayoutStatement, children).unwrap()
+    f.node(UmlSyntaxKind::LayoutStatement, children).built()
 }
 
 #[derive(Clone, Debug)]
@@ -3818,7 +3801,7 @@ fn append_layout_recovery(
                 UmlSyntaxKind::SkippedTokensSyntax,
                 atoms[from..at].iter().cloned(),
             )
-            .unwrap(),
+            .built(),
         ));
     }
     children.push(GreenElement::Token(f.missing_token(error.missing)));
@@ -3828,7 +3811,7 @@ fn append_layout_recovery(
                 UmlSyntaxKind::SkippedTokensSyntax,
                 atoms[at..].iter().cloned(),
             )
-            .unwrap(),
+            .built(),
         ));
     }
 }
@@ -3860,7 +3843,7 @@ fn layout_operand_node(
             .unwrap_or(tail.len());
         let hints = tail.split_off(hint_offset.min(tail.len()));
         children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::Axis, tail).unwrap(),
+            f.node(UmlSyntaxKind::Axis, tail).built(),
         ));
         if !hints.is_empty() {
             children.push(layout_hint_clause_node(
@@ -3876,7 +3859,7 @@ fn layout_operand_node(
             &words[hint_at.unwrap_or(words.len())..],
         ));
     }
-    GreenElement::Node(f.node(UmlSyntaxKind::Operand, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Operand, children).built())
 }
 
 fn layout_ref_node(
@@ -3904,7 +3887,7 @@ fn layout_ref_node(
         && atoms.len() >= 3
     {
         let mut children = vec![
-            GreenElement::Node(f.node(UmlSyntaxKind::Axis, [atoms[0].clone()]).unwrap()),
+            GreenElement::Node(f.node(UmlSyntaxKind::Axis, [atoms[0].clone()]).built()),
             atoms[1].clone(),
         ];
         let mut cursor = LayoutShapeCursor { words, pos: 2 };
@@ -3924,10 +3907,10 @@ fn layout_ref_node(
         children
     } else {
         vec![GreenElement::Node(
-            f.node(UmlSyntaxKind::NameRef, atoms).unwrap(),
+            f.node(UmlSyntaxKind::NameRef, atoms).built(),
         )]
     };
-    GreenElement::Node(f.node(UmlSyntaxKind::OperandRef, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::OperandRef, children).built())
 }
 
 fn layout_hint_clause_node(
@@ -3961,10 +3944,10 @@ fn layout_hint_clause_node(
                 f.node(
                     UmlSyntaxKind::Hint,
                     [GreenElement::Node(
-                        f.node(kind, atoms[start..end].iter().cloned()).unwrap(),
+                        f.node(kind, atoms[start..end].iter().cloned()).built(),
                     )],
                 )
-                .unwrap(),
+                .built(),
             ));
         }
         if separator {
@@ -3972,7 +3955,7 @@ fn layout_hint_clause_node(
             start = end + 1;
         }
     }
-    GreenElement::Node(f.node(UmlSyntaxKind::HintClause, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::HintClause, children).built())
 }
 
 fn layout_anchored_node(
@@ -3988,14 +3971,14 @@ fn layout_anchored_node(
         vec![
             GreenElement::Node(
                 f.node(UmlSyntaxKind::Edge, atoms[..2].iter().cloned())
-                    .unwrap(),
+                    .built(),
             ),
             layout_operand_node(f, atoms[2..].to_vec(), &words[2..]),
         ]
     } else {
         vec![layout_operand_node(f, atoms, words)]
     };
-    GreenElement::Node(f.node(UmlSyntaxKind::Anchored, children).unwrap())
+    GreenElement::Node(f.node(UmlSyntaxKind::Anchored, children).built())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4204,7 +4187,7 @@ fn inline_instance(
             p = q;
         }
         c.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::InlineSlot, slot).unwrap(),
+            f.node(UmlSyntaxKind::InlineSlot, slot).built(),
         ));
         slots += 1;
         keyword_leading = p;
@@ -4240,26 +4223,13 @@ fn inline_instance(
     if p < content_end {
         // The gap the scan skipped before giving up belongs to the recovery
         // node as leading trivia; nothing after it would ever claim it.
-        let leading = (keyword_leading < p)
-            .then(|| {
-                f.trivia(TriviaKind::Whitespace, slice(text, keyword_leading, p))
-                    .unwrap()
-            })
-            .into_iter();
-        c.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::SkippedTokensSyntax,
-                [GreenElement::Token(
-                    f.bad_token_with_leading(
-                        UmlSyntaxKind::BadToken,
-                        slice(text, p, content_end),
-                        leading,
-                        UmlSyntaxDiagnosticCode::UnexpectedToken,
-                    )
-                    .unwrap(),
-                )],
-            )
-            .unwrap(),
+        c.push(skipped_tokens(
+            f,
+            text,
+            keyword_leading,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
         ));
     }
     if content_end < end {
@@ -4272,7 +4242,7 @@ fn inline_instance(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    f.node(UmlSyntaxKind::InlineInstance, c).unwrap()
+    f.node(UmlSyntaxKind::InlineInstance, c).built()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4380,7 +4350,7 @@ fn relationship(
             p = q;
         }
         c.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::RelationshipName, name).unwrap(),
+            f.node(UmlSyntaxKind::RelationshipName, name).built(),
         ));
         suffix_leading = p;
         p = skip_ws(source, p, content_end);
@@ -4429,26 +4399,13 @@ fn relationship(
         suffix_leading = p;
     }
     if p < content_end {
-        let leading = (suffix_leading < p)
-            .then(|| {
-                f.trivia(TriviaKind::Whitespace, slice(text, suffix_leading, p))
-                    .unwrap()
-            })
-            .into_iter();
-        c.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::SkippedTokensSyntax,
-                [GreenElement::Token(
-                    f.bad_token_with_leading(
-                        UmlSyntaxKind::BadToken,
-                        slice(text, p, content_end),
-                        leading,
-                        UmlSyntaxDiagnosticCode::UnexpectedToken,
-                    )
-                    .unwrap(),
-                )],
-            )
-            .unwrap(),
+        c.push(skipped_tokens(
+            f,
+            text,
+            suffix_leading,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
         ));
         diags.push(diag(
             UmlSyntaxDiagnosticCode::UnexpectedToken,
@@ -4467,7 +4424,7 @@ fn relationship(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    f.node(UmlSyntaxKind::Relationship, c).unwrap()
+    f.node(UmlSyntaxKind::Relationship, c).built()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4556,7 +4513,7 @@ fn relationship_link(
                                     token(f, text, q, q, q + 1, UmlSyntaxKind::CloseBracketToken),
                                 ],
                             )
-                            .unwrap(),
+                            .built(),
                         ),
                         q + 1,
                     );
@@ -4581,14 +4538,14 @@ fn relationship_link(
     let leading_trivia = if leading < p {
         vec![f
             .trivia(TriviaKind::Whitespace, slice(text, leading, p))
-            .unwrap()]
+            .built()]
     } else {
         Vec::new()
     };
     let mut link = vec![
         GreenElement::Token(
             f.missing_token_with_leading(UmlSyntaxKind::OpenBracketToken, leading_trivia)
-                .unwrap(),
+                .built(),
         ),
         GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTextToken)),
         GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
@@ -4597,23 +4554,17 @@ fn relationship_link(
         GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
     ];
     if p < q {
-        link.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::SkippedTokensSyntax,
-                [GreenElement::Token(
-                    f.bad_token(
-                        UmlSyntaxKind::BadToken,
-                        slice(text, p, q),
-                        UmlSyntaxDiagnosticCode::UnexpectedToken,
-                    )
-                    .unwrap(),
-                )],
-            )
-            .unwrap(),
+        link.push(skipped_tokens(
+            f,
+            text,
+            p,
+            p,
+            q,
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
         ));
     }
     (
-        GreenElement::Node(f.node(UmlSyntaxKind::Link, link).unwrap()),
+        GreenElement::Node(f.node(UmlSyntaxKind::Link, link).built()),
         q,
     )
 }
@@ -4643,7 +4594,7 @@ fn relationship_end(
             p,
             "missing relationship end multiplicity",
         ));
-        return (f.node(UmlSyntaxKind::RelationshipEnd, c).unwrap(), p);
+        return (f.node(UmlSyntaxKind::RelationshipEnd, c).built(), p);
     }
     let mult = &source[p..q];
     c.push(token(
@@ -4669,7 +4620,7 @@ fn relationship_end(
         c.push(token(f, text, q, at, r, UmlSyntaxKind::IdentifierToken));
         next = r;
     }
-    (f.node(UmlSyntaxKind::RelationshipEnd, c).unwrap(), next)
+    (f.node(UmlSyntaxKind::RelationshipEnd, c).built(), next)
 }
 
 /// Tokenize the small, currently-supported classifier line vocabulary.  This is
@@ -4749,7 +4700,7 @@ fn classifier_tokens(
                                     ),
                                 ],
                             )
-                            .unwrap();
+                            .built();
                         out.push(GreenElement::Node(link));
                         at = target_end + 1;
                         trivia_start = at;
@@ -4822,8 +4773,17 @@ fn attribute(
     let after_bullet = p;
     p = skip_ws(source, p, content_end);
     let mut vis = None;
+    // `p < content_end <= source.len()` leaves at least one character, and every
+    // marker `from_marker` accepts is ASCII, so the `p += 1` below stays on a
+    // UTF-8 boundary.
     if p < content_end
-        && crate::model::Visibility::from_marker(source[p..].chars().next().unwrap()).is_some()
+        && crate::model::Visibility::from_marker(
+            source[p..]
+                .chars()
+                .next()
+                .expect("a non-empty remainder has a first character"),
+        )
+        .is_some()
     {
         vis = Some(p);
         p += 1;
@@ -4902,7 +4862,7 @@ fn attribute(
     if type_start < content_end && source.as_bytes()[type_start] == b'[' {
         let (link, next) = relationship_link(f, text, source, type_start, content_end, p, diags);
         c.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::TypeReference, [link]).unwrap(),
+            f.node(UmlSyntaxKind::TypeReference, [link]).built(),
         ));
         p = next;
     } else {
@@ -4924,7 +4884,7 @@ fn attribute(
                         UmlSyntaxKind::TypeToken,
                     )],
                 )
-                .unwrap();
+                .built();
             c.push(GreenElement::Node(ty));
             p = type_end;
         } else if colon.is_some() {
@@ -4984,7 +4944,7 @@ fn attribute(
                 ));
             }
             c.push(GreenElement::Node(
-                f.node(UmlSyntaxKind::Multiplicity, mc).unwrap(),
+                f.node(UmlSyntaxKind::Multiplicity, mc).built(),
             ));
             p = close + 1;
         } else {
@@ -5012,7 +4972,7 @@ fn attribute(
                         GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
                     ],
                 )
-                .unwrap(),
+                .built(),
             ));
             diags.push(diag(
                 UmlSyntaxDiagnosticCode::InvalidMultiplicity,
@@ -5024,19 +4984,13 @@ fn attribute(
         }
     }
     if p < content_end {
-        c.push(GreenElement::Node(
-            f.node(
-                UmlSyntaxKind::SkippedTokensSyntax,
-                [GreenElement::Token(
-                    f.bad_token(
-                        UmlSyntaxKind::BadToken,
-                        slice(text, p, content_end),
-                        UmlSyntaxDiagnosticCode::UnexpectedToken,
-                    )
-                    .unwrap(),
-                )],
-            )
-            .unwrap(),
+        c.push(skipped_tokens(
+            f,
+            text,
+            p,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
         ));
         diags.push(diag(
             UmlSyntaxDiagnosticCode::UnexpectedToken,
@@ -5055,8 +5009,83 @@ fn attribute(
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    Some(f.node(UmlSyntaxKind::Attribute, c).unwrap())
+    Some(f.node(UmlSyntaxKind::Attribute, c).built())
 }
+/// The parser's single statement of why building a green element cannot fail.
+///
+/// `GreenFactory` rejects four things, and this file rules out all four
+/// beforehand.
+///
+/// * a text slice past the end of its source, and
+/// * a slice whose ends are not UTF-8 boundaries -- [`slice`] is the only place
+///   the parser makes green text, and it clamps both ends into the island and
+///   onto boundaries;
+/// * a width that overflows `u32` -- every width is a sum of slices of one
+///   island, and `SourceText` refuses to hold more than `u32::MAX` bytes;
+/// * an empty bad-token spelling -- [`skipped_tokens`] is the only place the
+///   parser makes one, and it emits a missing token for an empty span.
+///
+/// So the `Err` arm is unreachable, and saying so once here beats a hundred
+/// bare `unwrap`s that each look like an unexamined shortcut. The impl is
+/// deliberately narrow: a call that starts returning some other error stops
+/// compiling instead of quietly inheriting this argument.
+trait GreenBuilt<T> {
+    fn built(self) -> T;
+}
+
+impl<T> GreenBuilt<T> for Result<T, waml_syntax::GreenError> {
+    #[track_caller]
+    fn built(self) -> T {
+        self.expect("`slice` clamps every parser span into the island it came from")
+    }
+}
+
+/// A `SkippedTokensSyntax` node owning `start..end`, with `leading..start` as
+/// its leading trivia.
+///
+/// Every recovery node in this file routes through here so the empty-span case
+/// is handled once. `GreenFactory::bad_token` refuses an empty spelling, and a
+/// recovery span that ends where it starts is exactly the shape the span bugs
+/// in b0c7e59 produced -- so unwrapping that refusal would panic on the very
+/// input recovery exists to survive. A zero-width recovery token is a perfectly
+/// legal tree, and the layout atom lexer already emits one, so emit a missing
+/// token and keep the leading bytes instead.
+fn skipped_tokens(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    leading: usize,
+    start: usize,
+    end: usize,
+    code: UmlSyntaxDiagnosticCode,
+) -> GreenElement<UmlLanguage> {
+    let (start, end) = clamp_span(text.shared(), start, end);
+    let leading = (leading < start)
+        .then(|| {
+            f.trivia(TriviaKind::Whitespace, slice(text, leading, start))
+                .built()
+        })
+        .into_iter();
+    let token = if start < end {
+        f.bad_token_with_leading(
+            UmlSyntaxKind::BadToken,
+            slice(text, start, end),
+            leading,
+            code,
+        )
+        .built()
+    } else {
+        f.missing_token_with_leading(UmlSyntaxKind::BadToken, leading)
+            .built()
+    };
+    GreenElement::Node(
+        f.node(
+            UmlSyntaxKind::SkippedTokensSyntax,
+            [GreenElement::Token(token)],
+        )
+        .built(),
+    )
+}
+
 fn raw(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -5075,7 +5104,7 @@ fn raw(
                 UmlSyntaxKind::RawMarkdownToken,
             )],
         )
-        .unwrap(),
+        .built(),
     )
 }
 fn token(
@@ -5089,11 +5118,11 @@ fn token(
     let trivia = if leading < start {
         vec![f
             .trivia(TriviaKind::Whitespace, slice(text, leading, start))
-            .unwrap()]
+            .built()]
     } else {
         vec![]
     };
-    GreenElement::Token(f.token(kind, slice(text, start, end), trivia, []).unwrap())
+    GreenElement::Token(f.token(kind, slice(text, start, end), trivia, []).built())
 }
 
 fn missing_token(
@@ -5106,20 +5135,62 @@ fn missing_token(
     let trivia = if leading < start {
         vec![f
             .trivia(TriviaKind::Whitespace, slice(text, leading, start))
-            .unwrap()]
+            .built()]
     } else {
         vec![]
     };
-    GreenElement::Token(f.missing_token_with_leading(kind, trivia).unwrap())
+    GreenElement::Token(f.missing_token_with_leading(kind, trivia).built())
 }
+/// Force a byte pair into a span the green factory will accept.
+///
+/// The scanners in this file walk bytes and stop only on ASCII delimiters, so
+/// the pairs they produce land on UTF-8 boundaries inside the island. That is
+/// an invariant of the scanning code, not of the document, and it has been
+/// broken before: b0c7e59 fixed four separate places that stranded a byte or
+/// handed one out twice. Asserting it -- which is what `TextRange::new`'s
+/// `unwrap` did -- turned any future slip into a panic on a content path, and a
+/// panic there takes the whole host down.
+///
+/// So clamp instead. A clamped span cannot reproduce the bytes the caller meant
+/// to own, which means the tree stops covering its source exactly, which is
+/// precisely what [`recover_exact_source`](super::recover_exact_source) tests
+/// for: composition returns `None` and the island degrades to plain markdown
+/// with a typed `Specialization` error. That is the recovery this file already
+/// has for a tree that lost its bytes, and reusing it beats inventing a second
+/// error path for a case that should never happen.
+///
+/// Clamping hides nothing from the people who can fix it: `uml_islands` already
+/// asserts that a parsed island writes back to its source byte for byte, so a
+/// clamped span still fails the fuzzer on the next run -- and it fails as a
+/// round-trip mismatch, which names the input, rather than as a panic in a
+/// helper five frames below the code that got the span wrong.
+///
+/// There is deliberately no `debug_assert` here. It would make the clamp behave
+/// differently under test than in the hosts this exists to protect, and the
+/// round-trip check is the stronger signal anyway.
+fn clamp_span(source: &str, start: usize, end: usize) -> (usize, usize) {
+    let end = floor_boundary(source, end.min(source.len()));
+    let start = floor_boundary(source, start.min(end));
+    (start, end)
+}
+
+/// The largest UTF-8 boundary at or below `at`. `str::floor_char_boundary` is
+/// still unstable.
+fn floor_boundary(source: &str, mut at: usize) -> usize {
+    while at > 0 && !source.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
 fn slice(text: &SourceText, start: usize, end: usize) -> GreenText {
+    let (start, end) = clamp_span(text.shared(), start, end);
     GreenText::SourceSlice {
         source: text.clone(),
-        range: TextRange::new(
-            TextSize::try_from_usize(start).unwrap(),
-            TextSize::try_from_usize(end).unwrap(),
-        )
-        .unwrap(),
+        // `SourceText` refuses to hold more than `u32::MAX` bytes and both ends
+        // were just clamped into it, so the casts are exact and ordered.
+        range: TextRange::new(TextSize::new(start as u32), TextSize::new(end as u32))
+            .expect("a clamped span is ordered"),
     }
 }
 fn lines_between(s: &str, from: usize, to: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
@@ -5206,10 +5277,190 @@ fn diag(
         code,
         severity: SyntaxSeverity::Error,
         message: message.into(),
-        range: TextRange::new(
-            TextSize::try_from_usize(start).unwrap(),
-            TextSize::try_from_usize(end).unwrap(),
+        range: diagnostic_range(start, end),
+    }
+}
+
+/// A diagnostic's range, ordered.
+///
+/// `TextRange::new` refuses a reversed pair, and a reversed pair is exactly
+/// what a span-accounting slip produces. Unlike a token span this one owns no
+/// bytes -- it is read only to highlight a squiggle -- so a reversed pair can
+/// be ordered and reported rather than taken as grounds to kill the host. The
+/// diagnostic still names the right line either way.
+fn diagnostic_range(start: usize, end: usize) -> TextRange {
+    let (low, high) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    // Only a source past `u32::MAX` bytes fails the conversion, and `SourceText`
+    // refuses to exist at that size, so the fallbacks are a floor rather than a
+    // case the parser can reach.
+    let low = TextSize::try_from_usize(low).unwrap_or(TextSize::new(0));
+    let high = TextSize::try_from_usize(high).unwrap_or(low);
+    TextRange::new(low, high).expect("an ordered pair is a range")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, WamlLanguageIsland};
+
+    fn source(value: &str) -> SourceText {
+        SourceText::new(value).expect("a test source fits in a TextSize")
+    }
+
+    fn size(at: usize) -> TextSize {
+        TextSize::try_from_usize(at).expect("a test offset fits in a TextSize")
+    }
+
+    fn range(start: usize, end: usize) -> TextRange {
+        TextRange::new(size(start), size(end)).expect("a test range is ordered")
+    }
+
+    fn spelling(element: &GreenElement<UmlLanguage>) -> String {
+        let GreenElement::Node(node) = element else {
+            panic!("the recovery helpers return a node");
+        };
+        let mut written = String::new();
+        waml_syntax::write_green_to(node, &mut written).expect("String writes cannot fail");
+        written
+    }
+
+    /// The real projection of a document -- the only thing allowed to build a
+    /// structure map, which `no_legacy_authority` enforces. These tests damage
+    /// a genuine map rather than inventing one, which is also closer to the
+    /// defect they stand in for.
+    ///
+    /// (The owned copy is taken through `Clone::clone` rather than returned
+    /// directly because the authority guard reads `-> MarkdownStructureMap {`
+    /// as a struct literal.)
+    fn structure_of(text: &SourceText) -> Arc<MarkdownStructureMap> {
+        parse_markdown(
+            DocumentRevision::INITIAL,
+            text.clone(),
+            MarkdownDialect::WAML_DEFAULT,
         )
-        .unwrap(),
+        .expect("the test document parses as markdown")
+        .structure()
+        .clone()
+    }
+
+    /// Put a real map's islands in the wrong order.
+    ///
+    /// The projection is supposed to hand over ordered, in-bounds island
+    /// ranges, and `islands` refuses the map when it does not. The UML parser
+    /// used to assert that with `expect`, so a projection defect over user
+    /// content killed the host rather than costing the document its UML.
+    fn reverse_islands(structure: &mut MarkdownStructureMap) {
+        let mut islands = structure.islands.to_vec();
+        assert!(
+            islands.len() >= 2,
+            "reversing needs at least two islands to break the ordering"
+        );
+        islands.reverse();
+        structure.islands = islands.into();
+    }
+
+    #[test]
+    fn an_unordered_structure_map_parses_as_plain_markdown_instead_of_panicking() {
+        let value = "# Alpha\n\n## Attributes\n\n- name: String\n\n## Values\n\n- one\n";
+        let text = source(value);
+        let mut structure = MarkdownStructureMap::clone(&structure_of(&text));
+        reverse_islands(&mut structure);
+
+        let tree = parse(text, &structure);
+
+        // The whole point: the document survives, byte for byte, and simply
+        // claims no UML. Composition reports the failure through the typed
+        // `Specialization` error it already has.
+        assert_eq!(tree.write_to_string(), value);
+        let kinds = tree
+            .root_green()
+            .children()
+            .iter()
+            .map(|child| match child {
+                GreenElement::Node(node) => node.kind(),
+                GreenElement::Token(token) => token.kind(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![UmlSyntaxKind::MarkdownRegion, UmlSyntaxKind::EndOfFileToken]
+        );
+    }
+
+    #[test]
+    fn an_island_past_the_end_of_an_empty_document_still_parses() {
+        // The other rejection `islands` makes, on a source with no bytes to
+        // give out at all -- the degenerate case for the whole-source fallback.
+        let text = source("");
+        let mut structure = MarkdownStructureMap::clone(&structure_of(&text));
+        structure.islands = vec![WamlLanguageIsland {
+            owner: SyntaxIdentity::from_raw_for_test(1),
+            kind: WamlSectionKind::Attributes,
+            heading_range: range(1, 2),
+            content_range: range(1, 2),
+        }]
+        .into();
+        assert_eq!(parse(text, &structure).write_to_string(), "");
+    }
+
+    #[test]
+    fn a_span_past_the_end_of_the_island_is_clamped_rather_than_fatal() {
+        let text = source("abc");
+        // `GreenFactory` rejects an out-of-bounds slice, and the parser used to
+        // unwrap that rejection.
+        assert_eq!(slice(&text, 1, 4_000).write_to_string(), "bc");
+    }
+
+    #[test]
+    fn a_span_that_splits_a_character_is_clamped_rather_than_fatal() {
+        // "é" is two bytes, so 1 is inside it and not a UTF-8 boundary. The
+        // scanners only stop on ASCII, so reaching here is a parser bug -- but
+        // one the document should survive.
+        let text = source("é!");
+        // Both ends floor to the boundary at or below them, so the span widens
+        // to 0..3 instead of asking the factory for half a character.
+        assert_eq!(slice(&text, 1, 3).write_to_string(), "é!");
+        assert_eq!(slice(&text, 0, 1).write_to_string(), "");
+    }
+
+    #[test]
+    fn a_reversed_span_is_clamped_rather_than_fatal() {
+        // `TextRange::new` refuses a reversed pair; this is the shape the span
+        // accounting bugs fixed in b0c7e59 produced.
+        let text = source("abcdef");
+        assert_eq!(slice(&text, 4, 2).write_to_string(), "");
+    }
+
+    #[test]
+    fn a_reversed_diagnostic_span_is_ordered_rather_than_fatal() {
+        let reported = diag(UmlSyntaxDiagnosticCode::UnexpectedToken, 7, 2, "backwards");
+        assert_eq!(reported.range.start(), size(2));
+        assert_eq!(reported.range.end(), size(7));
+    }
+
+    #[test]
+    fn an_empty_recovery_span_becomes_a_missing_token_rather_than_being_fatal() {
+        // `GreenFactory::bad_token` refuses an empty spelling. A recovery node
+        // that owns no bytes is still a legal tree, so recovery must not be the
+        // one thing that cannot recover.
+        let f = GreenFactory::<UmlLanguage>::new();
+        let text = source("- name\n");
+        let recovered = skipped(&f, &text, 3, 3, UmlSyntaxDiagnosticCode::UnexpectedToken);
+        assert_eq!(spelling(&recovered), "");
+    }
+
+    #[test]
+    fn an_empty_recovery_span_keeps_the_bytes_in_front_of_it() {
+        let f = GreenFactory::<UmlLanguage>::new();
+        let text = source("- name\n");
+        // `leading..start` is real text even when `start..end` is empty; losing
+        // it would break the tree's round trip.
+        let recovered =
+            skipped_tokens(&f, &text, 1, 3, 3, UmlSyntaxDiagnosticCode::UnexpectedToken);
+        assert_eq!(spelling(&recovered), " n");
     }
 }

@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use tokio::sync::{Mutex, RwLock};
 use tower_lsp_server::jsonrpc::Result;
@@ -58,6 +61,66 @@ where
     true
 }
 
+/// Run a read-only query against an analysis snapshot and turn a panic inside
+/// it into "no answer".
+///
+/// `waml::analysis` guards the parse itself, but the query side walks the trees
+/// that parse produced -- completion, semantic tokens, document symbols, goto
+/// definition -- and those walkers read positions the client supplied. Without
+/// this, one bad walk kills the server and every open buffer in the workspace
+/// loses its diagnostics until the editor restarts it. With it the request
+/// answers `null`, which is a response the protocol defines and every client
+/// already handles, and the next request is served normally.
+///
+/// # Unwind safety
+///
+/// The closure gets `&LspAnalysisState` and nothing else. A snapshot is
+/// immutable once installed -- `ingress` builds a whole new one and swaps the
+/// `Arc` -- so a query has nothing to leave half-written, and an interrupted
+/// one cannot poison the snapshot for the requests that follow. That is what
+/// makes `AssertUnwindSafe` honest here rather than a way to silence the
+/// compiler.
+fn guard_query<T>(
+    what: &str,
+    physical: &Path,
+    state: &LspAnalysisState,
+    query: impl FnOnce(&LspAnalysisState) -> Option<T>,
+) -> Option<T> {
+    // The default panic hook has already printed the message and its source
+    // location to the server's stderr, which is where the client's LSP log
+    // shows it; this only stops the unwind.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| query(state))) {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!(
+                "WAML language server: {what} panicked on {}; answering with nothing",
+                physical.display()
+            );
+            None
+        }
+    }
+}
+
+/// The same containment for the write side: build a new analysis from an open,
+/// change or close, and turn a panic into the failure the caller already knows
+/// how to report.
+///
+/// # Unwind safety
+///
+/// The operation reads the installed snapshot through `&` and returns a fresh
+/// state; the swap happens in `ingress` afterwards and is skipped entirely on
+/// this path. So a panic cannot half-install anything, and the server keeps
+/// serving the last analysis that did build -- which is also what it does when
+/// the operation returns `Err` for an ordinary reason.
+fn guard_ingest(
+    base: &LspAnalysisState,
+    operation: &impl Fn(&LspAnalysisState) -> std::result::Result<Option<LspAnalysisState>, String>,
+) -> std::result::Result<Option<LspAnalysisState>, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(base))).unwrap_or_else(
+        |_| Err("WAML document ingest panicked; keeping the previous analysis".to_string()),
+    )
+}
+
 fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -99,10 +162,12 @@ impl Backend {
 
     async fn current_query<T>(
         &self,
+        what: &str,
+        physical: &Path,
         query: impl FnOnce(&LspAnalysisState) -> Option<T>,
     ) -> Option<T> {
         let captured = self.snapshot().await;
-        let result = query(&captured);
+        let result = guard_query(what, physical, &captured, query);
         retain_if_current(&self.current, &captured, result).await
     }
 
@@ -132,7 +197,7 @@ impl Backend {
     ) -> bool {
         loop {
             let base = self.snapshot().await;
-            let candidate = match operation(&base) {
+            let candidate = match guard_ingest(&base, &operation) {
                 Ok(Some(candidate)) => candidate,
                 Ok(None) => return false,
                 Err(error) => {
@@ -300,7 +365,9 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(self
-            .current_query(|snapshot| snapshot.document_symbols(&physical))
+            .current_query("documentSymbol", &physical, |snapshot| {
+                snapshot.document_symbols(&physical)
+            })
             .await
             .map(DocumentSymbolResponse::Nested))
     }
@@ -320,7 +387,9 @@ impl LanguageServer for Backend {
         };
         let position = params.text_document_position_params.position;
         Ok(self
-            .current_query(|snapshot| snapshot.definition(&physical, position))
+            .current_query("gotoDefinition", &physical, |snapshot| {
+                snapshot.definition(&physical, position)
+            })
             .await
             .map(GotoDefinitionResponse::Scalar))
     }
@@ -337,7 +406,9 @@ impl LanguageServer for Backend {
         };
         let position = params.text_document_position.position;
         Ok(self
-            .current_query(|snapshot| snapshot.completion(&physical, position))
+            .current_query("completion", &physical, |snapshot| {
+                snapshot.completion(&physical, position)
+            })
             .await
             .map(CompletionResponse::Array))
     }
@@ -352,7 +423,9 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(self
-            .current_query(|snapshot| snapshot.document_links(&physical))
+            .current_query("documentLink", &physical, |snapshot| {
+                snapshot.document_links(&physical)
+            })
             .await)
     }
 
@@ -369,7 +442,9 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(self
-            .current_query(|snapshot| snapshot.semantic_tokens(&physical))
+            .current_query("semanticTokens/full", &physical, |snapshot| {
+                snapshot.semantic_tokens(&physical)
+            })
             .await
             .map(SemanticTokensResult::Tokens))
     }
@@ -395,6 +470,67 @@ mod tests {
     use super::*;
     use std::{collections::BTreeMap, path::Path, sync::Mutex as StdMutex};
     use tokio::sync::Notify;
+
+    /// A parser panic must cost the request, not the server.
+    ///
+    /// The panic is injected rather than provoked with a document: any input
+    /// that panics the parser today is a bug to fix, so pinning one as a
+    /// fixture would pin the bug. What this guards is the boundary -- that
+    /// whatever goes wrong three crates down, the request answers and the next
+    /// one is served normally.
+    #[test]
+    fn a_panicking_query_answers_with_nothing_and_leaves_the_snapshot_usable() {
+        let physical = PathBuf::from("C:/outside/seq.md");
+        let text = concat!(
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
+            "## Lifelines\n\n- [A](./a.md) as A\n"
+        );
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, text.into())
+            .unwrap();
+
+        let answered: Option<u32> = guard_query("completion", &physical, &state, |_| {
+            panic!("island parser fell over")
+        });
+        assert_eq!(answered, None);
+
+        // The snapshot is the same object and still answers, which is the part
+        // that matters: one bad request must not cost the workspace its
+        // analysis.
+        assert!(state.document_symbols(&physical).is_some());
+    }
+
+    #[test]
+    fn a_panicking_ingest_keeps_the_previous_analysis() {
+        let state = LspAnalysisState::empty().unwrap();
+        let outcome = guard_ingest(&state, &|_: &LspAnalysisState| {
+            panic!("island parser fell over")
+        });
+        let Err(reason) = outcome else {
+            panic!("a contained panic is reported as a failed ingest");
+        };
+        assert!(reason.contains("panicked"), "{reason}");
+    }
+
+    #[test]
+    fn a_query_that_does_not_panic_is_untouched_by_the_guard() {
+        let physical = PathBuf::from("C:/outside/seq.md");
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(
+                physical.clone(),
+                1,
+                "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n".into(),
+            )
+            .unwrap();
+        assert!(
+            guard_query("documentSymbol", &physical, &state, |snapshot| {
+                snapshot.document_symbols(&physical)
+            })
+            .is_some()
+        );
+    }
 
     #[test]
     fn capabilities_advertise_snapshot_queries_and_keep_full_sync() {

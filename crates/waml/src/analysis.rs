@@ -677,17 +677,106 @@ impl PreparedCandidate {
     }
 }
 
+/// Run a preparation and turn a panic inside it into an `AnalysisError`.
+///
+/// Analysis reads documents the user typed. The UML island parser in
+/// particular is a hand-written scanner over arbitrary markdown, and its span
+/// accounting has been wrong before (b0c7e59, found by `cargo fuzz`). Without
+/// this, one such defect takes down whichever host is holding the document --
+/// the LSP server loses every open buffer, the editor loses unsaved work, the
+/// CLI dies mid-command. With it the document is simply rejected, which is a
+/// state every caller of `prepare_candidate` already handles.
+///
+/// # Unwind safety
+///
+/// `AssertUnwindSafe` is sound here because a preparation cannot leave anything
+/// observably broken behind:
+///
+/// * `candidate_source` is owned by value and dropped by the unwind.
+/// * `previous` holds only shared references to already-committed analyses;
+///   the whole pipeline is a pure function of them and never mutates through
+///   them, so an interrupted run leaves the caller's state exactly as it was.
+///   `prepare_candidate_failure_is_non_mutating` already pins that property for
+///   the ordinary error path, and an unwind takes the same path out.
+/// * The only process-wide state the pipeline touches is `OnceLock` caches
+///   (font faces, profile definitions). A panic during initialisation leaves
+///   those unset rather than poisoned, so the next call simply retries.
+///
+/// The hook-taking `_inner` entry points are deliberately *not* guarded: a
+/// `PreparationHooks` is `&mut`, so a half-updated one really would be
+/// observable, and those entry points exist only for tests, which want the
+/// panic.
+///
+/// This is a native-only defence. `wasm32-unknown-unknown` compiles with
+/// `panic-strategy: abort`, so there is nothing for `catch_unwind` to catch
+/// there and the web editor's only protection is the parser not panicking in
+/// the first place. That is why the fix in `uml::syntax::parser` matters more
+/// than this guard does.
+fn guard_preparation(
+    documents: String,
+    run: impl FnOnce() -> Result<PreparedCandidate, AnalysisError>,
+) -> Result<PreparedCandidate, AnalysisError> {
+    // The default hook still prints the panic and its location to stderr; this
+    // only stops the unwind from reaching the host's stack.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(result) => result,
+        // `stage` is a coarse locator and a panic has no stage of its own; the
+        // reason string carries the whole truth, including which documents were
+        // in the bundle and what the panic said.
+        Err(payload) => Err(AnalysisError::StructuralInvariant {
+            stage: AnalysisStage::Okf,
+            reason: format!(
+                "analysis panicked over {documents}: {}",
+                // `as_ref`, not `&payload`: a `Box<dyn Any + Send>` is itself
+                // `Any`, so passing the box by reference would downcast the box
+                // rather than the payload inside it and always miss.
+                panic_message(payload.as_ref()),
+            )
+            .into(),
+        }),
+    }
+}
+
+/// Name the documents a failed preparation was holding, so the error points at
+/// the content rather than just at the crash.
+fn describe_documents(source: &SourceBundle) -> String {
+    const SHOWN: usize = 4;
+    let documents = source.documents();
+    let names = documents
+        .iter()
+        .take(SHOWN)
+        .map(|document| document.path().as_str().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    match documents.len() {
+        0 => "an empty bundle".to_owned(),
+        n if n > SHOWN => format!("{names} and {} more", n - SHOWN),
+        _ => names,
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_owned())
+}
+
 pub fn prepare_candidate(
     candidate_source: SourceBundle,
     previous: Option<PreviousAnalyses<'_>>,
     candidate_revision: u64,
 ) -> Result<PreparedCandidate, AnalysisError> {
-    prepare_candidate_inner(
-        candidate_source,
-        previous,
-        candidate_revision,
-        &mut NoopPreparationHooks,
-    )
+    let documents = describe_documents(&candidate_source);
+    guard_preparation(documents, || {
+        prepare_candidate_inner(
+            candidate_source,
+            previous,
+            candidate_revision,
+            &mut NoopPreparationHooks,
+        )
+    })
 }
 
 pub fn prepare_candidate_with_markdown_updates(
@@ -696,14 +785,17 @@ pub fn prepare_candidate_with_markdown_updates(
     candidate_revision: u64,
     promoted: Arc<[PromotedMarkdownUpdate]>,
 ) -> Result<PreparedCandidate, AnalysisError> {
-    prepare_candidate_inner_with_markdown_updates(
-        candidate_source,
-        Some(previous),
-        candidate_revision,
-        &promoted,
-        None,
-        &mut NoopPreparationHooks,
-    )
+    let documents = describe_documents(&candidate_source);
+    guard_preparation(documents, || {
+        prepare_candidate_inner_with_markdown_updates(
+            candidate_source,
+            Some(previous),
+            candidate_revision,
+            &promoted,
+            None,
+            &mut NoopPreparationHooks,
+        )
+    })
 }
 
 pub fn prepare_candidate_with_markdown_recovery(
@@ -712,14 +804,17 @@ pub fn prepare_candidate_with_markdown_recovery(
     candidate_revision: u64,
     recovered: PromotedMarkdownUpdate,
 ) -> Result<PreparedCandidate, AnalysisError> {
-    prepare_candidate_inner_with_markdown_updates(
-        candidate_source,
-        Some(previous),
-        candidate_revision,
-        &[],
-        Some(&recovered),
-        &mut NoopPreparationHooks,
-    )
+    let documents = describe_documents(&candidate_source);
+    guard_preparation(documents, || {
+        prepare_candidate_inner_with_markdown_updates(
+            candidate_source,
+            Some(previous),
+            candidate_revision,
+            &[],
+            Some(&recovered),
+            &mut NoopPreparationHooks,
+        )
+    })
 }
 
 pub fn semantic_source_with_promoted_document(
@@ -1994,6 +2089,64 @@ mod tests {
         assert_eq!(okf.catalog.session_revision(), 11);
         assert_eq!(uml.session_revision(), 11);
         assert_eq!(revision, 11);
+    }
+
+    /// A panic anywhere under `prepare_candidate` must cost the document, not
+    /// the process.
+    ///
+    /// The panic is injected rather than provoked with markdown: any document
+    /// that panics the parser today is a bug to fix, so keeping one as a
+    /// fixture would keep the bug. What is pinned here is the boundary -- that
+    /// a panic three crates down arrives as an `AnalysisError` naming the
+    /// documents that were being analysed, which is the shape every host
+    /// already handles.
+    #[test]
+    fn a_panic_under_preparation_becomes_an_error_naming_the_documents() {
+        let source = SourceBundle::try_from_pairs([
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("notes.md", "---\ntype: Notes\n---\n# Notes\n"),
+        ])
+        .unwrap();
+        let documents = describe_documents(&source);
+
+        let result = guard_preparation(documents, || panic!("island parser fell over"));
+
+        let Err(AnalysisError::StructuralInvariant { stage, reason }) = result else {
+            panic!("a contained panic is reported as a structural invariant failure");
+        };
+        assert!(matches!(stage, AnalysisStage::Okf));
+        assert!(reason.contains("order.md"), "{reason}");
+        assert!(reason.contains("notes.md"), "{reason}");
+        assert!(reason.contains("island parser fell over"), "{reason}");
+    }
+
+    #[test]
+    fn a_contained_panic_does_not_poison_the_preparations_that_follow() {
+        let source = SourceBundle::try_from_pairs([(
+            "order.md",
+            "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n\n- name: String\n",
+        )])
+        .unwrap();
+        assert!(guard_preparation("order.md".to_owned(), || panic!("boom")).is_err());
+        // The next document analyses exactly as it would have.
+        let prepared = prepare_candidate(source, None, 1).unwrap();
+        assert!(prepared.uml().declared.concept("order").is_some());
+    }
+
+    #[test]
+    fn describing_a_bundle_names_the_first_documents_and_counts_the_rest() {
+        let many = SourceBundle::try_from_pairs(
+            (0..6).map(|n| (format!("doc{n}.md"), "# Doc\n".to_owned())),
+        )
+        .unwrap();
+        assert_eq!(
+            describe_documents(&many),
+            "doc0.md, doc1.md, doc2.md, doc3.md and 2 more"
+        );
+        assert_eq!(
+            describe_documents(&SourceBundle::default()),
+            "an empty bundle"
+        );
     }
 
     #[test]
