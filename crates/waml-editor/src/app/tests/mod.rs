@@ -76,8 +76,8 @@ fn navigation_app() -> (Cx, App) {
             app.session.okf_analysis(),
             app.session.uml_analysis(),
             &NavState::default(),
-            &app.projection_mask,
-            app.chain_limits,
+            app.projection.mask(),
+            app.projection.limits(),
         ),
     );
     let project_tree = WidgetRef::new_with_inner(Box::new(project_tree));

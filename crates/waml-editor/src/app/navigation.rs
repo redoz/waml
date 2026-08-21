@@ -127,7 +127,7 @@ impl App {
         let (chain, _diagnostics) = crate::folder_projection::chain_for(
             self.session.okf_analysis(),
             address,
-            &self.projection_mask,
+            self.projection.mask(),
             &registry,
         );
         if chain.resolution_surface() == Some(waml::view::surface::SurfaceId::book()) {
@@ -785,8 +785,8 @@ impl App {
                 &location,
                 &assets,
                 self.markdown_emphasis,
-                self.chain_limits,
-                &self.projection_mask,
+                self.projection.limits(),
+                self.projection.mask(),
             )
         };
         if !restored {
@@ -876,8 +876,8 @@ impl App {
                 &location.document,
                 assets,
                 self.markdown_emphasis,
-                self.chain_limits,
-                &self.projection_mask,
+                self.projection.limits(),
+                self.projection.mask(),
             )
             .is_some()
         }) else {
@@ -922,43 +922,28 @@ impl App {
         true
     }
 
-    /// Rebuild the nav projection from the current `nav_state` and push it to
-    /// the tree panel. The single choke point for every scope change.
+    /// Rebuild the nav projection from the current scope and push it to the
+    /// tree panel. The single choke point for every scope change.
     ///
     /// A tree build runs the folder-view chain for every directory in the
     /// bundle, recursively, so the view and the scope-title lookup share ONE
     /// build. `refresh_nav` fires on every row click and every navigation
-    /// change too, where nothing about the projection moved -- so the build is
-    /// memoized on everything it reads: the session revision (bumped by every
-    /// edit and by `replace`), the mask, and the descent cap. Scope and
-    /// selection are applied to the CACHED tree by `view_of`, which is why
-    /// they are not part of the key.
+    /// change too, where nothing about the projection moved -- which is why the
+    /// build is memoized; see [`Projection`] for what the memo is keyed on.
     pub(super) fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
-        let key = (
+        // Taken before the tree, which borrows `projection` for as long as the
+        // tree is in hand. The panel is handed an owned mask either way.
+        let mask = self.projection.mask().clone();
+        let (full, scope) = self.projection.tree_with_scope(
             self.session.revision(),
-            self.projection_mask.clone(),
-            self.chain_limits.max_depth,
+            self.session.okf_analysis(),
+            self.session.uml_analysis(),
         );
-        if self.nav_tree.as_ref().map(|(cached, _)| cached) != Some(&key) {
-            let tree = crate::tree::build_tree(
-                self.session.okf_analysis(),
-                self.session.uml_analysis(),
-                "Untitled",
-                &self.projection_mask,
-                self.chain_limits,
-            );
-            self.nav_tree = Some((key, tree));
-        }
-        let full = &self
-            .nav_tree
-            .as_ref()
-            .expect("the build above populates the cache")
-            .1;
-        let view = crate::nav::view_of(full, &self.nav_state);
+        let view = crate::nav::view_of(full, scope);
         let title = scope_changed.then(|| {
             crate::nav::packages_of(full, self.session.okf_analysis())
                 .into_iter()
-                .find(|r| r.key == self.nav_state.scope)
+                .find(|r| r.key == scope.scope)
                 .map(|r| r.title)
                 .unwrap_or_else(|| "Untitled".to_string())
         });
@@ -977,7 +962,7 @@ impl App {
                 .flat_map(|(_owner, names)| names)
                 .map(|name| name.to_string())
                 .collect::<Vec<_>>();
-            panel.set_projection(cx, self.projection_mask.clone(), maskable);
+            panel.set_projection(cx, mask, maskable);
         }
     }
 
@@ -996,10 +981,9 @@ impl App {
         cx: &mut Cx,
         mask: waml::view::mask::ProjectionMask,
     ) {
-        if self.projection_mask == mask {
+        if !self.projection.set_mask(mask) {
             return;
         }
-        self.projection_mask = mask;
         self.refresh_nav(cx, false);
         self.refresh_folder_tabs(cx);
         cx.redraw_all();
@@ -1018,15 +1002,15 @@ impl App {
                 crate::book_documents::open(
                     self.session.okf_analysis(),
                     &directory,
-                    self.chain_limits,
-                    &self.projection_mask,
+                    self.projection.limits(),
+                    self.projection.mask(),
                 )
             } else {
                 crate::documents::open_folder(
                     self.session.okf_analysis(),
                     &directory,
-                    self.chain_limits,
-                    &self.projection_mask,
+                    self.projection.limits(),
+                    self.projection.mask(),
                 )
             };
             let Some(document) = document else {

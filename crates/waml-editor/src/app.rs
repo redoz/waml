@@ -3,11 +3,13 @@ mod dock_chrome;
 mod event;
 mod menus;
 mod navigation;
+mod projection;
 mod shell;
 mod workspace;
 
 use self::dock_chrome::DockChrome;
 use self::navigation::{DeferredAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
+use self::projection::Projection;
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
@@ -25,7 +27,6 @@ use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::load;
-use crate::nav::NavState;
 use crate::panel_splitter::PanelSplitterWidgetRefExt;
 use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
@@ -37,8 +38,6 @@ use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocatio
 use crate::zoom::Zoom;
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
-use waml::view::chain::ChainLimits;
-use waml::view::mask::ProjectionMask;
 use waml_markdown_editor::syntax::{TextRange, TextSize};
 use waml_markdown_editor::EditorEmphasis;
 
@@ -843,10 +842,6 @@ pub struct App {
     /// truth; `config` is write-through persistence.
     #[rust]
     zoom: Zoom,
-    /// Scope state for the tree panel; the app owns it and rebuilds `NavView`
-    /// on every change (see `nav.rs`).
-    #[rust]
-    nav_state: NavState,
     /// What the open context menu is about, stashed when it opens because the
     /// committed menu id carries no subject.
     ///
@@ -862,30 +857,12 @@ pub struct App {
     /// See [`dock_chrome`] for the invariants that hold across them.
     #[rust]
     dock: DockChrome,
-    /// The view-chain descent cap in force, from the same
-    /// `.waml/editor.json` read that seeds `dock.widths()`. User/workspace
-    /// scope ONLY -- a bundle cannot reach this, by construction: nothing
-    /// builds `ChainLimits` from bundle frontmatter. Defaults to 20 when the
-    /// project declares nothing.
+    /// How this session projects the bundle: the tree's browse scope, the
+    /// session-wide middleware mask, the view-chain descent cap, and the tree
+    /// build memoised on all three. See [`projection`] for the invariants that
+    /// hold across them.
     #[rust]
-    chain_limits: ChainLimits,
-    /// The session-wide projection mask: which declared middleware stages are
-    /// switched off. In memory only -- NOT persisted, and
-    /// `.waml/editor.json` never sees it, so every launch starts empty and
-    /// the author's declared `view:` is the default a reader gets. Read by
-    /// both the tree seam and every folder tab, so the two can never disagree
-    /// about what a directory contains.
-    #[rust]
-    projection_mask: ProjectionMask,
-    /// The last `tree::build_tree` result, with the key it was built from:
-    /// `(session revision, mask, chain descent cap)`. A build runs the
-    /// folder-view chain for every directory in the bundle, recursively, and
-    /// `refresh_nav` fires on every row click; nothing in that key moves on a
-    /// click, so the projection is not re-run for one. Every input the build
-    /// reads is in the key -- the revision covers the bundle itself, since
-    /// both an edit and `EditorSession::replace` bump it.
-    #[rust]
-    nav_tree: Option<((u64, ProjectionMask, usize), crate::tree::ProjectTree)>,
+    projection: Projection,
     /// Whether `tab_row`'s history pair is mounted (guards the visibility
     /// writes).
     #[rust]

@@ -171,8 +171,8 @@ impl App {
                     tab,
                     assets,
                     self.markdown_emphasis,
-                    self.chain_limits,
-                    &self.projection_mask,
+                    self.projection.limits(),
+                    self.projection.mask(),
                 )
             })
             .collect())
@@ -649,7 +649,7 @@ impl App {
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
         // Fresh model: reset the scope to the whole-model browse state.
-        self.nav_state = NavState::default();
+        self.projection.reset_scope();
 
         self.open_name = display_name;
 

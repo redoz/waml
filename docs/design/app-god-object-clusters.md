@@ -30,7 +30,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
 | C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredAnchorRestore`) |
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | open |
-| C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | open |
+| C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | **extracted** → `app::projection::Projection` |
 | C3 | Command palette | 3 | 8 | `actions` (8) | **extracted** (`OpenPalette`) |
 | C8 | Zoom | 3 | 8 | `actions` (8) | **extracted** (`zoom::Zoom`) |
 | C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | **extracted** (`AgentMarks`) |
@@ -96,13 +96,28 @@ target tab draws, and the generation counter that tells a superseded restore to
 give up. `history_controls_visible` is the caption-side mount guard for the
 history pair.
 
-### C7 — Projection + tree cache (4 fields)
+### C7 — Projection + tree cache (4 fields) — **extracted**
 
 `nav_state`, `projection_mask`, `nav_tree`, `chain_limits`.
 
 The tree's scope, the session-wide middleware mask, the descent cap, and the
-memoised build. `nav_tree`'s cache key is literally `(revision, mask, chain
-cap)` — the type is already written down, as a tuple.
+memoised build. `nav_tree`'s cache key was literally `(revision, mask, chain
+cap)` — the type was already written down, as a tuple. Now
+`App::projection: Projection`, in `crates/waml-editor/src/app/projection.rs`.
+
+The key and the build now live in one private function
+(`Projection::ensure_tree`), which closed a latent staleness: the key stored
+`limits.max_depth`, not `limits`, so it was correct only while `ChainLimits` had
+exactly one field. A second field would have produced a silently stale tree — a
+working view with content missing. It keys on the whole `ChainLimits` now.
+
+`nav_state` survived the move but is worth flagging: **nothing in the shipping
+UI ever sets a scope other than the root.** The only non-default writes are in
+`app/tests/navigation.rs`, which set one by hand to assert that a navigation
+does not clobber it. `nav::view_of`'s scoping is real and tested; the control
+that would drive it was never built. Kept because the tree panel's scope title
+reads through the same path, and deleting it would delete a capability rather
+than dead state — but a future reader should know it is currently inert.
 
 ### C8 — Zoom (3 fields)
 
@@ -170,7 +185,10 @@ Runners-up and why not:
   C8, C10, C3 and C9 are done, and C6's coupled pair with them. **What is left of
   C6** — `view_history`, `pending_fragment`, `history_controls_visible` — is the
   back/forward stack and its caption mount guard, which are a different thing
-  from the deferred restore and should move together with C7.
+  from the deferred restore. It was expected to move with C7; it did not, and
+  should not: C7 turned out to be self-contained (mask → cap → cache → scope,
+  none of it touching a document transition), while C6's remainder is threaded
+  through `transition_to_location` at seven separate points.
   Cheap, but they leave the shape of the problem untouched.
 
 Two fields did not survive the move, both write-only records that no code read:
@@ -191,6 +209,9 @@ which is an argument for doing the rest.
 Cheap-and-safe first, so the pattern is established before the risky ones; the
 untestable one last.
 
+**Next one to take: C6's remainder (3) — item 5 below.** `App` is at 33 fields
+(32 `#[rust]` plus `ui`), down from the 54 the audit found.
+
 1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
    the wheel accumulator and the target it banks for, because the reset-on-
    target-change coupling is the only reason the third field exists. The
@@ -208,9 +229,11 @@ untestable one last.
 5. **C6 View history + deferred navigation (5)** — the largest remaining win
    with real coverage behind it (`app/tests/navigation.rs`, 3,504 lines). Fold
    `history_controls_visible` in with it.
-6. **C7 Projection + tree cache (4)** — do it *after* C6, since both live in
-   `navigation.rs` and doing them together would make the diff unreviewable.
-   Higher stakes: a wrong mask looks like a working view with content missing.
+6. ~~**C7 Projection + tree cache (4)**~~ — **done**, and taken *before* C6
+   rather than after: it turned out to be the self-contained half of
+   `navigation.rs` (mask, cap, cache, scope), where C6's remainder is the
+   back/forward stack threaded through `transition_to_location`. Doing the
+   independent one first kept both diffs readable.
 7. **C5 Open project + save (4)** — `workspace.rs` only, but it touches disk and
    the quit path. Land it when someone can exercise a failing save by hand.
 8. **C2 Search sessions (5)** — spread over four files and the most entangled

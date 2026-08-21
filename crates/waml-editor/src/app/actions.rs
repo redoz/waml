@@ -1192,7 +1192,7 @@ impl App {
         };
         let registry = crate::folder_projection::core_registry();
         let maskable = crate::folder_projection::maskable_names(&registry);
-        let items = crate::app::menus::projection_menu_items(&maskable, &self.projection_mask);
+        let items = crate::app::menus::projection_menu_items(&maskable, self.projection.mask());
         let bounds = self.window_bounds(cx);
         if let Some(mut popup) = self
             .ui
@@ -1233,9 +1233,9 @@ impl App {
         let Some(target) = crate::app::menus::projection_toggle_target(id, &maskable) else {
             return ActionFlow::Consumed;
         };
-        let mask = crate::app::menus::apply_projection_toggle(&self.projection_mask, &target);
+        let mask = crate::app::menus::apply_projection_toggle(self.projection.mask(), &target);
         self.set_projection_mask(cx, mask);
-        let items = crate::app::menus::projection_menu_items(&maskable, &self.projection_mask);
+        let items = crate::app::menus::projection_menu_items(&maskable, self.projection.mask());
         if let Some(mut popup) = self
             .ui
             .widget(cx, ids!(popup_root))

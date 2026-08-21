@@ -446,7 +446,8 @@ impl App {
     pub(super) fn load_dock_widths(&mut self, cx: &mut Cx, project_root: &std::path::Path) {
         self.dock
             .set_widths(crate::project_settings::load(project_root).dock);
-        self.chain_limits = crate::project_config::load(project_root).chain_limits();
+        self.projection
+            .set_limits(crate::project_config::load(project_root).chain_limits());
         self.sync_dock_slots(cx);
     }
 

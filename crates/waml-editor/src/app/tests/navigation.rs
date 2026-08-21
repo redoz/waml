@@ -629,7 +629,7 @@ fn navigation_external_target_invokes_only_the_browser_adapter_once() {
     ));
     assert_eq!(browser.opened, vec!["https://example.com/docs"]);
     assert!(app.documents.tabs().is_empty());
-    assert_eq!(app.nav_state, NavState::default());
+    assert_eq!(*app.projection.scope(), NavState::default());
 }
 
 #[test]
@@ -646,9 +646,11 @@ fn navigation_browser_failure_preserves_document_and_directory_state() {
         OpenDisposition::Persistent,
         &mut browser,
     ));
-    app.nav_state.scope = "/sales".into();
+    app.projection.set_scope(NavState {
+        scope: "/sales".into(),
+    });
     let active = app.documents.active_id();
-    let nav_state = app.nav_state.clone();
+    let nav_state = app.projection.scope().clone();
     browser.error = Some("blocked".into());
 
     assert!(!app.navigate_with(
@@ -659,7 +661,7 @@ fn navigation_browser_failure_preserves_document_and_directory_state() {
     ));
     assert_eq!(browser.opened, vec!["https://example.com/blocked"]);
     assert_eq!(app.documents.active_id(), active);
-    assert_eq!(app.nav_state, nav_state);
+    assert_eq!(*app.projection.scope(), nav_state);
     let statusbar = app.ui.widget(&cx, ids!(statusbar));
     let statusbar = statusbar
         .borrow::<crate::statusbar::Statusbar>()
@@ -1531,9 +1533,9 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
     let (mut cx, mut app) = navigation_app();
     let mut browser = FakeBrowser::default();
     app.dock.force_narrow(true);
-    app.nav_state = NavState {
+    app.projection.set_scope(NavState {
         scope: "/sales".into(),
-    };
+    });
     app.ui
         .widget(&cx, ids!(project_tree))
         .borrow_mut::<crate::tree_panel::ProjectTree>()
@@ -1544,7 +1546,7 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
         .borrow_mut::<crate::inspector_panel::Inspector>()
         .expect("test inspector is mounted")
         .open_dock(&mut cx);
-    let expected_nav = app.nav_state.clone();
+    let expected_nav = app.projection.scope().clone();
     // The folder view has no right-dock content (`FolderView::chrome`), so
     // opening it closes the inspector the same way any other right-dock-less
     // view does (`BodyWidgets::apply_chrome`) -- the tree dock, which this
@@ -1563,7 +1565,7 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
             &mut browser,
         ));
         assert_eq!(app.documents.active_id(), folder_tab);
-        assert_eq!(app.nav_state, expected_nav);
+        assert_eq!(*app.projection.scope(), expected_nav);
         assert_eq!(
             app.dock_states(&mut cx),
             (expected_tree_dock, crate::dock::DockState::Flag)
@@ -1593,7 +1595,9 @@ fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
             OpenDisposition::Persistent,
             &mut browser,
         ));
-        app.nav_state.scope = "/sales".into();
+        app.projection.set_scope(NavState {
+            scope: "/sales".into(),
+        });
         let active = app.documents.active_id();
         let markdown = app.ui.widget(&cx, ids!(markdown_surface.md));
         assert!(
@@ -1638,7 +1642,7 @@ fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
             "each ingress must close the initially-open folder exactly once"
         );
         assert_eq!(app.documents.active_id(), active);
-        assert_eq!(app.nav_state.scope, "/sales");
+        assert_eq!(app.projection.scope().scope, "/sales");
     }
 }
 
@@ -2361,7 +2365,7 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
 
     app.set_projection_mask(&mut cx, full_mask);
 
-    assert!(!app.projection_mask.is_empty());
+    assert!(!app.projection.mask().is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before, "no second tab");
     assert_eq!(
         app.documents.active_id(),
@@ -2370,7 +2374,7 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
     );
 
     app.set_projection_mask(&mut cx, waml::view::mask::ProjectionMask::default());
-    assert!(app.projection_mask.is_empty());
+    assert!(app.projection.mask().is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before);
 }
 
@@ -2378,7 +2382,7 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
 #[test]
 fn the_mask_starts_empty_and_is_never_persisted() {
     let (mut cx, mut app) = navigation_app();
-    assert!(app.projection_mask.is_empty());
+    assert!(app.projection.mask().is_empty());
     let registry = crate::folder_projection::core_registry();
     let full_mask = waml::view::mask::ProjectionMask::from_names(
         crate::folder_projection::maskable_names(&registry)
@@ -2434,8 +2438,8 @@ fn navigation_app_with_folders() -> (Cx, App) {
             app.session.okf_analysis(),
             app.session.uml_analysis(),
             &NavState::default(),
-            &app.projection_mask,
-            app.chain_limits,
+            app.projection.mask(),
+            app.projection.limits(),
         ),
     );
     let project_tree = WidgetRef::new_with_inner(Box::new(project_tree));
@@ -2668,7 +2672,7 @@ fn a_mode_flip_collects_folder_listing_tabs_only_not_their_source_tabs() {
             .collect::<Vec<_>>(),
     );
     app.set_projection_mask(&mut cx, full_mask);
-    assert!(!app.projection_mask.is_empty());
+    assert!(!app.projection.mask().is_empty());
 }
 
 /// A folder navigation that fails must not pin the unrelated preview tab
