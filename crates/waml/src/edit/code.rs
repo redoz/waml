@@ -159,6 +159,30 @@ impl EditCoded for waml_syntax::ParseError {
     }
 }
 
+impl EditCoded for crate::analysis::AnalysisError {
+    fn edit_code(&self) -> EditCode {
+        use crate::analysis::AnalysisError;
+        match self {
+            AnalysisError::SourceTooLarge { .. } => EditCode::InvalidArgument,
+            AnalysisError::Shell { .. } => EditCode::MalformedDocument,
+            AnalysisError::Okf(error) => error.edit_code(),
+            AnalysisError::InvalidPromotedMarkdownUpdate { .. } => EditCode::StaleContext,
+            // The candidate this crate built violates an invariant this crate
+            // maintains. The caller cannot fix that by asking differently.
+            AnalysisError::CatalogInvariant { .. }
+            | AnalysisError::Specialization { .. }
+            | AnalysisError::AmbiguousClaim { .. }
+            | AnalysisError::StructuralInvariant { .. } => EditCode::Internal,
+        }
+    }
+}
+
+impl From<crate::analysis::AnalysisError> for super::EditError {
+    fn from(error: crate::analysis::AnalysisError) -> Self {
+        super::EditError::wrap("analysis.prepare", &error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

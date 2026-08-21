@@ -615,30 +615,6 @@ impl AnalysisError {
     }
 }
 
-impl crate::edit::EditCoded for AnalysisError {
-    fn edit_code(&self) -> crate::edit::EditCode {
-        use crate::edit::EditCode;
-        match self {
-            AnalysisError::SourceTooLarge { .. } => EditCode::InvalidArgument,
-            AnalysisError::Shell { .. } => EditCode::MalformedDocument,
-            AnalysisError::Okf(error) => error.edit_code(),
-            AnalysisError::InvalidPromotedMarkdownUpdate { .. } => EditCode::StaleContext,
-            // The candidate this crate built violates an invariant this crate
-            // maintains. The caller cannot fix that by asking differently.
-            AnalysisError::CatalogInvariant { .. }
-            | AnalysisError::Specialization { .. }
-            | AnalysisError::AmbiguousClaim { .. }
-            | AnalysisError::StructuralInvariant { .. } => EditCode::Internal,
-        }
-    }
-}
-
-impl From<AnalysisError> for crate::edit::EditError {
-    fn from(error: AnalysisError) -> Self {
-        crate::edit::EditError::wrap("analysis.prepare", &error)
-    }
-}
-
 pub fn validate_disjoint_claims<'a>(
     claims: impl IntoIterator<Item = (&'a str, &'a ClaimSet)>,
 ) -> Result<(), AnalysisError> {
