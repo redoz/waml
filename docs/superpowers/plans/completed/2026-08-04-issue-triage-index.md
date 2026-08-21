@@ -8,13 +8,17 @@ plans is unfinished.
 
 - **Closed:** issues 20, 21, 22, 24, 25, 26, 27, 29, 30, 31, 32, 33, 34, 35 and
   36 all have their plans in `completed/`.
-- **Rejected at triage:** issue 23 (`FieldEdit` serde round-trip). Note that a
-  later audit re-raised `FieldEdit` data loss; if that re-raise is upheld, this
-  file's rejection paragraph is the thing to revisit first.
-- **Still open:** issue 28 — see `2026-08-04-issue-28-guard-single-authority.md`,
-  whose tasks B, C and D have not been implemented.
-
-Archive this index once issue 28 is closed out.
+- **Rejected at triage:** issue 23 (`FieldEdit` serde round-trip). A later audit
+  re-raised it as live data loss; **the re-raise did not hold, and this file's
+  rejection was right** (2026-08-21, audit row A07). The round-trip is real but
+  latent: the one serde-carrying struct guards it with both `#[serde(default)]`
+  and `skip_serializing_if`, so no wire path deletes a field.
+- **Issue 28: CLOSED 2026-08-21.** Tasks B, C and D all landed —
+  `completed/2026-08-04-issue-28-guard-single-authority.md` has the detail. Task
+  D's oracle change immediately exposed three defects, two fixed by the same
+  work; Task C was a live bug (single-quoted frontmatter titles reached
+  relationship lines still quoted); Task B removed a whole-document failure mode
+  rather than an instance of it.
 
 
 Triage of the sixteen findings in the 2026-08-04 five-domain code-smell section
