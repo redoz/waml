@@ -251,8 +251,21 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
         } else {
             (text, 0)
         };
-        if let Some(label) = normalize_label(label) {
-            labels.push(label);
+        if let Some(normalized) = normalize_label(label) {
+            labels.push(normalized);
+        }
+        // A `]` closes against the innermost `[` still open, not the leftmost
+        // one, so every `[` inside the label this scan just read opens a label
+        // of its own. The parser reads `use [x[id]` as the text `[x` followed
+        // by the shortcut reference `[id]`, and `use [x][[id]` as `[x][`
+        // followed by `[id]`, while pairing left to right sees only `x[id` and
+        // `[id`. Name them all — over-reporting costs a fallback, and missing
+        // the one the parser picks leaves a reference use resolved against a
+        // definition the window never saw.
+        for (inner, _) in label.match_indices('[') {
+            if let Some(normalized) = normalize_label(&label[inner + 1..]) {
+                labels.push(normalized);
+            }
         }
         rest = &after[consumed..];
     }

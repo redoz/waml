@@ -563,6 +563,35 @@ fn an_edit_to_a_definitions_next_line_destination_refreshes_its_uses() {
 }
 
 #[test]
+fn a_reference_use_opened_by_an_inner_bracket_still_forces_a_reparse() {
+    // This fails if the label scan pairs brackets left to right. The parser
+    // closes a `]` against the innermost `[` still open, so it reads
+    // `use [x[id]` as the text `[x` followed by the shortcut reference
+    // `[id]`; a scan that pairs the first `[` with the first `]` sees one
+    // label, `x[id`, which no definition matches. The guard then let the edit
+    // reparse the second section on its own, and the use never resolved
+    // against the definition in the first.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\nuse [x[iz]\n",
+        "[id]: /one\n\n# M\n\nuse [x[id]\n",
+        &[TextChange {
+            old_range: range(25, 26),
+            replacement: Arc::from("d"),
+        }],
+    );
+    // The same pairing rule inside a full reference's label: `use [x][[id]`
+    // is the text `[x][` followed by the shortcut reference `[id]`.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\nuse [x][[iz]\n",
+        "[id]: /one\n\n# M\n\nuse [x][[id]\n",
+        &[TextChange {
+            old_range: range(27, 28),
+            replacement: Arc::from("d"),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";
