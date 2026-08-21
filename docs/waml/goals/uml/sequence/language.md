@@ -301,7 +301,7 @@ Each scenario applies to a document with the type `uml.SequenceDiagram`.
 **When** the tool analyses the document
 **Then** the parent of the `par` fragment is that operand
 
-**Evidence:** `crates/waml/src/uml/analysis.rs:3108`
+**Evidence:** `crates/waml/src/uml/analysis/syntax_util.rs:131`
 
 #### SEQ-FRAG-10 — the item after a fragment is a sibling
 
@@ -312,7 +312,7 @@ Each scenario applies to a document with the type `uml.SequenceDiagram`.
 **Then** that message is a sibling of the fragment
 **And** that message is not a child of the last branch
 
-**Evidence:** `crates/waml/src/uml/analysis.rs:3108`
+**Evidence:** `crates/waml/src/uml/analysis/syntax_util.rs:131`
 
 #### SEQ-FRAG-11 — a fragment frame holds its content
 
