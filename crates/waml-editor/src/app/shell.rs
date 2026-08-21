@@ -535,8 +535,8 @@ impl App {
     /// the second call both marks vanish the first time an agent toggles the
     /// theme and the window silently becomes indistinguishable again.
     pub(super) fn apply_agent_marks(&mut self, cx: &mut Cx) {
-        let badge = self.agent_badge.clone();
-        let tint = self.agent_tint;
+        let badge = self.agent_marks.badge.clone();
+        let tint = self.agent_marks.tint;
         if let Some(mut mark) = self
             .ui
             .widget(cx, ids!(agent_mark))
@@ -567,7 +567,7 @@ impl App {
     /// RIGHT-floated pill, so the cluster's width is subtracted -- otherwise the
     /// pill floats to the window edge and lands underneath the buttons.
     pub(super) fn sync_agent_row(&mut self, cx: &mut Cx) {
-        if self.agent_badge.is_none() && self.agent_tint.is_none() {
+        if self.agent_marks.is_unmarked() {
             return;
         }
         let w = (self.ui.widget(cx, ids!(title_row)).area().rect(cx).size.x
@@ -579,10 +579,9 @@ impl App {
                 .size
                 .x)
             .max(0.0);
-        if (w - self.agent_row_w).abs() <= 0.5 {
+        if !self.agent_marks.row_width_changed(w) {
             return;
         }
-        self.agent_row_w = w;
         if let Some(mut mark) = self
             .ui
             .widget(cx, ids!(agent_mark))

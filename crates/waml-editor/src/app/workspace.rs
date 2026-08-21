@@ -781,7 +781,9 @@ impl App {
         // First, before the start-screen early return: the marks apply to both
         // screens.
         self.apply_agent_marks(cx);
-        self.agent_row_w = 0.0; // force `sync_agent_row` to re-push after reload
+        // The widget lost its state to the reload; the width did not change,
+        // so the guard has to be told to push anyway.
+        self.agent_marks.forget_row_width();
         if !self.editor_shown {
             // Start screen: `show_start_screen` re-reads recents and re-shows.
             self.show_start_screen(cx);

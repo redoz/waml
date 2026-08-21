@@ -33,7 +33,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | open |
 | C3 | Command palette | 3 | 8 | `actions` (8) | **extracted** (`OpenPalette`) |
 | C8 | Zoom | 3 | 8 | `actions` (8) | **extracted** (`zoom::Zoom`) |
-| C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | open |
+| C9 | Agent window marks | 3 | 9 | `shell` (6), `app` (2), `workspace` (1) | **extracted** (`AgentMarks`) |
 | C10 | Context-menu subject | 2 | 5 | `actions` (5) | **extracted** (`ContextMenuSubject`) |
 
 ### C1 — Dock chrome (11 fields) — **extracted**
@@ -162,7 +162,8 @@ Runners-up and why not:
   generation logic, which is the subtlest thing in the app module. Worth doing;
   not worth doing first.
 * **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
-  C8, C10 and C3 are all done; **C9 Agent marks is the next one to take.**
+  C8, C10, C3 and C9 are all done. **C6 View history (5) is the next one**, and
+  the best-covered of what remains.
   Cheap, but they leave the shape of the problem untouched.
 
 Two fields did not survive the move, both write-only records that no code read:

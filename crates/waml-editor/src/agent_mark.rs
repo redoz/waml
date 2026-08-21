@@ -77,6 +77,49 @@ pub fn label_ink(fill: Vec4) -> Vec4 {
     }
 }
 
+/// The launch-flag marks that make one agent's window tellable from another's,
+/// plus the row width they are drawn across.
+///
+/// The app keeps them because a `T` theme toggle goes through
+/// `cx.request_live_edit()` -> `Apply::Reload`, which resets the widget's own
+/// `#[rust]` state: without a retained copy both marks vanish the first time an
+/// agent toggles the theme and the window becomes indistinguishable again.
+#[derive(Default)]
+pub struct AgentMarks {
+    /// `--title` badge text.
+    pub badge: Option<String>,
+    /// `--color` tint.
+    pub tint: Option<Vec4>,
+    /// Last-pushed title-row width, so a re-measure only pushes on a real
+    /// change. Reset to zero to force the next push (a reload needs that).
+    row_width: f64,
+}
+
+impl AgentMarks {
+    /// True when no launch flag asked for a mark, so there is nothing to draw
+    /// and nothing to measure for.
+    pub fn is_unmarked(&self) -> bool {
+        self.badge.is_none() && self.tint.is_none()
+    }
+
+    /// Record a freshly measured row width, or `false` when it has not moved
+    /// enough to be worth pushing.
+    pub fn row_width_changed(&mut self, width: f64) -> bool {
+        if (width - self.row_width).abs() <= 0.5 {
+            return false;
+        }
+        self.row_width = width;
+        true
+    }
+
+    /// Forget the last-pushed width so the next measure pushes unconditionally.
+    /// A live-edit reload needs this: the widget's state is gone, but the width
+    /// it was last given has not changed.
+    pub fn forget_row_width(&mut self) {
+        self.row_width = 0.0;
+    }
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct AgentMark {
     #[uid]

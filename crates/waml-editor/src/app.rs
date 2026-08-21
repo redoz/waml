@@ -14,6 +14,7 @@ use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFee
 pub(crate) use menus::{burger_menu_items, logo_command_for, logo_menu_items, LogoCommand};
 use menus::{doc_switcher_items, DOC_SWITCHER_MAX_H};
 
+use crate::agent_mark::AgentMarks;
 use crate::doc_tabs::OpenTabs;
 use crate::dock::{DockMotion, DockState, ResponsiveDockLayout};
 use crate::document::NavCategory;
@@ -889,17 +890,11 @@ pub struct App {
     /// writes).
     #[rust]
     history_controls_visible: bool,
-    /// `--title` badge text, retained so a theme live-edit reload can re-push it
-    /// (`Apply::Reload` wipes the widget's own `#[rust]` state).
+    /// The `--title` / `--color` launch marks and the row width they are drawn
+    /// across (see `agent_mark::AgentMarks`). Retained because a theme
+    /// live-edit reload wipes the widget's own `#[rust]` state.
     #[rust]
-    agent_badge: Option<String>,
-    /// `--color` tint, retained for the same reason as `agent_badge`.
-    #[rust]
-    agent_tint: Option<Vec4>,
-    /// Last-pushed title-row width, so `sync_agent_row` only pushes on a real
-    /// change (same "last applied" guard shape as `DockChrome`'s slot width).
-    #[rust]
-    agent_row_w: f64,
+    agent_marks: AgentMarks,
     /// Native screenshot verification marker. It is consumed after the first
     /// draw event for the exact requested diagram.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -1002,8 +997,8 @@ impl MatchEvent for App {
                 return;
             }
         };
-        self.agent_badge = args.badge.clone();
-        self.agent_tint = args.tint.map(|[r, g, b]| vec4(r, g, b, 1.0));
+        self.agent_marks.badge = args.badge.clone();
+        self.agent_marks.tint = args.tint.map(|[r, g, b]| vec4(r, g, b, 1.0));
         self.apply_agent_marks(cx);
         match args.dir {
             Some(dir) => {
