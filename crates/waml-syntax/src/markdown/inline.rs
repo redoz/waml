@@ -367,34 +367,7 @@ fn parse_inlines_within(
         Vec::new()
     };
     if capped {
-        if let Some(demoted) = first_demoted_delimiter(&brackets, &emphasis, &strikethrough) {
-            if !context.depth_diagnostic_emitted {
-                context.depth_diagnostic_emitted = true;
-                context.diagnostics.push(TreeDiagnostic {
-                    code: Diagnostic::NestingDepthExceeded,
-                    range: TextRange::new(
-                        TextSize::try_from_usize(demoted.start).map_err(|_| {
-                            ParseError::SourceTooLarge {
-                                bytes: demoted.start,
-                            }
-                        })?,
-                        TextSize::try_from_usize(demoted.end)
-                            .map_err(|_| ParseError::SourceTooLarge { bytes: demoted.end })?,
-                    )
-                    .map_err(|_| ParseError::StructuralInvariant {
-                        reason: "invalid inline nesting-depth range".into(),
-                    })?,
-                    severity: crate::SyntaxSeverity::Error,
-                    message: Arc::from(format!(
-                        "Markdown inline nesting exceeds the supported depth of {}; deeper structure is treated as plain text.",
-                        super::MD_MAX_INLINE_DEPTH
-                    )),
-                });
-            }
-        }
-        brackets.clear();
-        emphasis.clear();
-        strikethrough.clear();
+        demote_delimiters_to_text(context, &mut brackets, &mut emphasis, &mut strikethrough)?;
     }
     // `brackets` is pushed in close-scan order (a LIFO pop on `]`), not
     // sorted by `start`, so a monotone cursor cannot be used for it; index by
@@ -441,29 +414,16 @@ fn parse_inlines_within(
             .filter(|pair| pair.open == at)
         {
             flush(context.text, plain, at, &mut out)?;
-            let mut children = vec![tok(
-                context.text,
-                pair.open,
-                pair.open + 2,
-                Kind::StrikethroughDelimiterToken,
-            )?];
-            children.extend(parse_inlines_within(
+            out.push(delimited_run(
                 context,
-                pair.open + 2,
-                pair.close,
+                pair,
+                Kind::StrikethroughDelimiterToken,
                 owner,
                 allow_links,
-                depth + 1,
+                depth,
                 &protected,
             )?);
-            children.push(tok(
-                context.text,
-                pair.close,
-                pair.close + 2,
-                Kind::StrikethroughDelimiterToken,
-            )?);
-            out.push(node(Kind::Strikethrough, children, Vec::new())?);
-            at = pair.close + 2;
+            at = pair.close + pair.width;
             plain = at;
             continue;
         }
@@ -475,28 +435,15 @@ fn parse_inlines_within(
         }
         if let Some(pair) = emphasis.get(emphasis_cursor).filter(|pair| pair.open == at) {
             flush(context.text, plain, at, &mut out)?;
-            let mut children = vec![tok(
-                context.text,
-                pair.open,
-                pair.open + pair.width,
-                Kind::EmphasisDelimiterToken,
-            )?];
-            children.extend(parse_inlines_within(
+            out.push(delimited_run(
                 context,
-                pair.open + pair.width,
-                pair.close,
+                pair,
+                Kind::EmphasisDelimiterToken,
                 owner,
                 allow_links,
-                depth + 1,
+                depth,
                 &protected,
             )?);
-            children.push(tok(
-                context.text,
-                pair.close,
-                pair.close + pair.width,
-                Kind::EmphasisDelimiterToken,
-            )?);
-            out.push(node(pair.kind, children, Vec::new())?);
             at = pair.close + pair.width;
             plain = at;
             continue;
@@ -638,87 +585,10 @@ fn parse_inlines_within(
             }
         }
         if rest.starts_with('<') {
-            if let Some(close) = html_close(source, at, end) {
-                let inside = &source[at + 1..close - 1];
-                let kind = if is_autolink(inside) {
-                    Some(Kind::Autolink)
-                } else if is_raw_html(&source[at..close]) {
-                    Some(Kind::RawHtml)
-                } else {
-                    None
-                };
-                if let Some(kind) = kind {
-                    flush(context.text, plain, at, &mut out)?;
-                    let identity = SyntaxIdentity::fresh()?;
-                    let mut annotations = if kind == Kind::Autolink {
-                        link_annotations(
-                            if inside.contains('@') && !inside.contains(':') {
-                                format!("mailto:{inside}")
-                            } else {
-                                inside.to_owned()
-                            },
-                            at + 1,
-                            close - 1,
-                            owner,
-                        )
-                    } else {
-                        Vec::new()
-                    };
-                    if kind == Kind::RawHtml && context.dialect.tag_filter() {
-                        let (tag_range, state) = super::gfm::classify_html(&source[at..close]);
-                        annotations.push(
-                            identity.metadata_annotation(super::gfm::HTML_TAG_FILTER, state.data()),
-                        );
-                        if state == super::gfm::HtmlTagFilter::Disallowed {
-                            if let Some((tag_start, tag_end)) = tag_range {
-                                context.diagnostics.push(TreeDiagnostic {
-                                    code: Diagnostic::FilteredHtmlTag,
-                                    range: TextRange::new(
-                                        TextSize::try_from_usize(at + tag_start).map_err(|_| {
-                                            ParseError::SourceTooLarge {
-                                                bytes: at + tag_start,
-                                            }
-                                        })?,
-                                        TextSize::try_from_usize(at + tag_end).map_err(|_| {
-                                            ParseError::SourceTooLarge {
-                                                bytes: at + tag_end,
-                                            }
-                                        })?,
-                                    )
-                                    .map_err(|_| {
-                                        ParseError::StructuralInvariant {
-                                            reason: "invalid filtered HTML range".into(),
-                                        }
-                                    })?,
-                                    severity: crate::SyntaxSeverity::Error,
-                                    message: Arc::from("disallowed GFM HTML tag"),
-                                });
-                            }
-                        }
-                    }
-                    out.push(GreenElement::Node(semantic_with_identity(
-                        kind,
-                        vec![
-                            tok(context.text, at, at + 1, Kind::AutolinkOpenToken)?,
-                            tok(
-                                context.text,
-                                at + 1,
-                                close - 1,
-                                if kind == Kind::RawHtml {
-                                    Kind::HtmlToken
-                                } else {
-                                    Kind::TextToken
-                                },
-                            )?,
-                            tok(context.text, close - 1, close, Kind::AutolinkCloseToken)?,
-                        ],
-                        identity,
-                        annotations,
-                    )?));
-                    at = close;
-                    plain = at;
-                    continue;
-                }
+            if let Some(close) = push_angle_inline(context, at, end, owner, plain, &mut out)? {
+                at = close;
+                plain = at;
+                continue;
             }
         }
         if let Some(matched) = bracket_by_start.get(&at).map(|&index| brackets[index]) {
@@ -783,6 +653,174 @@ fn parse_inlines_within(
     }
     flush(context.text, plain, end, &mut out)?;
     Ok(out)
+}
+
+/// Past `MD_MAX_INLINE_DEPTH`, drops every delimiter whose arm would recurse,
+/// so the delimiters are taken as plain text instead of growing the recursion
+/// further.  Reports the first delimiter really demoted -- once per document,
+/// spanning that delimiter.
+fn demote_delimiters_to_text(
+    context: &mut InlineContext<'_>,
+    brackets: &mut Vec<BracketMatch>,
+    emphasis: &mut Vec<EmphasisPair>,
+    strikethrough: &mut Vec<EmphasisPair>,
+) -> Result<(), ParseError> {
+    if let Some(demoted) = first_demoted_delimiter(brackets, emphasis, strikethrough) {
+        if !context.depth_diagnostic_emitted {
+            context.depth_diagnostic_emitted = true;
+            context.diagnostics.push(TreeDiagnostic {
+                code: Diagnostic::NestingDepthExceeded,
+                range: TextRange::new(
+                    TextSize::try_from_usize(demoted.start).map_err(|_| {
+                        ParseError::SourceTooLarge {
+                            bytes: demoted.start,
+                        }
+                    })?,
+                    TextSize::try_from_usize(demoted.end)
+                        .map_err(|_| ParseError::SourceTooLarge { bytes: demoted.end })?,
+                )
+                .map_err(|_| ParseError::StructuralInvariant {
+                    reason: "invalid inline nesting-depth range".into(),
+                })?,
+                severity: crate::SyntaxSeverity::Error,
+                message: Arc::from(format!(
+                    "Markdown inline nesting exceeds the supported depth of {}; deeper structure is treated as plain text.",
+                    super::MD_MAX_INLINE_DEPTH
+                )),
+            });
+        }
+    }
+    brackets.clear();
+    emphasis.clear();
+    strikethrough.clear();
+    Ok(())
+}
+
+/// The content a matched delimiter pair wraps -- emphasis, strong, or
+/// strikethrough -- as one node, with the opening and closing delimiters kept
+/// as tokens of their own so the tree still spells the source.  The pair
+/// already carries the node kind it opens and how wide its delimiters are.
+fn delimited_run(
+    context: &mut InlineContext<'_>,
+    pair: &EmphasisPair,
+    delimiter: Kind,
+    owner: SyntaxIdentity,
+    allow_links: bool,
+    depth: usize,
+    protected: &[std::ops::Range<usize>],
+) -> Result<GreenElement<OkfMarkdownLanguage>, ParseError> {
+    let mut children = vec![tok(
+        context.text,
+        pair.open,
+        pair.open + pair.width,
+        delimiter,
+    )?];
+    children.extend(parse_inlines_within(
+        context,
+        pair.open + pair.width,
+        pair.close,
+        owner,
+        allow_links,
+        depth + 1,
+        protected,
+    )?);
+    children.push(tok(
+        context.text,
+        pair.close,
+        pair.close + pair.width,
+        delimiter,
+    )?);
+    node(pair.kind, children, Vec::new())
+}
+
+/// The inline forms an angle bracket can open -- an autolink or a run of raw
+/// HTML -- flushed out with the pending plain text before them and the
+/// annotations each carries.  Answers where the form ended, or `None` when the
+/// bracket opens neither and its byte is left to be taken as text.
+fn push_angle_inline(
+    context: &mut InlineContext<'_>,
+    at: usize,
+    end: usize,
+    owner: SyntaxIdentity,
+    plain: usize,
+    out: &mut Vec<GreenElement<OkfMarkdownLanguage>>,
+) -> Result<Option<usize>, ParseError> {
+    let source = context.text.shared();
+    let Some(close) = html_close(source, at, end) else {
+        return Ok(None);
+    };
+    let inside = &source[at + 1..close - 1];
+    let kind = if is_autolink(inside) {
+        Kind::Autolink
+    } else if is_raw_html(&source[at..close]) {
+        Kind::RawHtml
+    } else {
+        return Ok(None);
+    };
+    flush(context.text, plain, at, out)?;
+    let identity = SyntaxIdentity::fresh()?;
+    let mut annotations = if kind == Kind::Autolink {
+        link_annotations(
+            if inside.contains('@') && !inside.contains(':') {
+                format!("mailto:{inside}")
+            } else {
+                inside.to_owned()
+            },
+            at + 1,
+            close - 1,
+            owner,
+        )
+    } else {
+        Vec::new()
+    };
+    if kind == Kind::RawHtml && context.dialect.tag_filter() {
+        let (tag_range, state) = super::gfm::classify_html(&source[at..close]);
+        annotations.push(identity.metadata_annotation(super::gfm::HTML_TAG_FILTER, state.data()));
+        if state == super::gfm::HtmlTagFilter::Disallowed {
+            if let Some((tag_start, tag_end)) = tag_range {
+                context.diagnostics.push(TreeDiagnostic {
+                    code: Diagnostic::FilteredHtmlTag,
+                    range: TextRange::new(
+                        TextSize::try_from_usize(at + tag_start).map_err(|_| {
+                            ParseError::SourceTooLarge {
+                                bytes: at + tag_start,
+                            }
+                        })?,
+                        TextSize::try_from_usize(at + tag_end).map_err(|_| {
+                            ParseError::SourceTooLarge {
+                                bytes: at + tag_end,
+                            }
+                        })?,
+                    )
+                    .map_err(|_| ParseError::StructuralInvariant {
+                        reason: "invalid filtered HTML range".into(),
+                    })?,
+                    severity: crate::SyntaxSeverity::Error,
+                    message: Arc::from("disallowed GFM HTML tag"),
+                });
+            }
+        }
+    }
+    out.push(GreenElement::Node(semantic_with_identity(
+        kind,
+        vec![
+            tok(context.text, at, at + 1, Kind::AutolinkOpenToken)?,
+            tok(
+                context.text,
+                at + 1,
+                close - 1,
+                if kind == Kind::RawHtml {
+                    Kind::HtmlToken
+                } else {
+                    Kind::TextToken
+                },
+            )?,
+            tok(context.text, close - 1, close, Kind::AutolinkCloseToken)?,
+        ],
+        identity,
+        annotations,
+    )?));
+    Ok(Some(close))
 }
 
 fn bracket_matches(
@@ -919,34 +957,46 @@ struct ParsedLink {
     end: usize,
 }
 
-fn parse_link(
-    context: &mut InlineContext<'_>,
+/// Where a link points, and how the author said so.
+struct LinkTarget {
+    /// Offset just past the whole link.
+    close: usize,
+    /// The destination the semantic layer reports, decoded.
+    destination: String,
+    /// The authored span the destination was read from -- inside this
+    /// document for an inline link, inside the definition for a reference.
+    range: std::ops::Range<usize>,
+    /// The link's title, decoded, when it has one.
+    title: Option<String>,
+    /// The normalized label a reference link resolved through; `None` for an
+    /// inline link.
+    reference: Option<Arc<str>>,
+    /// The authored spans of an inline `(destination "title")`, for emitting
+    /// its tokens; `None` for a reference link.
+    parts: Option<InlineDestination>,
+    /// Which of the two forms this was, as the annotation spells it.
+    kind: &'static str,
+}
+
+/// Reads a matched link's destination: either the `(...)` written right after
+/// the label, or the definition the label references.  Every failure here is
+/// an invariant break -- `bracket_matches` only matches a bracket pair it has
+/// already resolved -- so this reports, it does not recover.
+fn resolve_link_target(
+    context: &InlineContext<'_>,
     matched: BracketMatch,
     end: usize,
-    owner: SyntaxIdentity,
-    allow_links: bool,
-    depth: usize,
-    protected: &[std::ops::Range<usize>],
-) -> Result<ParsedLink, ParseError> {
+) -> Result<LinkTarget, ParseError> {
     let source = context.text.shared();
     let BracketMatch {
-        start,
         open,
         label_end,
         end: matched_end,
-        image,
+        ..
     } = matched;
     let label = &source[open + 1..label_end];
     let after_label = label_end + 1;
-    let (
-        close,
-        semantic_destination,
-        semantic_range,
-        semantic_title,
-        normalized_reference,
-        destination_parts,
-        link_kind,
-    ) = if let Some(parts) = source[after_label..end]
+    if let Some(parts) = source[after_label..end]
         .starts_with('(')
         .then(|| inline_destination(source, after_label, end))
         .flatten()
@@ -956,53 +1006,79 @@ fn parse_link(
             .title
             .clone()
             .map(|range| decode_destination(&source[range.start + 1..range.end - 1]));
+        return Ok(LinkTarget {
+            close: parts.close + 1,
+            destination: decode_destination(&source[parts.destination.clone()]),
+            range: parts.destination.clone(),
+            title: semantic_title,
+            reference: None,
+            parts: Some(parts),
+            kind: "inline",
+        });
+    }
+    let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
+        let reference_end = find_unescaped(source, after_label + 1, end, ']').ok_or_else(|| {
+            ParseError::StructuralInvariant {
+                reason: "matched reference link has no closing label".into(),
+            }
+        })?;
+        let explicit = &source[after_label + 1..reference_end];
         (
-            parts.close + 1,
-            decode_destination(&source[parts.destination.clone()]),
-            parts.destination.clone(),
-            semantic_title,
-            None,
-            Some(parts),
-            "inline",
+            if explicit.is_empty() { label } else { explicit },
+            reference_end + 1,
         )
     } else {
-        let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
-            let reference_end =
-                find_unescaped(source, after_label + 1, end, ']').ok_or_else(|| {
-                    ParseError::StructuralInvariant {
-                        reason: "matched reference link has no closing label".into(),
-                    }
-                })?;
-            let explicit = &source[after_label + 1..reference_end];
-            (
-                if explicit.is_empty() { label } else { explicit },
-                reference_end + 1,
-            )
-        } else {
-            (label, after_label)
-        };
-        let normalized =
-            normalize_label(reference_label).ok_or_else(|| ParseError::StructuralInvariant {
-                reason: "matched reference link has an invalid label".into(),
-            })?;
-        let definition = context
-            .references
-            .definitions
-            .get(&normalized)
-            .ok_or_else(|| ParseError::StructuralInvariant {
-                reason: "matched reference link has no definition".into(),
-            })?;
-        (
-            reference_end,
-            definition.destination.to_string(),
-            definition.destination_range.start().to_usize()
-                ..definition.destination_range.end().to_usize(),
-            definition.title.as_ref().map(ToString::to_string),
-            Some(normalized),
-            None,
-            "reference",
-        )
+        (label, after_label)
     };
+    let normalized =
+        normalize_label(reference_label).ok_or_else(|| ParseError::StructuralInvariant {
+            reason: "matched reference link has an invalid label".into(),
+        })?;
+    let definition = context
+        .references
+        .definitions
+        .get(&normalized)
+        .ok_or_else(|| ParseError::StructuralInvariant {
+            reason: "matched reference link has no definition".into(),
+        })?;
+    Ok(LinkTarget {
+        close: reference_end,
+        destination: definition.destination.to_string(),
+        range: definition.destination_range.start().to_usize()
+            ..definition.destination_range.end().to_usize(),
+        title: definition.title.as_ref().map(ToString::to_string),
+        reference: Some(normalized),
+        parts: None,
+        kind: "reference",
+    })
+}
+
+fn parse_link(
+    context: &mut InlineContext<'_>,
+    matched: BracketMatch,
+    end: usize,
+    owner: SyntaxIdentity,
+    allow_links: bool,
+    depth: usize,
+    protected: &[std::ops::Range<usize>],
+) -> Result<ParsedLink, ParseError> {
+    let BracketMatch {
+        start,
+        open,
+        label_end,
+        end: matched_end,
+        image,
+    } = matched;
+    let after_label = label_end + 1;
+    let LinkTarget {
+        close,
+        destination: semantic_destination,
+        range: semantic_range,
+        title: semantic_title,
+        reference: normalized_reference,
+        parts: destination_parts,
+        kind: link_kind,
+    } = resolve_link_target(context, matched, end)?;
 
     let mut children = Vec::new();
     if image {

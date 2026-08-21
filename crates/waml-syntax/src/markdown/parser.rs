@@ -732,6 +732,28 @@ fn bad_line_entry(
     identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)
 }
 
+/// Gives up on a frontmatter line: keeps its bytes as one bad-token entry on
+/// the open block, so the line still reaches the tree spelled exactly as it
+/// was written.  The caller has already said why in a diagnostic -- there are
+/// several reasons a line ends up here and only the caller knows which.
+fn push_bad_line(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    content_start: usize,
+    code: OkfSyntaxDiagnosticCode,
+    stack: &mut [FmFrame],
+) -> Result<(), ParseError> {
+    let entry = bad_line_entry(factory, text, source, line, content_start, code)?;
+    stack
+        .last_mut()
+        .expect("stack is never empty")
+        .children
+        .push(GreenElement::Node(entry));
+    Ok(())
+}
+
 /// If `frame` has an open pending entry, resolve it to an explicit `Null`
 /// value (a missing `FrontmatterValue` token) and splice it into the
 /// frame's own children at its recorded `insert_at`. Shared by
@@ -1304,6 +1326,157 @@ fn push_blank_or_comment(stack: &mut [FmFrame], entry: crate::GreenNode<OkfMarkd
     }
 }
 
+/// Whether a frontmatter line's indentation found a block to belong to.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum IndentFit {
+    /// The top of the stack is now the block this line belongs to.
+    Open,
+    /// The indentation matches no open block, or opening one would nest
+    /// past the cap.  The line has been reported and kept as a bad line.
+    Rejected,
+}
+
+/// Opens, closes, or keeps the open frames so that the top of the stack is
+/// the block the line at this indentation belongs to.  A YAML block sequence
+/// may sit at its own key's indentation, so `Open` does not imply the stack
+/// is unchanged.
+#[allow(clippy::too_many_arguments)]
+fn fit_indent_to_open_blocks(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    indent: usize,
+    indent_end: usize,
+    stack: &mut Vec<FmFrame>,
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<IndentFit, ParseError> {
+    let top_indent = stack.last().expect("stack is never empty").indent;
+    if indent > top_indent {
+        if stack
+            .last()
+            .expect("stack is never empty")
+            .pending
+            .is_none()
+        {
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                line.start,
+                indent_end,
+                "frontmatter indentation does not match an open block",
+            ));
+            push_bad_line(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                stack,
+            )?;
+            return Ok(IndentFit::Rejected);
+        }
+        // Nesting cap, mirroring `MD_MAX_CONTAINER_DEPTH` for markdown
+        // containers and published as `FRONTMATTER_MAX_NESTING_DEPTH` so
+        // tree consumers cap at the same depth: every frame becomes one
+        // more level of the green
+        // tree, and reading or dropping that tree recurses. Without the
+        // cap a document of progressively indented `k:` lines — cheap to
+        // write, cheaper still to hit on wasm's 1MB stack — overflows the
+        // stack instead of producing a diagnostic.
+        if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                line.start,
+                indent_end,
+                "frontmatter nesting is too deep",
+            ));
+            finalize_pending_with_null(factory, stack)?;
+            push_bad_line(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                stack,
+            )?;
+            return Ok(IndentFit::Rejected);
+        }
+        let kind = if is_dash_at(source, indent_end, line.significant_end) {
+            FmContainerKind::Sequence
+        } else {
+            FmContainerKind::Mapping
+        };
+        stack.push(FmFrame::new(kind, indent));
+    } else if indent < top_indent {
+        while stack.len() > 1 && indent < stack.last().expect("checked len").indent {
+            pop_frame(factory, stack)?;
+        }
+        if indent != stack.last().expect("stack is never empty").indent {
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                line.start,
+                indent_end,
+                "frontmatter indentation does not match an open block",
+            ));
+            push_bad_line(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                stack,
+            )?;
+            return Ok(IndentFit::Rejected);
+        }
+        finalize_pending_with_null(factory, stack)?;
+    } else {
+        let top = stack.last().expect("stack is never empty");
+        let dash = is_dash_at(source, indent_end, line.significant_end);
+        if top.kind == FmContainerKind::Mapping && dash && top.pending.is_some() {
+            // YAML lets a block sequence sit at its own key's indentation:
+            //
+            //     tags:
+            //     - a
+            //
+            // The key's value slot is still open, so the dash opens a
+            // sequence at THIS indent rather than being a dash with no
+            // container. Capped like the indent-increase branch.
+            if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    line.start,
+                    indent_end,
+                    "frontmatter nesting is too deep",
+                ));
+                finalize_pending_with_null(factory, stack)?;
+                push_bad_line(
+                    factory,
+                    text,
+                    source,
+                    line,
+                    indent_end,
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    stack,
+                )?;
+                return Ok(IndentFit::Rejected);
+            }
+            stack.push(FmFrame::new(FmContainerKind::Sequence, indent));
+        } else if top.kind == FmContainerKind::Sequence && !dash {
+            // A non-dash line at the sequence's own indent ends it — the
+            // sequence was opened at its key's indent, so the enclosing
+            // mapping continues on this very line.
+            pop_frame(factory, stack)?;
+            finalize_pending_with_null(factory, stack)?;
+        } else {
+            finalize_pending_with_null(factory, stack)?;
+        }
+    }
+    Ok(IndentFit::Open)
+}
+
 fn build_frontmatter_mapping(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -1339,19 +1512,15 @@ fn build_frontmatter_mapping(
                 "tab used in frontmatter indentation",
             ));
             finalize_pending_with_null(factory, &mut stack)?;
-            let entry = bad_line_entry(
+            push_bad_line(
                 factory,
                 text,
                 source,
                 line,
                 indent_end,
                 OkfSyntaxDiagnosticCode::TabInFrontmatterIndent,
+                &mut stack,
             )?;
-            stack
-                .last_mut()
-                .expect("stack is never empty")
-                .children
-                .push(GreenElement::Node(entry));
             continue;
         }
 
@@ -1361,148 +1530,19 @@ fn build_frontmatter_mapping(
             continue;
         }
 
-        let top_indent = stack.last().expect("stack is never empty").indent;
-        if indent > top_indent {
-            if stack
-                .last()
-                .expect("stack is never empty")
-                .pending
-                .is_none()
-            {
-                clean = false;
-                diagnostics.push(diagnostic(
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                    line.start,
-                    indent_end,
-                    "frontmatter indentation does not match an open block",
-                ));
-                let entry = bad_line_entry(
-                    factory,
-                    text,
-                    source,
-                    line,
-                    indent_end,
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                )?;
-                stack
-                    .last_mut()
-                    .expect("stack is never empty")
-                    .children
-                    .push(GreenElement::Node(entry));
-                continue;
-            }
-            // Nesting cap, mirroring `MD_MAX_CONTAINER_DEPTH` for markdown
-            // containers and published as `FRONTMATTER_MAX_NESTING_DEPTH` so
-            // tree consumers cap at the same depth: every frame becomes one
-            // more level of the green
-            // tree, and reading or dropping that tree recurses. Without the
-            // cap a document of progressively indented `k:` lines — cheap to
-            // write, cheaper still to hit on wasm's 1MB stack — overflows the
-            // stack instead of producing a diagnostic.
-            if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
-                clean = false;
-                diagnostics.push(diagnostic(
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                    line.start,
-                    indent_end,
-                    "frontmatter nesting is too deep",
-                ));
-                finalize_pending_with_null(factory, &mut stack)?;
-                let entry = bad_line_entry(
-                    factory,
-                    text,
-                    source,
-                    line,
-                    indent_end,
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                )?;
-                stack
-                    .last_mut()
-                    .expect("stack is never empty")
-                    .children
-                    .push(GreenElement::Node(entry));
-                continue;
-            }
-            let kind = if is_dash_at(source, indent_end, line.significant_end) {
-                FmContainerKind::Sequence
-            } else {
-                FmContainerKind::Mapping
-            };
-            stack.push(FmFrame::new(kind, indent));
-        } else if indent < top_indent {
-            while stack.len() > 1 && indent < stack.last().expect("checked len").indent {
-                pop_frame(factory, &mut stack)?;
-            }
-            if indent != stack.last().expect("stack is never empty").indent {
-                clean = false;
-                diagnostics.push(diagnostic(
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                    line.start,
-                    indent_end,
-                    "frontmatter indentation does not match an open block",
-                ));
-                let entry = bad_line_entry(
-                    factory,
-                    text,
-                    source,
-                    line,
-                    indent_end,
-                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                )?;
-                stack
-                    .last_mut()
-                    .expect("stack is never empty")
-                    .children
-                    .push(GreenElement::Node(entry));
-                continue;
-            }
-            finalize_pending_with_null(factory, &mut stack)?;
-        } else {
-            let top = stack.last().expect("stack is never empty");
-            let dash = is_dash_at(source, indent_end, line.significant_end);
-            if top.kind == FmContainerKind::Mapping && dash && top.pending.is_some() {
-                // YAML lets a block sequence sit at its own key's indentation:
-                //
-                //     tags:
-                //     - a
-                //
-                // The key's value slot is still open, so the dash opens a
-                // sequence at THIS indent rather than being a dash with no
-                // container. Capped like the indent-increase branch.
-                if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
-                    clean = false;
-                    diagnostics.push(diagnostic(
-                        OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                        line.start,
-                        indent_end,
-                        "frontmatter nesting is too deep",
-                    ));
-                    finalize_pending_with_null(factory, &mut stack)?;
-                    let entry = bad_line_entry(
-                        factory,
-                        text,
-                        source,
-                        line,
-                        indent_end,
-                        OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
-                    )?;
-                    stack
-                        .last_mut()
-                        .expect("stack is never empty")
-                        .children
-                        .push(GreenElement::Node(entry));
-                    continue;
-                }
-                stack.push(FmFrame::new(FmContainerKind::Sequence, indent));
-            } else if top.kind == FmContainerKind::Sequence && !dash {
-                // A non-dash line at the sequence's own indent ends it — the
-                // sequence was opened at its key's indent, so the enclosing
-                // mapping continues on this very line.
-                pop_frame(factory, &mut stack)?;
-                finalize_pending_with_null(factory, &mut stack)?;
-            } else {
-                finalize_pending_with_null(factory, &mut stack)?;
-            }
+        let fit = fit_indent_to_open_blocks(
+            factory,
+            text,
+            source,
+            line,
+            indent,
+            indent_end,
+            &mut stack,
+            diagnostics,
+        )?;
+        if fit == IndentFit::Rejected {
+            clean = false;
+            continue;
         }
 
         // A dash only opens a sequence item when the block it lands in IS a
@@ -1520,19 +1560,15 @@ fn build_frontmatter_mapping(
                     line.significant_end,
                     "sequence item outside a sequence",
                 ));
-                let entry = bad_line_entry(
+                push_bad_line(
                     factory,
                     text,
                     source,
                     line,
                     indent_end,
                     OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                    &mut stack,
                 )?;
-                stack
-                    .last_mut()
-                    .expect("stack is never empty")
-                    .children
-                    .push(GreenElement::Node(entry));
                 continue;
             }
             let outcome = push_sequence_item(
@@ -1576,19 +1612,15 @@ fn build_frontmatter_mapping(
                 line.significant_end,
                 "malformed frontmatter entry",
             ));
-            let entry = bad_line_entry(
+            push_bad_line(
                 factory,
                 text,
                 source,
                 line,
                 indent_end,
                 OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                &mut stack,
             )?;
-            stack
-                .last_mut()
-                .expect("stack is never empty")
-                .children
-                .push(GreenElement::Node(entry));
         }
     }
 
