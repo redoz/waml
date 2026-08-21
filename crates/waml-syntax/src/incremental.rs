@@ -521,18 +521,17 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
     candidate: &SyntaxTree<L>,
     map: &ChangeMap,
 ) -> Result<GreenNode<L>, ParseError> {
+    // Only the previous tree's annotations are indexed. `rebuild` below walks
+    // the candidate green tree itself and re-derives each occurrence ordinal as
+    // it goes, so a second `collect_occurrences` pass over the candidate red
+    // tree -- which this used to do, into a map nothing ever read -- is a whole
+    // extra traversal of the document for no result. It was the single largest
+    // item in an incremental reparse.
     let mut previous_annotations = HashMap::new();
     collect_occurrences(
         previous.root(),
         Some(map),
         &mut previous_annotations,
-        &mut HashMap::new(),
-    );
-    let mut candidate_occurrences = HashMap::new();
-    collect_occurrences(
-        candidate.root(),
-        None,
-        &mut candidate_occurrences,
         &mut HashMap::new(),
     );
     fn merge(
@@ -552,7 +551,6 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
     }
     fn rebuild<L: SyntaxLanguage>(
         node: &GreenNode<L>,
-        path: &mut Vec<u32>,
         copied: &HashMap<OccurrenceKey<L::Kind>, Vec<SyntaxAnnotation>>,
         occurrences: &mut HashMap<(L::Kind, TextRange, bool), usize>,
         start: TextSize,
@@ -580,12 +578,10 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         let mut offset = start;
         let mut children_changed = false;
         let mut children = Vec::with_capacity(node.children().len());
-        for (index, child) in node.children().iter().enumerate() {
+        for child in node.children() {
             let result = match child {
                 GreenElement::Node(child) => {
-                    path.push(index as u32);
-                    let rebuilt = rebuild(child, path, copied, occurrences, offset)?;
-                    path.pop();
+                    let rebuilt = rebuild(child, copied, occurrences, offset)?;
                     children_changed |= !Arc::ptr_eq(child, &rebuilt);
                     GreenElement::Node(rebuilt)
                 }
@@ -637,7 +633,6 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
     }
     rebuild(
         candidate.root_green(),
-        &mut Vec::new(),
         &previous_annotations,
         &mut HashMap::new(),
         TextSize::try_from_usize(0).map_err(|_| ParseError::WidthOverflow)?,

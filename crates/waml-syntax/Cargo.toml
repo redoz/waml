@@ -19,3 +19,7 @@ serde_json.workspace = true
 [[bench]]
 name = "markdown_parse"
 harness = false
+
+[[bench]]
+name = "markdown_reparse"
+harness = false
