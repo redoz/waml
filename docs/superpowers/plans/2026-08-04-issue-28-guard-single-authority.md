@@ -1,6 +1,6 @@
 # Issue 28 — Guards and lowerers: single authority instead of re-lexing
 
-## Status — 2026-08-21: PARTIAL — tasks B, C and D are still outstanding
+## Status — 2026-08-21: PARTIAL — tasks B and C are still outstanding
 
 Triage verdict from the A39 planning-hygiene pass. This is real, unfinished
 work, not stale paper. `2026-08-04-issue-triage-index.md` already re-scoped it
@@ -28,9 +28,23 @@ NOT DONE.** Two independent extractors survive:
 `crates/waml/src/uml/lower.rs:909 fn frontmatter_value`, the latter still
 `split_once(':')`-based with its own `decode_scalar` (line 921).
 
-**Task D — strengthen the debug oracle: NOT DONE.**
-`crates/waml-syntax/src/incremental.rs:334` still compares
-`oracle.structure.islands.len()` — the island *count*, not the tree.
+**Task D — strengthen the debug oracle: DONE (e1b31d23).** The island-count
+`debug_assert_eq` is gone; a debug-only lockstep green-tree comparison
+(`incremental::first_structural_divergence`) checks kind, width, child count,
+token flags, token spelling and trivia, excluding storage and annotations.
+
+One deviation from the task as written, forced by the evidence: the comparison
+does **not** sit in `plan_window_reparse`, because the invariant is not total
+there. A window resolves reference links against the definitions inside it
+alone and `reparse_markdown` repairs the ranges that depend on definitions
+outside it afterwards — the existing test
+`a_definition_created_behind_a_block_quote_prefix_still_resolves_its_uses`
+diverges at the splice and agrees after the repair. The comparison therefore
+runs on the tree `reparse_markdown` publishes; that layer keeps the
+malformed-block assert, which is the fallback decision it actually owns.
+Cost, debug only: `cargo test -p waml-syntax --test properties` went from
+2.32-2.35s to 2.38-2.48s. It immediately exposed two live splicing defects
+(b257bd40, 900de368).
 
 **Before implementing:** re-verify B/C/D line numbers against `main`, as the
 triage index instructs. The ordering constraints it records (this plan vs
@@ -201,7 +215,7 @@ the parser already computed. Each pair has verified drift today or a
   single-quoted value, a numeric value, and a bool value read through both
   the okf and uml paths, asserting the three former copies now agree.
 
-### Strengthen the debug oracle to full-tree comparison
+### Strengthen the debug oracle to full-tree comparison — DONE, see Status
 - `crates/waml-syntax/src/incremental.rs:981-1000`: replace the island-count
   `debug_assert_eq` with a structural comparison of `tree` against
   `oracle.tree` — a recursive green/red walk asserting kind, range, and token
