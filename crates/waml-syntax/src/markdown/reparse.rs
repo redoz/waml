@@ -702,6 +702,17 @@ fn collect_reusable(
 /// a subtree the parser reshaped would hand callers a tree no full parse
 /// produces, so compare shapes and let a mismatch fall through to the
 /// child-by-child walk.
+///
+/// Derived annotations are part of that shape, for the same reason and with
+/// the same remedy. A node's annotations can be read from text outside its own
+/// span — a table cell's alignment is written in the delimiter row, a
+/// reference link's destination in a definition paragraphs away — so a cell or
+/// a link can span byte-identical text and still owe a different value after
+/// the edit. Reusing it there republishes the pre-edit value. Falling through
+/// costs that one node its restored identity, which is the right price: its
+/// meaning changed, and a full parse would have minted a new one anyway.
+/// Identity annotations themselves are excluded from the comparison — see
+/// [`super::derived_annotations_agree`].
 fn same_shape(
     previous: &GreenElement<OkfMarkdownLanguage>,
     candidate: &GreenElement<OkfMarkdownLanguage>,
@@ -724,6 +735,7 @@ fn same_shape_node(
     previous.kind() == candidate.kind()
         && previous.width() == candidate.width()
         && previous.children().len() == candidate.children().len()
+        && super::derived_annotations_agree(previous.annotations(), candidate.annotations())
         && previous
             .children()
             .iter()
@@ -737,6 +749,10 @@ fn same_shape_token(
 ) -> bool {
     previous.kind() == candidate.kind()
         && previous.flags() == candidate.flags()
+        && super::derived_annotations_agree(
+            previous.syntax_annotations(),
+            candidate.syntax_annotations(),
+        )
         && same_shape_text(previous.text(), candidate.text())
         && same_shape_trivia(previous.leading_trivia(), candidate.leading_trivia())
         && same_shape_trivia(previous.trailing_trivia(), candidate.trailing_trivia())

@@ -704,6 +704,62 @@ fn escaping_a_definition_destination_moves_the_span_its_uses_cached() {
 }
 
 #[test]
+fn a_delimiter_row_edit_refreshes_the_alignment_its_cells_cached() {
+    // This fails if a cell whose own text did not change may be reused across
+    // an edit to the row that decides its alignment. A table cell's alignment
+    // is written in the delimiter row, not in the cell, so `| a |` spans
+    // byte-identical text before and after `| - |` becomes `| :-: |` -- and
+    // both the pre-edit green and the pre-edit annotation rode across, leaving
+    // the header cell reporting `None` for a centred column.
+    let old = "| a |\n| - |\n| b |\n";
+    let new = "| a |\n| :-: |\n| b |\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(8, 9),
+            replacement: Arc::from(":-:"),
+        }],
+    )
+    .unwrap();
+
+    let alignments = |snapshot: &waml_syntax::MarkdownSyntaxSnapshot| {
+        let queries = snapshot.queries();
+        let mut cells: Vec<_> = queries
+            .spans(range(0, snapshot.text().shared().len()))
+            .filter_map(|span| queries.table_cell(span.owner))
+            .map(|cell| (cell.range, cell.alignment))
+            .collect();
+        cells.sort_by_key(|(range, _)| (range.start(), range.end()));
+        cells.dedup();
+        cells
+    };
+    let full = parse_markdown(
+        DocumentRevision::new(2),
+        text(new),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+
+    assert!(
+        alignments(&update.snapshot)
+            .iter()
+            .all(|(_, alignment)| *alignment == waml_syntax::TableAlignment::Center),
+        "every cell of a centred column reports Center: {:?}",
+        alignments(&update.snapshot)
+    );
+    assert_eq!(alignments(&update.snapshot), alignments(&full));
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+}
+
+#[test]
 fn a_reference_use_opened_by_an_inner_bracket_still_forces_a_reparse() {
     // This fails if the label scan pairs brackets left to right. The parser
     // closes a `]` against the innermost `[` still open, so it reads

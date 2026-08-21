@@ -384,14 +384,52 @@ fn green_text(text: &GreenText) -> Option<&str> {
 /// "The same tree" is deliberately about shape and spelling, not storage: the
 /// spliced tree keeps whatever text allocation each rebased token already had,
 /// while a full parse builds fresh slices, and that difference is meaningless
-/// to every consumer. Annotations are excluded for the same reason — they are
-/// transferred onto the splice from the previous tree, never reparsed, so the
-/// full parse legitimately carries none.
+/// to every consumer.
+///
+/// Annotations *are* compared, minus the two kinds that name an identity. That
+/// used to be the whole of the blind spot: the exclusion was inherited from
+/// the generic annotation story, where annotations are applied from outside
+/// and transferred onto a splice, so a full parse legitimately carries none.
+/// That is not this caller's situation. `markdown::snapshot` compares against
+/// a full parse *of the same final text*, and the Markdown parser derives
+/// every one of its annotations from that text — a link's destination, the
+/// authored span it was read from, its title, its kind, its reference label,
+/// an entity's value. Excluding them left the one thing an annotation
+/// transfer can get wrong as the one thing the tree oracle could not see, and
+/// a reference definition whose escaping moved its destination span shipped
+/// exactly there (see `reparse::same_definition`).
+///
+/// Identities are the real exception and only they: `waml.markdown.identity`
+/// and a link's `owner` both carry a `SyntaxIdentity`, minted fresh per parse
+/// and then deliberately *preserved* across a reparse, so the two sides
+/// disagree by design. Nothing else may.
 #[cfg(debug_assertions)]
 pub(crate) fn first_structural_divergence(
     left: &GreenNode<OkfMarkdownLanguage>,
     right: &GreenNode<OkfMarkdownLanguage>,
 ) -> Option<String> {
+    /// The annotations a full parse of the same text must reproduce, as
+    /// The two sides' derived annotations rendered for a report, or `None`
+    /// when they agree.
+    ///
+    /// Agreement is decided first and without allocating: this runs on every
+    /// node and token of every reparse a debug build performs, and agreeing is
+    /// the overwhelmingly common case.
+    fn annotation_divergence(
+        left: &[crate::SyntaxAnnotation],
+        right: &[crate::SyntaxAnnotation],
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        fn render(annotations: &[crate::SyntaxAnnotation]) -> Vec<String> {
+            let mut derived: Vec<String> = crate::markdown::derived_annotations(annotations)
+                .map(|annotation| format!("{}={:?}", annotation.kind(), annotation.data()))
+                .collect();
+            derived.sort_unstable();
+            derived
+        }
+        (!crate::markdown::derived_annotations_agree(left, right))
+            .then(|| (render(left), render(right)))
+    }
+
     fn trivia_agree(left: &[GreenTrivia], right: &[GreenTrivia]) -> bool {
         left.len() == right.len()
             && left.iter().zip(right.iter()).all(|(left, right)| {
@@ -446,6 +484,14 @@ pub(crate) fn first_structural_divergence(
                         right.children().len()
                     ));
                 }
+                if let Some((spliced, full)) =
+                    annotation_divergence(left.annotations(), right.annotations())
+                {
+                    return Some(format!(
+                        "offset {at}: spliced node {:?} annotations {spliced:?} != full parse {full:?}",
+                        left.kind()
+                    ));
+                }
                 left_stack.extend(left.children().iter().rev().cloned());
                 right_stack.extend(right.children().iter().rev().cloned());
             }
@@ -465,6 +511,14 @@ pub(crate) fn first_structural_divergence(
                         left.text(),
                         right.kind(),
                         right.text()
+                    ));
+                }
+                if let Some((spliced, full)) =
+                    annotation_divergence(left.syntax_annotations(), right.syntax_annotations())
+                {
+                    return Some(format!(
+                        "offset {at}: spliced token {:?} annotations {spliced:?} != full parse {full:?}",
+                        left.kind()
                     ));
                 }
                 at += left.width().to_usize();
@@ -675,6 +729,16 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         &mut previous_annotations,
         &mut HashMap::new(),
     );
+    /// The annotations a spliced node ends up with: its own, plus the ones the
+    /// pre-edit tree held at the same occurrence and it does not already have.
+    ///
+    /// Dedup is by *kind*, not by annotation id. Two annotations of one kind
+    /// are two answers to one question, and the node's own is the answer this
+    /// parse computed for this text, so it wins. Deduping by id instead let a
+    /// re-derived annotation through whenever the ids differed -- and a parser
+    /// annotation keyed by a per-parse identity always differs, so a table
+    /// cell whose delimiter row changed alignment came out of the transfer
+    /// carrying `center` *and* `none`.
     fn merge(
         existing: &[SyntaxAnnotation],
         copied: Option<&Vec<SyntaxAnnotation>>,
@@ -683,7 +747,7 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         for annotation in existing.iter().chain(copied.into_iter().flatten()) {
             if !annotations
                 .iter()
-                .any(|present| present.id() == annotation.id())
+                .any(|present| present.kind() == annotation.kind())
             {
                 annotations.push(annotation.clone());
             }

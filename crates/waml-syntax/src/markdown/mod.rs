@@ -29,6 +29,49 @@ pub use snapshot::{
 
 use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
+/// The two annotation kinds that carry a [`SyntaxIdentity`] rather than
+/// something read out of the document.
+///
+/// Every other Markdown annotation is *derived*: the parser computes it from
+/// the source text, so two parses of the same text must agree on it, and a
+/// reparse that reuses a node across an edit that changed it is publishing a
+/// stale value. These two are the opposite -- minted fresh per parse and then
+/// deliberately carried across a reparse so a node keeps its identity -- so
+/// they are the only ones a reuse decision or a full-parse comparison must
+/// look past.
+const IDENTITY_ANNOTATIONS: [&str; 2] = ["waml.markdown.identity", "waml.markdown.link.owner"];
+
+/// The annotations of `annotations` a parse of the same text must reproduce.
+pub(crate) fn derived_annotations(
+    annotations: &[crate::SyntaxAnnotation],
+) -> impl Iterator<Item = &crate::SyntaxAnnotation> {
+    annotations
+        .iter()
+        .filter(|annotation| !IDENTITY_ANNOTATIONS.contains(&annotation.kind()))
+}
+
+/// Whether two annotation lists carry the same derived annotations.
+///
+/// Compared by kind and data, not by annotation id: the id says who attached
+/// the annotation, the pair says what it claims about the text, and only the
+/// claim has to survive a reparse.
+///
+/// Set equality, not sequence equality: a spliced node's list is a merge and
+/// need not be in the order a parse emits. The lists are a handful of entries
+/// long, so the quadratic scan is cheaper than sorting.
+pub(crate) fn derived_annotations_agree(
+    left: &[crate::SyntaxAnnotation],
+    right: &[crate::SyntaxAnnotation],
+) -> bool {
+    fn claim(annotation: &crate::SyntaxAnnotation) -> (&str, Option<&str>) {
+        (annotation.kind(), annotation.data())
+    }
+    derived_annotations(left).count() == derived_annotations(right).count()
+        && derived_annotations(left).all(|annotation| {
+            derived_annotations(right).any(|other| claim(other) == claim(annotation))
+        })
+}
+
 /// Maximum container nesting depth (block quotes, lists, list items, tables)
 /// the block builder will materialize as real tree structure. Only container
 /// frames count — leaf blocks (paragraphs, headings, code blocks) cannot
