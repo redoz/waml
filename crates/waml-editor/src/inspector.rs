@@ -33,6 +33,33 @@ pub struct EdgeSubject {
     pub occurrence: usize,
 }
 
+/// Identity of one interaction-local element -- a message, a combined fragment,
+/// or a fragment operand -- as the inspector points at it.
+///
+/// Unlike a `Model::edges` relationship, this element *has* an id the model
+/// assigned it (`m0`, `f0`, `f0.o0`), doc-unique and stable across a
+/// re-projection. What it lacks is global uniqueness: the same `m0` names a
+/// different message in every interaction, so the subject has to carry the
+/// document too. The two facts travel as two fields.
+///
+/// This replaces a synthetic `"{document}#{id}"` string that
+/// `build_behavior_element_view` and `target_for_subject` both parsed back with
+/// `split_once('#')`. A document key is `okf::id_of(path)` -- the bundle path
+/// minus `.md` with no sanitization -- so it may contain `#`, and splitting at
+/// the FIRST one then cut the key in half: `checkout#1` + `m0` minted
+/// `"checkout#1#m0"` and read back as document `checkout`, which does not exist,
+/// so the panel silently rendered the empty state for a row visibly present in
+/// the picker and the canvas selected nothing. Nothing formats or parses this
+/// type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BehaviorElementSubject {
+    /// `SequenceDoc::key` -- a document key, verbatim.
+    pub document: String,
+    /// `SeqEdge::id` (`m0`) or a `SeqNode::Fragment`/`Operand` id (`f0`,
+    /// `f0.o0`), verbatim. Unique within `document`, assigned by the projection.
+    pub id: String,
+}
+
 /// What the inspector is currently pointed at. `None` renders the empty state.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Subject {
@@ -53,17 +80,12 @@ pub enum Subject {
     /// folding them into one variant is what forced `build_edge_view` to guess
     /// which kind of id it had been handed.
     FlowEdge(String),
-    /// A behavior-LOCAL element -- an interaction's message or combined
-    /// fragment, keyed `"{document}#{id}"`. These live in no model pool (design
-    /// spec §6: interaction nodes are document-local), so they cannot be a
-    /// `Classifier` or an `Edge`; they get their own subject rather than being
-    /// silently collapsed onto the document the way an unresolvable target is.
-    BehaviorElement(String),
-}
-
-/// Split a [`Subject::BehaviorElement`] key back into `(document, id)`.
-pub fn split_behavior_key(key: &str) -> Option<(&str, &str)> {
-    key.split_once('#')
+    /// A behavior-LOCAL element, by structural identity. These live in no model
+    /// pool (design spec §6: interaction nodes are document-local), so they
+    /// cannot be a `Classifier` or an `Edge`; they get their own subject rather
+    /// than being silently collapsed onto the document the way an unresolvable
+    /// target is.
+    BehaviorElement(BehaviorElementSubject),
 }
 
 #[cfg(test)]
@@ -340,18 +362,24 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         Subject::Group(name) => build_group_view(model, name),
         Subject::Edge(edge) => build_edge_view(model, edge),
         Subject::FlowEdge(key) => build_flow_edge_view(model, key),
-        Subject::BehaviorElement(key) => build_behavior_element_view(model, key),
+        Subject::BehaviorElement(element) => build_behavior_element_view(model, element),
     }
 }
 
-/// A message or fragment of an interaction, keyed `"{document}#{id}"`. These
+/// A message or fragment of an interaction, by document + element id. These
 /// carry no attributes or associations of their own -- the view is the element's
 /// own text (``a calls b `start()` ``, `alt`) plus what kind it is.
-fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView> {
+fn build_behavior_element_view(
+    model: &Model,
+    element: &BehaviorElementSubject,
+) -> Option<InspectorView> {
     use waml::model::SeqNode;
 
-    let (doc_key, id) = split_behavior_key(key)?;
-    let doc = model.interactions.iter().find(|d| d.key == doc_key)?;
+    let id = element.id.as_str();
+    let doc = model
+        .interactions
+        .iter()
+        .find(|d| d.key == element.document)?;
 
     if let Some(edge) = doc.edges.iter().find(|e| e.id.to_string() == id) {
         let lifeline_title = |lid: &str| -> String {

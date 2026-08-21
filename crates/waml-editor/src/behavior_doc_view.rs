@@ -15,7 +15,7 @@ use crate::doc_view::{
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
-use crate::inspector::{ElementRow, Subject};
+use crate::inspector::{BehaviorElementSubject, ElementRow, Subject};
 use crate::node_style::AccentBucket;
 use waml::analysis::ProjectionFreshness;
 use waml::diagnostic::Diagnostic;
@@ -465,7 +465,7 @@ fn subject_for_target(
         // behavior-element subject rather than falling through to the document.
         BehaviorTarget::Message(id) | BehaviorTarget::Fragment(id) => {
             if !id.is_empty() {
-                candidates.push(Subject::BehaviorElement(behavior_element_key(doc_key, id)));
+                candidates.push(behavior_element(doc_key, id));
             }
         }
     }
@@ -574,17 +574,14 @@ fn behavior_elements(
         };
         for edge in &doc.edges {
             rows.push(ElementRow {
-                subject: Subject::BehaviorElement(behavior_element_key(
-                    doc_key,
-                    &edge.id.to_string(),
-                )),
+                subject: behavior_element(doc_key, &edge.id.to_string()),
                 label: crate::inspector::message_label(edge, &lifeline_title),
             });
         }
         for node in &doc.nodes {
             if let SeqNode::Fragment { id, kind, .. } = node {
                 rows.push(ElementRow {
-                    subject: Subject::BehaviorElement(behavior_element_key(doc_key, id)),
+                    subject: behavior_element(doc_key, id),
                     label: kind.as_str().to_string(),
                 });
             }
@@ -604,9 +601,14 @@ fn lifeline_label(title: &str, alias: &Option<String>) -> String {
     }
 }
 
-/// `Subject::BehaviorElement`'s key format.
-fn behavior_element_key(doc_key: &str, id: &str) -> String {
-    format!("{doc_key}#{id}")
+/// The subject identifying one interaction-local element: the document it
+/// belongs to plus the id the projection gave it, side by side. Nothing joins
+/// them into a string, so no document key can be misread.
+fn behavior_element(doc_key: &str, id: &str) -> Subject {
+    Subject::BehaviorElement(BehaviorElementSubject {
+        document: doc_key.to_string(),
+        id: id.to_string(),
+    })
 }
 
 /// The inverse of `subject_for_target` for the picker's commit path: which
@@ -625,8 +627,11 @@ fn target_for_subject(
         Subject::Classifier(key) => {
             participant_for_classifier(model, key, doc_key, flow, interaction)
         }
-        Subject::BehaviorElement(key) => {
-            let (_, id) = crate::inspector::split_behavior_key(key)?;
+        // An element of ANOTHER document is not on this canvas, so it selects
+        // nothing -- the same verdict the arm below reaches for an id this
+        // document does not hold.
+        Subject::BehaviorElement(element) if element.document == doc_key => {
+            let id = element.id.as_str();
             let doc = interaction?;
             if doc.edges.iter().any(|e| e.id.to_string() == id) {
                 return Some(BehaviorTarget::Message(id.to_string()));
@@ -1758,5 +1763,66 @@ mod tests {
             .borrow::<crate::statusbar::Statusbar>()
             .expect("statusbar widget");
         assert_eq!(crate::statusbar::solver_diagnostics(&statusbar), None);
+    }
+
+    /// A bundle whose interaction document's own NAME carries a `#`. A document
+    /// key is `okf::id_of(path)` -- the bundle path minus `.md`, verbatim -- and
+    /// `BundlePath::parse` rejects only `:`, absolute paths, non-`.md` names and
+    /// empty/`.`/`..` segments, so `#` reaches the key untouched.
+    fn hash_named_interaction() -> waml::uml::Analysis {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
+            ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
+            (
+                "checkout#1.md",
+                concat!(
+                    "---\ntype: uml.SequenceDiagram\ntitle: Checkout\n---\n# Checkout\n\n",
+                    "## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n",
+                    "## Messages\n- a calls b `start()`\n",
+                    "- alt\n  - when `ready`\n    - a calls b `retry()`\n",
+                ),
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, _, uml_analysis, _) = prepared.into_parts();
+        uml_analysis
+    }
+
+    /// Every message/fragment row of a `#`-named document must inspect, and must
+    /// select on the canvas.
+    #[test]
+    fn a_hash_named_document_still_inspects_its_own_elements() {
+        let analysis = hash_named_interaction();
+        let model = &analysis.projection;
+        let doc = model.interactions.first().expect("one interaction");
+        assert_eq!(doc.key, "checkout#1");
+
+        let rows = behavior_elements(model, &doc.key, None, Some(doc));
+        let elements: Vec<&ElementRow> = rows
+            .iter()
+            .filter(|row| matches!(row.subject, Subject::BehaviorElement(_)))
+            .collect();
+        assert!(!elements.is_empty(), "fixture has messages and a fragment");
+        // The document key travels whole -- the `#` is part of the name, not a
+        // separator.
+        for row in &elements {
+            let Subject::BehaviorElement(element) = &row.subject else {
+                unreachable!()
+            };
+            assert_eq!(element.document, "checkout#1");
+        }
+        for row in elements {
+            assert!(
+                crate::inspector::build_view(model, &row.subject).is_some(),
+                "{:?} projected the empty state",
+                row.subject
+            );
+            assert!(
+                target_for_subject(model, &row.subject, &doc.key, None, Some(doc)).is_some(),
+                "{:?} selected nothing on the canvas",
+                row.subject
+            );
+        }
     }
 }
