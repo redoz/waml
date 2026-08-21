@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`█████████████░░░░░░░░░░░` **28/53 closed** — 16 open, 1 wip, 28 done, 8 decision
+`█████████████░░░░░░░░░░░` **29/53 closed** — 15 open, 1 wip, 29 done, 8 decision
 
 ## Findings
 
@@ -48,7 +48,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A17 | H | Fork inventory | `done` | docs/makepad-fork.md inventories all 44 fork commits against upstream/dev, classified upstream-worthy (27) / product (9) / dead (8), with the regeneration command and the both-directions drift check. The wip: DComp commit and seven other dead carries are named as removable on the next rebase. |
 | A18 | H | Wire contract | `done` | DocumentsRequest, RevisionResponse and ConflictResponse now live in waml-ops-dto beside DocumentWrite, so the editor's encoder and the CLI's decoder share one definition instead of two structurally-unlinked copies. A test pins the exact wire spelling of every field, because a round-trip through one side alone would not catch drift. |
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
-| A20 | H | LSP | `open` | Half-built LSP corrupts state: no didSave/watched files; close restores stale startup disk bytes |
+| A20 | H | LSP | `done` | The ownership model is now the protocol's own and is stated in bundle.rs as a module doc: the client owns a file between didOpen and didClose, the disk owns it outside that, and disk_by_physical is a shadow of the last read rather than a fallback. The finding was accurate and understated — the startup map was written once and never again, so a file CREATED after boot was invisible and a DELETED one stayed in the bundle publishing diagnostics forever. A failing e2e test showed the corruption in one line (a closed document read back as its startup bytes, content the user never typed and the disk did not hold), and it passes now. didSave is advertised and handled but deliberately takes no text: DidSaveTextDocumentParams carries no version, so accepting its text would open a second unordered channel that could overwrite a newer didChange. Watched files are registered dynamically (the spec has no static capability), the handler ignores the event type and re-reads because watch events are advisory, and dot-directories are filtered so a write under .git cannot put a document in the bundle that the next restart would drop. Deletes now retract their diagnostics. Reported separately: a non-file: URI (untitled: buffers) is invisible to the server. |
 | A21 | H | Verification debt | `done` | The sign-off ledger is now docs/reviews/visual-signoff-ledger.md — 13 rows, each naming the landed commit and the specific thing nobody has looked at. It also records what is already obsolete (V12's peek machinery was deleted today) and which row is a choice rather than a check (V13). The obligations stay open; what is closed is their living only in one agent's session memory. |
 | A22 | H | Effort allocation | `decision` | Three company-sized products plus a forked framework, solo. Which artifact is THE product determines what gets cut. |
 | A23 | H | Interop | `decision` | One-way mermaid/SVG export so diagrams can leave the toolchain. Scoped as a feature, not a fix. |
