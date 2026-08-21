@@ -1,4 +1,5 @@
 mod actions;
+mod deferred;
 mod dock_chrome;
 mod event;
 mod menus;
@@ -9,8 +10,9 @@ mod session_search;
 mod shell;
 mod workspace;
 
+use self::deferred::DeferredNavigation;
 use self::dock_chrome::DockChrome;
-use self::navigation::{DeferredAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
+use self::navigation::TransitionCause;
 use self::open_project::OpenProject;
 use self::projection::Projection;
 use self::session_search::SessionSearch;
@@ -871,12 +873,18 @@ pub struct App {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     #[rust]
     capture_ready: Option<(PathBuf, String)>,
+    /// What a navigation still owes once its target tab has drawn: the
+    /// `#fragment` a link asked to scroll to, the search hit a results row
+    /// asked to reveal, and the anchor a history traversal is restoring —
+    /// plus the generation that tells a superseded restore to give up.
+    ///
+    /// One value because all three are applied at the same `Event::Draw` gate
+    /// under the same rule: a deferred apply belongs to the gesture that armed
+    /// it, and is abandoned if another document is what drew. As bare fields
+    /// the fragment quietly broke that rule and stayed armed across an
+    /// unrelated later visit. See [`deferred`].
     #[rust]
-    pending_fragment: Option<PendingFragment>,
-    /// A search-hit reveal waiting on its target document's tab to draw; see
-    /// `apply_pending_reveal` (Task 9, spec §DocView::reveal).
-    #[rust]
-    pending_reveal: Option<PendingReveal>,
+    deferred: DeferredNavigation,
     /// The Ctrl+F find strip's document-scoped session (Task 13, spec §Find
     /// strip): the active document's live hits plus a cursor, pre-scoped by
     /// `open_find_strip` to the concept path that was active when the strip
@@ -907,11 +915,6 @@ pub struct App {
     /// last one left behind (see `popup::palette::OpenPalette`).
     #[rust]
     palette: Option<crate::popup::palette::OpenPalette>,
-    /// The anchor restore a history traversal still owes, with the generation
-    /// that says whether a second rapid traversal has superseded it (see
-    /// `app::navigation::DeferredAnchorRestore`).
-    #[rust]
-    anchor_restore: DeferredAnchorRestore,
     /// URL of the in-flight boot-bundle fetch -- asked for by the page URL or
     /// by the site's own config -- so its response can name it in an error.
     /// `None` once the response (or error) is handled.

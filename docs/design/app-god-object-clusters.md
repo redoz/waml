@@ -26,9 +26,9 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 |---|---|---|---|---|---|
 | C1 | **Dock chrome** | 11 | 54 | `shell` (44), `workspace` (7), `actions` (3) | **extracted** → `app::dock_chrome::DockChrome` |
 | C11 | Core shell | 9 | 242 | everywhere | stays on `App` — this *is* the app shell |
-| C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | **partly extracted** (`SessionSearch`) |
+| C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | **partly extracted** (`SessionSearch`, `DeferredNavigation`) |
 | C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
-| C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredAnchorRestore`) |
+| C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredNavigation`) |
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | **extracted** → `app::open_project::OpenProject` |
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | **extracted** → `app::projection::Projection` |
 | C3 | Command palette | 3 | 8 | `actions` (8) | **extracted** (`OpenPalette`) |
@@ -73,8 +73,9 @@ kinds of thing that happen to be about searching:
   strip, document-scoped and deliberately independent of the bundle-wide one.
   There is no second field to couple it to.
 * `pending_reveal` is not a search session at all; it is a deferred apply, and
-  its siblings are `pending_fragment` and `anchor_restore`. See "Why C6's
-  remainder is not a type" above for the move those three want.
+  its siblings are `pending_fragment` and `anchor_restore`. **All three are now
+  `app::deferred::DeferredNavigation`** — see "The deferred-apply trio" under
+  C6 below.
 
 ### C3 — Command palette (3 fields)
 
@@ -125,21 +126,20 @@ fields.
 `view_history`, `pending_fragment`, `pending_anchor_restore`,
 `anchor_restore_generation`, `history_controls_visible`.
 
-**The last two are extracted** as `navigation::DeferredAnchorRestore`: scheduling
-bumps the generation and stamps the new restore with it, applying compares. Held
-apart, "bump then stamp" was two statements in the right order and nothing said
-the stamp had to come from the bump.
+**`pending_fragment` and the anchor pair are extracted**, but not as part of
+C6 — they left with C2's `pending_reveal`, into
+`app::deferred::DeferredNavigation`. See "The deferred-apply trio" below.
 
 The back/forward stack, the three things a navigation can still owe once the
 target tab draws, and the generation counter that tells a superseded restore to
 give up. `history_controls_visible` is the caption-side mount guard for the
 history pair.
 
-#### Why C6's remainder is not a type
+#### Why the rest of C6 is not a type
 
 The row above says C6 is worth finishing. Having looked at it with C7 done: the
-remaining three should **not** move as a group, and the map was wrong to say
-they should.
+remaining three did **not** move as a group, and the map was wrong to say they
+should. Two of them stay on `App`; the third left with C2's `pending_reveal`.
 
 * `view_history` is `crate::view_history::ViewHistory`, which is already a
   type, with **nine** public methods that `app/navigation.rs` calls. Wrapping
@@ -151,16 +151,56 @@ they should.
   guards the *history pair*, which `DockChrome` has nothing to do with. It is
   one bool with two references, both adjacent, in one function.
 * `pending_fragment` is not history at all. It is a deferred apply, and its
-  real siblings are `pending_reveal` (listed under C2) and the already-extracted
-  `anchor_restore` — all three are "what a navigation still owes once the target
-  tab draws", and all three are applied together by `handle_draw_restores`.
-  **That** is the type here, cutting across C6 and C2 rather than along them.
-  Worth doing as its own move, with one caveat found while reading it: the doc
-  on `apply_pending_reveal` claims it clears "same as `apply_pending_fragment`",
-  and it does not — `apply_pending_reveal` uses `take()` and drops a reveal that
-  lands on the wrong tab, while `apply_pending_fragment` returns early and keeps
-  waiting. Decide which one is right *before* unifying them, because a type
-  that makes them share a rule will pick one.
+  real siblings are `pending_reveal` (listed under C2) and `anchor_restore`.
+  It left with them; see the next section.
+
+#### The deferred-apply trio (3 fields) — **extracted**
+
+`pending_fragment`, `pending_reveal`, `anchor_restore` — now one
+`App::deferred: DeferredNavigation`, in `crates/waml-editor/src/app/deferred.rs`.
+
+The type cuts across C6 and C2 rather than along either, because the thing the
+three have in common is not what they are *about* — a link fragment, a search
+hit, a history anchor — but *when* they run: all three need geometry that does
+not exist until the arriving view has laid itself out, so all three are applied
+by `handle_draw_restores` at the same `Event::Draw` gate.
+
+**The rule they now share, and the behaviour it changed.** The two existing
+appliers did not agree, and a doc comment claimed they did until 2026-08-21.
+`apply_pending_reveal` (and `apply_pending_anchor_restore`) `take()` the value,
+so a deferred apply landing on the wrong tab is dropped. `apply_pending_fragment`
+read by reference and returned early **without clearing**, so the fragment stayed
+armed and fired the next time its document became active — which could be a
+later, unrelated visit.
+
+Dropping won, and the argument is about what the user sees. A deferred apply is
+the tail of one gesture. Keeping it means it fires at an arbitrary future moment,
+attached to whatever gesture happens to bring that document back: the user clicks
+a row in the tree and the document jumps to a heading they last asked for minutes
+ago, possibly with a stale "Section not found" appearing alongside. "The
+navigation eventually completes" sounds like the generous reading, but a
+navigation that completes long after the user stopped waiting for it is not a
+completed navigation, it is a surprise — and the user has no way to connect it to
+the link they clicked. Dropping loses nothing they were still expecting.
+
+Two things make it cheap. The mismatch is not the ordinary case: a transition
+activates its tab synchronously, so the very next draw already has the right tab
+up; reaching a mismatch means something genuinely superseded the gesture. And the
+found/not-found verdict was already committed on the first matching draw, so the
+retry never bought a second chance at *finding* the fragment — only at finding it
+somewhere else, later.
+
+`claim` is what makes the rule structural rather than tested-for: it empties the
+slot *before* it asks whether the drawn tab is the one that armed it, so "the
+target moved on" cannot be written as a path that leaves the value armed. The
+losing behaviour is a real change in what the editor does — **V17** in
+`docs/reviews/visual-signoff-ledger.md` names the three cases a human should
+drive.
+
+The anchor's generation counter stays, and is a second, narrower question the
+other two do not have: a restore whose *tab* matches can still be a stale
+generation's, if a second rapid traversal scheduled its own while this one was
+deferred. Applying it to the view is right; refreshing history from it is not.
 
 ### C7 — Projection + tree cache (4 fields) — **extracted**
 
@@ -250,10 +290,11 @@ Runners-up and why not:
 * **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
   Cheap, but they leave the shape of the problem untouched. All three are done,
   along with C6's and C2's coupled pairs. **What is left of C6** was expected to
-  move with C7; it did not, and should not — see "Why C6's remainder is not a
+  move with C7; it did not, and should not — see "Why the rest of C6 is not a
   type" under C6 above.
 
-Two fields did not survive the move, both write-only records that no code read:
+Two fields did not survive the C1 move, both write-only records that no code
+read:
 
 * `pointer_in_narrow_dock` — residue of the `Peek` state machine deleted in
   `475a3959`. It was written on every narrow-mode mouse move and never read.
@@ -271,15 +312,15 @@ which is an argument for doing the rest.
 Cheap-and-safe first, so the pattern is established before the risky ones; the
 untestable one last.
 
-**Next one to take: the deferred-apply trio** — `pending_fragment`,
-`pending_reveal` and the already-extracted `anchor_restore`, which cuts across
-C6 and C2 rather than along either. See "Why C6's remainder is not a type"
-under C6 above for the one question to settle first. After that, **C4 (item 9)**
-is all that is left, and it needs a browser.
+**Next one to take: C4 (item 9)** — and it is the last one, so read item 9's
+warning before starting. Nothing in `cargo test --workspace` executes a line of
+it; a mistake there is invisible to the gate, and only a real `?bundle=` /
+`?api=` boot in a browser can see it.
 
-`App` is at 29 fields (28 `#[rust]` plus `ui`), down from the 54 the audit
-found. C6's remainder and the rest of C2 are deliberately NOT extractions;
-items 5 and 8 say why.
+`App` is at 28 fields (27 `#[rust]` plus `ui`), down from the 54 the audit
+found. (The line above said 29/28 before this move; the real count was 30/29,
+so the trio took it from 30 to 28.) What is left of C6 (`view_history`, `history_controls_visible`) and of
+C2 (`search`, `find`) are deliberately NOT extractions; items 5 and 8 say why.
 
 1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
    the wheel accumulator and the target it banks for, because the reset-on-
@@ -298,7 +339,9 @@ items 5 and 8 say why.
    coverage, but the behaviour is "a coloured pill in the caption", which a
    human verifies in one glance.
 5. **C6's remainder (3) — DO NOT extract as a group.** Attempted and rejected;
-   see "Why C6's remainder is not a type" below. Take C2 next instead.
+   see "Why the rest of C6 is not a type" above. One of the three
+   (`pending_fragment`) left anyway, sideways, with C2's `pending_reveal` — see
+   "The deferred-apply trio". The other two stay.
 6. ~~**C7 Projection + tree cache (4)**~~ — **done**, and taken *before* C6
    rather than after: it turned out to be the self-contained half of
    `navigation.rs` (mask, cap, cache, scope), where C6's remainder is the
@@ -308,10 +351,11 @@ items 5 and 8 say why.
    covers the free functions, `open_bundle`, and the close-then-reopen round
    trip; the native disk write itself is still only covered by a type-check, so
    a failing save by hand is worth doing before trusting it further.
-8. **C2 Search sessions (5)** — spread over four files and the most entangled
-   with `documents` and `ui`. Its coupled pair (`session_search` +
-   `stepped_session_index`) is **done**; the remaining three are three
-   different kinds of thing and should stay apart. See the C2 section.
+8. ~~**C2 Search sessions (5)**~~ — **done, as two separate moves plus a
+   deliberate refusal.** Its coupled pair (`session_search` +
+   `stepped_session_index`) became `SessionSearch`; `pending_reveal` left with
+   the deferred-apply trio; `search` and `find` stay, and the C2 section says
+   why forcing them together would be wrong.
 9. **C4 Web / remote boot (5)** — last, not because it is hard but because
    nothing in `cargo test --workspace` executes it. Move it only in a session
    that can verify a `?bundle=` / `?api=` boot in a real browser.

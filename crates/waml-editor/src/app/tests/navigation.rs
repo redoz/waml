@@ -1,3 +1,4 @@
+use super::super::deferred::{PendingFragment, PendingReveal};
 use super::super::shell::project_document_header;
 use super::*;
 use crate::doc_view::DocumentHeaderChrome;
@@ -1672,8 +1673,8 @@ fn navigation_draw_hook_scrolls_recorded_fragment_after_target_draw() {
         "the active document must reach the plain source surface before draw"
     );
     assert_eq!(
-        app.pending_fragment,
-        Some(PendingFragment {
+        app.deferred.peek_fragment(),
+        Some(&PendingFragment {
             concept_id: "sales/customer".into(),
             fragment: "history".into(),
         })
@@ -1696,7 +1697,7 @@ fn navigation_draw_hook_scrolls_recorded_fragment_after_target_draw() {
             .is_empty(),
         "the real renderer draw must record a mounted area"
     );
-    assert_eq!(app.pending_fragment, None);
+    assert_eq!(app.deferred.peek_fragment(), None);
     let statusbar = app.ui.widget(&cx, ids!(statusbar));
     let statusbar = statusbar
         .borrow::<crate::statusbar::Statusbar>()
@@ -1708,7 +1709,7 @@ fn navigation_draw_hook_scrolls_recorded_fragment_after_target_draw() {
 }
 
 #[test]
-fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
+fn navigation_draw_hook_drops_mismatch_then_reports_missing_once() {
     let (mut cx, mut app) = navigation_app();
     mount_markdown_surface(&mut cx, &mut app);
     let mut browser = FakeBrowser::default();
@@ -1722,10 +1723,10 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         OpenDisposition::Preview,
         &mut browser,
     ));
-    app.pending_fragment = Some(PendingFragment {
+    app.deferred.arm_fragment(Some(PendingFragment {
         concept_id: "sales/customer".into(),
         fragment: "missing".into(),
-    });
+    }));
     record_markdown_anchors(&mut cx, &app);
 
     AppMain::handle_event(
@@ -1737,13 +1738,10 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         }),
     );
 
-    assert_eq!(
-        app.pending_fragment,
-        Some(PendingFragment {
-            concept_id: "sales/customer".into(),
-            fragment: "missing".into(),
-        })
-    );
+    // sales/order drew, so the fragment armed for sales/customer belonged to a
+    // gesture that has been superseded: it is abandoned here, not held for
+    // whenever sales/customer next happens to open (see `app::deferred`).
+    assert_eq!(app.deferred.peek_fragment(), None);
 
     assert!(app.navigate_with(
         &mut cx,
@@ -1764,7 +1762,7 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
             ..DrawEvent::default()
         }),
     );
-    assert_eq!(app.pending_fragment, None);
+    assert_eq!(app.deferred.peek_fragment(), None);
     let statusbar = app.ui.widget(&cx, ids!(statusbar));
     let mut statusbar = statusbar
         .borrow_mut::<crate::statusbar::Statusbar>()
@@ -1789,6 +1787,40 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         .borrow::<crate::statusbar::Statusbar>()
         .expect("test statusbar is mounted");
     assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
+}
+
+/// A deferred apply belongs to the gesture that armed it. If some other
+/// document is the one that draws, it is abandoned rather than left armed to
+/// fire on a later, unrelated visit -- the rule all three deferred applies
+/// share (see `app::deferred`).
+#[test]
+fn a_fragment_whose_document_is_not_the_one_that_drew_is_dropped_not_rearmed() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("sales/order")
+    );
+    app.deferred.arm_fragment(Some(PendingFragment {
+        concept_id: "sales/customer".into(),
+        fragment: "history".into(),
+    }));
+
+    app.apply_pending_fragment(&mut cx);
+
+    assert_eq!(
+        app.deferred.peek_fragment(),
+        None,
+        "a superseded navigation must not stay armed for whatever visit reopens its document"
+    );
+    let statusbar = app.ui.widget(&cx, ids!(statusbar));
+    let statusbar = statusbar
+        .borrow::<crate::statusbar::Statusbar>()
+        .expect("test statusbar is mounted");
+    assert_eq!(
+        crate::statusbar::navigation_message(&statusbar),
+        None,
+        "abandoning is silent: the gesture that asked for the scroll is gone"
+    );
 }
 
 #[test]
@@ -1847,14 +1879,14 @@ fn non_markdown_active_view_rejects_hidden_stale_fragment_once() {
         },
     );
     let active_before = app.documents.active_id();
-    app.pending_fragment = Some(PendingFragment {
+    app.deferred.arm_fragment(Some(PendingFragment {
         concept_id: "diagram".into(),
         fragment: "details".into(),
-    });
+    }));
 
     app.apply_pending_fragment(&mut cx);
 
-    assert_eq!(app.pending_fragment, None);
+    assert_eq!(app.deferred.peek_fragment(), None);
     assert_eq!(app.documents.active_id(), active_before);
     let statusbar = app.ui.widget(&cx, ids!(statusbar));
     let mut statusbar = statusbar
@@ -1942,8 +1974,8 @@ fn navigation_source_and_generic_views_activate_and_scroll_real_renderer() {
                 Some("sales/next")
             );
             assert_eq!(
-                app.pending_fragment,
-                Some(PendingFragment {
+                app.deferred.peek_fragment(),
+                Some(&PendingFragment {
                     concept_id: "sales/next".into(),
                     fragment: fragment.into(),
                 })
@@ -1959,7 +1991,7 @@ fn navigation_source_and_generic_views_activate_and_scroll_real_renderer() {
                 }),
             );
 
-            assert_eq!(app.pending_fragment, None);
+            assert_eq!(app.deferred.peek_fragment(), None);
             assert_eq!(
                 app.documents.active_tab().and_then(|tab| tab.concept_id()),
                 Some("sales/next"),
@@ -2245,8 +2277,8 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
         "sales/customer"
     );
     let pending_after_first = app
-        .anchor_restore
-        .peek()
+        .deferred
+        .peek_anchor()
         .cloned()
         .expect("HistoryTraversal with a non-None anchor schedules a deferred restore");
     assert_eq!(
@@ -2277,8 +2309,8 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     // The second traversal supersedes the first pending restore with a new
     // one (for sales/order) at a newer generation.
     let pending_after_second = app
-        .anchor_restore
-        .peek()
+        .deferred
+        .peek_anchor()
         .cloned()
         .expect("second HistoryTraversal schedules its own deferred restore");
     assert_eq!(
@@ -2288,7 +2320,7 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     assert!(pending_after_second.generation > pending_after_first.generation);
     assert_eq!(
         pending_after_second.generation,
-        app.anchor_restore.generation()
+        app.deferred.anchor_generation()
     );
 }
 
@@ -2316,16 +2348,16 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
         "sales/order"
     );
     let scheduled_generation = app
-        .anchor_restore
-        .peek()
+        .deferred
+        .peek_anchor()
         .expect("a restore is pending after two rapid traversals")
         .generation;
-    assert_eq!(scheduled_generation, app.anchor_restore.generation());
+    assert_eq!(scheduled_generation, app.deferred.anchor_generation());
 
     // Simulate the deferred Draw that `app/event.rs` drives.
     app.apply_pending_anchor_restore(&mut cx);
 
-    assert!(app.anchor_restore.peek().is_none());
+    assert!(app.deferred.peek_anchor().is_none());
     let refreshed = app
         .view_history
         .entry_at(0)
@@ -2855,8 +2887,8 @@ fn activating_a_search_result_row_navigates_to_the_hit_document_and_stashes_a_pe
         Some("sales/order")
     );
     assert_eq!(
-        app.pending_reveal,
-        Some(PendingReveal {
+        app.deferred.peek_reveal(),
+        Some(&PendingReveal {
             concept_id: "sales/order".to_string(),
             target: crate::doc_view::RevealTarget::TextSpan { start: 0, end: 4 },
         })
@@ -2924,7 +2956,7 @@ fn f3_advances_the_live_session_across_document_boundaries_and_wraps() {
         app.documents.active_tab().and_then(|tab| tab.concept_id()),
         Some(second_concept.as_str())
     );
-    assert!(app.pending_reveal.is_some());
+    assert!(app.deferred.peek_reveal().is_some());
 
     // F3 again wraps back to the first.
     app.step_session(&mut cx, true);

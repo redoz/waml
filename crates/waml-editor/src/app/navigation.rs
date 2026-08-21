@@ -1,94 +1,5 @@
+use super::deferred::PendingFragment;
 use super::*;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct PendingFragment {
-    pub(super) concept_id: String,
-    pub(super) fragment: String,
-}
-
-/// A search-hit reveal awaiting its target document's tab (`ViewOutcome.reveal`,
-/// spec §DocView::reveal), applied by `App::apply_pending_reveal` once the
-/// active tab's concept matches -- the same deferred-apply shape as
-/// `PendingFragment`.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct PendingReveal {
-    pub(super) concept_id: String,
-    pub(super) target: crate::doc_view::RevealTarget,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct PendingAnchorRestore {
-    pub(super) document: crate::navigation::DocumentLocator,
-    pub(super) anchor: ViewAnchor,
-    /// Stamped from `App::anchor_restore_generation` when this restore was
-    /// scheduled, so a later traversal that supersedes it can be detected.
-    pub(super) generation: u64,
-}
-
-/// The anchor restore a history traversal still owes once its target tab has
-/// drawn, plus the generation that says whether it is still the current one.
-///
-/// The two moved together because they are one rule: scheduling BUMPS the
-/// generation and stamps the new restore with it, and applying compares. Held
-/// apart, "bump then stamp" was two statements a caller had to get right in
-/// order, and nothing said the stamp had to come from the bump.
-#[derive(Default)]
-pub(super) struct DeferredAnchorRestore {
-    pending: Option<PendingAnchorRestore>,
-    generation: u64,
-}
-
-impl DeferredAnchorRestore {
-    /// Schedule a restore, superseding any still-deferred one.
-    pub(super) fn schedule(
-        &mut self,
-        document: crate::navigation::DocumentLocator,
-        anchor: ViewAnchor,
-    ) {
-        self.generation = self.generation.wrapping_add(1);
-        self.pending = Some(PendingAnchorRestore {
-            document,
-            anchor,
-            generation: self.generation,
-        });
-    }
-
-    /// Take the deferred restore, if one is owed.
-    pub(super) fn take(&mut self) -> Option<PendingAnchorRestore> {
-        self.pending.take()
-    }
-
-    /// The document a still-deferred restore is for, if any.
-    ///
-    /// A departing view whose restore has not applied yet has a stale captured
-    /// anchor, and refreshing history with it would corrupt the entry that
-    /// restore is about to write.
-    pub(super) fn pending_document(&self) -> Option<&crate::navigation::DocumentLocator> {
-        self.pending.as_ref().map(|pending| &pending.document)
-    }
-
-    /// Whether `pending` is still the newest scheduled restore.
-    ///
-    /// A superseded restore's anchor is still correct for the view, but
-    /// refreshing history with it would clobber the newer entry.
-    pub(super) fn is_current(&self, pending: &PendingAnchorRestore) -> bool {
-        pending.generation == self.generation
-    }
-
-    /// The current generation. Test seam: a scenario asserts that the restore
-    /// it observed carries the generation the schedule minted.
-    #[cfg(test)]
-    pub(super) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// The deferred restore without taking it. Test seam: a scenario checks
-    /// what a traversal scheduled before the deferred draw applies it.
-    #[cfg(test)]
-    pub(super) fn peek(&self) -> Option<&PendingAnchorRestore> {
-        self.pending.as_ref()
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TransitionCause {
@@ -483,12 +394,11 @@ impl App {
                     }
                     None => self.primary_locator(&concept_id),
                 };
-                self.pending_fragment = fragment.map(|fragment| PendingFragment {
+                let pending_fragment = fragment.map(|fragment| PendingFragment {
                     concept_id: concept_id.clone(),
                     fragment,
                 });
-                let anchor = self
-                    .pending_fragment
+                let anchor = pending_fragment
                     .as_ref()
                     .and_then(|pending| {
                         let snapshot = self.session.snapshot();
@@ -502,6 +412,7 @@ impl App {
                             })
                     })
                     .unwrap_or(ViewAnchor::None);
+                self.deferred.arm_fragment(pending_fragment);
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
@@ -580,22 +491,20 @@ impl App {
         }
     }
 
+    /// Scroll to the `#fragment` a link navigation owed, once its target
+    /// document's tab is active AND drawn.
+    ///
+    /// Dropped rather than retried if some other document is what drew; see
+    /// `app::deferred` for the rule the three deferred applies share.
     pub(super) fn apply_pending_fragment(&mut self, cx: &mut Cx) {
-        let Some(pending) = self.pending_fragment.as_ref() else {
+        let drawn = self.documents.active_tab().and_then(|tab| tab.concept_id());
+        let Some(pending) = self.deferred.claim_fragment(drawn) else {
             return;
         };
-        if self
-            .documents
-            .active_tab()
-            .is_none_or(|tab| tab.concept_id() != Some(pending.concept_id.as_str()))
-        {
-            return;
-        }
-        let fragment = pending.fragment.clone();
+        let fragment = pending.fragment;
         let found =
             self.documents
                 .scroll_active_to_fragment(cx, &self.ui, &self.session, &fragment);
-        self.pending_fragment = None;
         if found {
             if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
                 self.view_history.refresh_current(current);
@@ -606,51 +515,34 @@ impl App {
         }
     }
 
-    /// Apply a search-hit reveal once its target document's tab is active
-    /// AND drawn (`handle_draw_restores`, the same `Event::Draw` gate
-    /// `apply_pending_fragment` uses). Cleared unconditionally once checked --
-    /// a reveal that lands on the wrong tab (the user navigated away before
-    /// the draw) is dropped, not retried against whatever opened next.
+    /// Apply a search-hit reveal once its target document's tab is active AND
+    /// drawn (`ViewOutcome.reveal`, spec section DocView::reveal).
     ///
-    /// **This is NOT what `apply_pending_fragment` does**, though this comment
-    /// claimed it was until 2026-08-21. That one takes the pending value by
-    /// reference and returns early on a tab mismatch WITHOUT clearing it, so
-    /// the fragment stays armed and fires the next time its document becomes
-    /// active -- which may be a later, unrelated visit. Whether that is a
-    /// feature (the navigation eventually completes) or a stale-navigation bug
-    /// (the document scrolls somewhere the user did not just ask for) is an
-    /// open product question, recorded here rather than settled by whichever
-    /// of the two a future refactor happens to unify onto.
+    /// Dropped rather than retried if some other document is what drew; see
+    /// `app::deferred`.
     pub(super) fn apply_pending_reveal(&mut self, cx: &mut Cx) {
-        let Some(pending) = self.pending_reveal.take() else {
+        let drawn = self.documents.active_tab().and_then(|tab| tab.concept_id());
+        let Some(pending) = self.deferred.claim_reveal(drawn) else {
             return;
         };
-        if self
-            .documents
-            .active_tab()
-            .is_none_or(|tab| tab.concept_id() != Some(pending.concept_id.as_str()))
-        {
-            return;
-        }
         if self.documents.reveal_active(cx, &self.ui, &pending.target) {
             // The reveal just replaced the whole highlight set with the one
             // landed range; put the session's other matches in this document
-            // back (spec §Search session).
+            // back (spec section Search session).
             self.relight_session_highlights(cx, &pending.concept_id);
         }
     }
 
+    /// Restore the scroll/selection anchor a history traversal owed, once its
+    /// target document's tab is active AND drawn.
+    ///
+    /// Dropped rather than retried if some other document is what drew; see
+    /// `app::deferred`.
     pub(super) fn apply_pending_anchor_restore(&mut self, cx: &mut Cx) {
-        let Some(pending) = self.anchor_restore.take() else {
+        let drawn = self.documents.active_tab().map(|tab| tab.locator());
+        let Some(pending) = self.deferred.claim_anchor(drawn.as_ref()) else {
             return;
         };
-        if self
-            .documents
-            .active_tab()
-            .is_none_or(|tab| tab.locator() != pending.document)
-        {
-            return;
-        }
         let _ = self
             .documents
             .restore_active_anchor(cx, &self.ui, &self.session, &pending.anchor);
@@ -659,7 +551,7 @@ impl App {
         // was still deferred. Applying this stale restore's anchor is still
         // correct for the view itself, but refreshing history with it would
         // clobber the newer entry with this superseded generation's anchor.
-        if !self.anchor_restore.is_current(&pending) {
+        if !self.deferred.anchor_is_current(&pending) {
             return;
         }
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
@@ -745,8 +637,8 @@ impl App {
             // traversal has not applied yet), and refreshing history with it
             // would corrupt the entry that restore is about to write.
             let departing_is_pending_restore = self
-                .anchor_restore
-                .pending_document()
+                .deferred
+                .pending_anchor_document()
                 .zip(departing.as_ref())
                 .is_some_and(|(pending, departing)| *pending == departing.document);
             if !departing_is_pending_restore {
@@ -806,8 +698,8 @@ impl App {
             TransitionCause::HistoryTraversal | TransitionCause::UndoRedoReveal
         ) && !matches!(location.anchor, ViewAnchor::None)
         {
-            self.anchor_restore
-                .schedule(location.document.clone(), location.anchor.clone());
+            self.deferred
+                .schedule_anchor(location.document.clone(), location.anchor.clone());
             cx.redraw_all();
         }
         self.sync_document_shell(cx);

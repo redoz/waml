@@ -1952,7 +1952,8 @@ impl App {
         // landing's own highlights must be installed on the far side of it.
         if let Some((concept_id, target)) = outcome.reveal {
             self.mark_session_landing(cx, &concept_id, &target);
-            self.pending_reveal = Some(PendingReveal { concept_id, target });
+            self.deferred
+                .arm_reveal(super::deferred::PendingReveal { concept_id, target });
         }
 
         if let Some(key) = outcome.view_source {
