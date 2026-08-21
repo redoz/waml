@@ -248,14 +248,10 @@ Runners-up and why not:
   generation logic, which is the subtlest thing in the app module. Worth doing;
   not worth doing first.
 * **C8 / C3 / C10 (3+3+2 fields)** are each a single-file, near-zero-risk move.
-  C8, C10, C3 and C9 are done, and C6's coupled pair with them. **What is left of
-  C6** — `view_history`, `pending_fragment`, `history_controls_visible` — is the
-  back/forward stack and its caption mount guard, which are a different thing
-  from the deferred restore. It was expected to move with C7; it did not, and
-  should not: C7 turned out to be self-contained (mask → cap → cache → scope,
-  none of it touching a document transition), while C6's remainder is threaded
-  through `transition_to_location` at seven separate points.
-  Cheap, but they leave the shape of the problem untouched.
+  Cheap, but they leave the shape of the problem untouched. All three are done,
+  along with C6's and C2's coupled pairs. **What is left of C6** was expected to
+  move with C7; it did not, and should not — see "Why C6's remainder is not a
+  type" under C6 above.
 
 Two fields did not survive the move, both write-only records that no code read:
 
@@ -278,8 +274,8 @@ untestable one last.
 **Next one to take: the deferred-apply trio** — `pending_fragment`,
 `pending_reveal` and the already-extracted `anchor_restore`, which cuts across
 C6 and C2 rather than along either. See "Why C6's remainder is not a type"
-below for the one question to settle first. After that, **C4 (item 9)** is all
-that is left, and it needs a browser.
+under C6 above for the one question to settle first. After that, **C4 (item 9)**
+is all that is left, and it needs a browser.
 
 `App` is at 29 fields (28 `#[rust]` plus `ui`), down from the 54 the audit
 found. C6's remainder and the rest of C2 are deliberately NOT extractions;
@@ -292,13 +288,15 @@ items 5 and 8 say why.
    `Option<ZoomTarget>` and forgets the target itself when a surface has no
    zoomable chrome.
    The cheapest possible next move.
-2. **C3 Palette (3)** — one file, one lifetime (open → commit → closed), so it
-   collapses to `Option<OpenPalette>`. Covered by `app/tests/palette.rs`.
-3. **C10 Context-menu subject (2)** — one file, and the move *fixes* something:
-   two `Option`s that must never both be `Some` become one enum.
-4. **C9 Agent marks (3)** — two files, nine references. No test coverage, but
-   the behaviour is "a coloured pill in the caption", which a human verifies in
-   one glance.
+2. ~~**C3 Palette (3)**~~ — **done.** One file, one lifetime (open → commit →
+   closed), so it collapsed to `Option<OpenPalette>`. Covered by
+   `app/tests/palette.rs`.
+3. ~~**C10 Context-menu subject (2)**~~ — **done.** One file, and the move
+   *fixed* something: two `Option`s that must never both be `Some` became one
+   enum.
+4. ~~**C9 Agent marks (3)**~~ — **done.** Two files, nine references. No test
+   coverage, but the behaviour is "a coloured pill in the caption", which a
+   human verifies in one glance.
 5. **C6's remainder (3) — DO NOT extract as a group.** Attempted and rejected;
    see "Why C6's remainder is not a type" below. Take C2 next instead.
 6. ~~**C7 Projection + tree cache (4)**~~ — **done**, and taken *before* C6
