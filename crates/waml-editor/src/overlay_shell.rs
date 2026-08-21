@@ -22,8 +22,6 @@ script_mod! {
 }
 
 /// What `OverlayShell::handle_event` tells the owning widget to do.
-// No consumer until Task 3 (`ShortcutsOverlay` migration) — `#[allow(dead_code)]`
-// follows the `LinearGeom` precedent so the workspace clippy gate stays green.
 #[derive(Clone, Debug, Default)]
 pub enum OverlayShellAction {
     #[default]
@@ -40,9 +38,6 @@ pub struct OverlayShellPass {
     pub width: f64,
 }
 
-// Not yet consumed outside this file's own tests until Task 2 (`OverlayShell`)
-// wires it up — `#[allow(dead_code)]` follows the `LinearGeom` precedent
-// (popup/menu.rs) so the workspace clippy gate stays green in the meantime.
 /// Vertical padding between the panel edge and the content column (lpx).
 pub const PANEL_PAD_V: f64 = 20.0;
 /// Horizontal padding between the panel edge and the content column (lpx).

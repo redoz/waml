@@ -427,11 +427,8 @@ const HOVER_SECS: f64 = 0.15;
 // the current colour variant to the next over this window.
 const FADE_SECS: f64 = 0.4;
 
-/// `LogoMark` -> `App` action (same convention as `ClassDiagramSurfaceAction`). Carries
-/// the wordmark's screen-space centre so `App` can open the radial there.
-///
-/// `#[allow(dead_code)]`: the `logo_harness` bin path-includes `logo.rs` without
-/// the `App` wiring, so the payload/readers look unused in that unit.
+/// `LogoMark` -> `App` action (same convention as `ClassDiagramSurfaceAction`).
+/// Carries the wordmark's screen-space centre so `App` can open a menu there.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum LogoAction {
     #[default]
