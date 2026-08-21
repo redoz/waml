@@ -23,10 +23,11 @@ pub(crate) fn change_touches_reference_definition(
     map: &ChangeMap,
 ) -> bool {
     changes.iter().zip(map.segments()).any(|(change, segment)| {
-        intersecting_lines(old.shared(), change.old_range).any(line_is_definition)
-            || intersecting_lines(new.shared(), segment.new).any(line_is_definition)
-            || trailing_paragraph_lines(old.shared(), change.old_range).any(line_is_definition)
-            || trailing_paragraph_lines(new.shared(), segment.new).any(line_is_definition)
+        intersecting_lines(old.shared(), change.old_range).any(line_may_define_reference)
+            || intersecting_lines(new.shared(), segment.new).any(line_may_define_reference)
+            || trailing_paragraph_lines(old.shared(), change.old_range)
+                .any(line_may_define_reference)
+            || trailing_paragraph_lines(new.shared(), segment.new).any(line_may_define_reference)
     })
 }
 
@@ -118,6 +119,33 @@ fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &s
     source[line_start..line_end].split_terminator('\n')
 }
 
+/// Returns true when a line could carry a reference definition.
+///
+/// Deliberately loose, for the guards that must over-report. A definition's
+/// own text does not begin at the raw line start: every block container puts a
+/// prefix in front of it — `> ` for a block quote, `- ` or `1. ` for a list
+/// item, indentation for either — and containers nest, so the prefix has no
+/// bounded shape. Anchoring the test at the line start therefore hides every
+/// definition that lives inside a container, and an edit that only adds or
+/// removes such a prefix moves a definition in or out of existence without
+/// ever touching its label or destination.
+///
+/// So the test asks only what a definition needs *somewhere* on the line: a
+/// bracketed label followed by a colon. Matching a paragraph that merely reads
+/// like one costs an extra oracle parse; missing a real one leaves reference
+/// uses elsewhere in the document resolved against a definition set that no
+/// longer exists.
+fn line_may_define_reference(line: &str) -> bool {
+    line.find('[')
+        .is_some_and(|open| line[open..].contains("]:"))
+}
+
+/// Returns true when a line reads as a reference definition *and nothing else*.
+///
+/// Deliberately strict, and the mirror image of [`line_may_define_reference`]:
+/// the one caller — [`reference_use_labels`] — drops the lines this accepts, so
+/// accepting too many silently drops reference uses. Only an unindented,
+/// uncontained line can be assumed to spend its leading label defining.
 fn line_is_definition(line: &str) -> bool {
     let line = line.trim();
     line.starts_with('[') && line.contains("]:")
@@ -891,6 +919,22 @@ mod tests {
             &local_changes,
             &local_map,
         ));
+    }
+
+    #[test]
+    fn definition_scan_looks_past_a_container_prefix() {
+        // A definition inside a block quote or a list item is still a
+        // definition; only its container's marker precedes it on the line.
+        assert!(line_may_define_reference("> [id]: /one"));
+        assert!(line_may_define_reference(">>[id]:/one"));
+        assert!(line_may_define_reference("- [id]: /one"));
+        assert!(line_may_define_reference("\t1. [id]: /one"));
+        assert!(!line_may_define_reference("plain prose"));
+        assert!(!line_may_define_reference("a] : not a label"));
+
+        // The strict test stays strict: its caller drops what it accepts.
+        assert!(line_is_definition("  [id]: /one"));
+        assert!(!line_is_definition("> [id]: /one"));
     }
 
     #[test]

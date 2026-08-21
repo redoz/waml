@@ -486,6 +486,46 @@ fn a_reference_use_in_a_definition_line_tail_is_still_a_reference_use() {
 }
 
 #[test]
+fn a_definition_created_behind_a_block_quote_prefix_still_resolves_its_uses() {
+    // This fails if the definition guard decides definition-ness from the raw
+    // line start. The edit inserts a line break and two block-quote markers, so
+    // `[ie]:/` stops being paragraph text on line 1 and becomes a real
+    // definition on the new line 2 -- but that line reads `>>[ie]:/`, which
+    // starts with `>`, not `[`. The guard missed it, no oracle parse ran, and
+    // the trailing `[ie]` outside the reparse window stayed plain text while a
+    // full parse makes it a shortcut reference use. Found by fuzzing
+    // `syntax_edits`; see fuzz/seeds/syntax_edits/definition-behind-a-container-prefix.
+    assert_matches_full_oracle(
+        ">?[ie]:/\n#\n[ie]",
+        ">?\r>>[ie]:/\n#\n[ie]",
+        &[TextChange {
+            old_range: range(2, 2),
+            replacement: Arc::from("\r>>"),
+        }],
+    );
+    // The carriage return is incidental -- the container prefix is the whole
+    // mechanism, so the same edit with a line feed must hold too.
+    assert_matches_full_oracle(
+        ">?[ie]:/\n#\n[ie]",
+        ">?\n>>[ie]:/\n#\n[ie]",
+        &[TextChange {
+            old_range: range(2, 2),
+            replacement: Arc::from("\n>>"),
+        }],
+    );
+    // A list marker is a container prefix too, and hides a definition just as
+    // a block-quote marker does.
+    assert_matches_full_oracle(
+        "x[a]:/one\n\n[a]",
+        "- [a]:/one\n\n[a]",
+        &[TextChange {
+            old_range: range(0, 1),
+            replacement: Arc::from("- "),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";
