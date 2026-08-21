@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`████████░░░░░░░░░░░░░░░░` **17/53 closed** — 30 open, 17 done, 6 decision
+`████████░░░░░░░░░░░░░░░░` **17/53 closed** — 29 open, 17 done, 7 decision
 
 ## Findings
 
@@ -70,7 +70,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A39 | M | Planning hygiene | `open` | 74 active plans mixing implemented/abandoned/horizon; atproto collab plan (unstarted, MVP-contradicting) in the active queue |
 | A40 | M | Incremental parser | `open` | Ω(n) per-edit floor (≈4 full-document passes); zero reparse benchmarks for 95K chars of machinery; multi-section edits silently full-reparse — and… |
 | A41 | M | Workspace hygiene | `open` | 65 branches (50 merged), 10 stashes incl. stray-edits-on-main, root .test_out5.log, root lsp-demo/ |
-| A42 | M | OKF spec governance | `open` | Spec vendored by wholesale replacement, no upstream SHA or drift check; WAML profile has one implementation |
+| A42 | M | OKF spec governance | `decision` | The audit assumed an upstream OKF; the repo records none. Both spec commits (d82c351e v0.1, ddcc0dc0 v0.2) are the owner's own and cite no external revision, so 'no upstream recorded' is indistinguishable from 'no upstream exists' — which is why it survived two versions. The spec now carries a provenance note stating the ambiguity and what to do under each answer. OWNER DECISION: is OKF external (then record URL+SHA and add a CI drift check) or first-party (then the WAML profile is an extension, not a fork awaiting upstreaming)? |
 | A43 | L | DiagCode | `open` | Kebab-case wire names maintained twice (serde rename + 80-arm as_str) |
 | A44 | L | Solver wire | `open` | Stringly keys; `key: Option<String>` retrofit for duplicate edges |
 | A45 | L | Naming | `done` | waml-syntax's 'domain-neutral' headline now states the real trade: the core is language-parameterised, the crate exports the WAML island types on purpose because island recognition happens inside the one Markdown parse. The nav.rs/navigation.rs collision and the NavCategory/RowKind mirror ride with the shell refactor (A15). |
