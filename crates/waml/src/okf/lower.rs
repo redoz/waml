@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::edit::{EditContext, EditError};
+use crate::edit::{EditCode, EditContext, EditError};
 use crate::index_md::{render_index, render_members, IndexEntry, IndexFrontmatter};
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{
@@ -42,10 +42,12 @@ impl OkfLoweringState {
 
     pub(crate) fn inserted(&mut self, path: BundlePath) -> Result<(), EditError> {
         if !self.structural_paths.insert(path.clone()) {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "okf.structure",
                 format!("'{}' already exists", path.as_str()),
-            ));
+            )
+            .about(path.as_str()));
         }
         self.touched_shell.remove(&path);
         Ok(())
@@ -58,16 +60,20 @@ impl OkfLoweringState {
 
     pub(crate) fn renamed(&mut self, from: &BundlePath, to: BundlePath) -> Result<(), EditError> {
         if from != &to && self.structural_paths.contains(&to) {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "okf.structure",
                 format!("'{}' already exists", to.as_str()),
-            ));
+            )
+            .about(to.as_str()));
         }
         if !self.structural_paths.remove(from) {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::NotFound,
                 "okf.structure",
                 format!("no document '{}'", from.as_str()),
-            ));
+            )
+            .about(from.as_str()));
         }
         self.structural_paths.insert(to.clone());
         self.touched_shell.remove(from);
@@ -97,17 +103,22 @@ impl OkfLoweringState {
         op: &str,
     ) -> Result<&'a ShellParse, EditError> {
         if !self.touched_shell.contains_key(path) {
-            let document = candidate
-                .document(path)
-                .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+            let document = candidate.document(path).ok_or_else(|| {
+                EditError::new(
+                    EditCode::NotFound,
+                    op,
+                    format!("no document '{}'", path.as_str()),
+                )
+                .about(path.as_str())
+            })?;
             let text = SourceText::from_shared(document.text_arc().clone())
-                .map_err(|error| EditError::at(op, error.to_string()))?;
+                .map_err(|error| EditError::wrap(op, &error))?;
             let snapshot = parse_markdown(
                 DocumentRevision::INITIAL,
                 text,
                 MarkdownDialect::WAML_DEFAULT,
             )
-            .map_err(|error| EditError::at(op, error.to_string()))?;
+            .map_err(|error| EditError::wrap(op, &error))?;
             let parsed = ShellParse {
                 tree: snapshot.tree().clone(),
                 structure: snapshot.structure().clone(),
@@ -202,7 +213,8 @@ fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
     if catalog.session_revision() != context.session_revision
         || context.uml.session_revision() != context.session_revision
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::StaleContext,
             "okf.context",
             "analysis revision does not match the requested session revision",
         ));
@@ -211,18 +223,23 @@ fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
         || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
         || catalog.documents().len() != context.source.len()
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::StaleContext,
             "okf.context",
             "analysis catalog does not match the source bundle",
         ));
     }
     for document in catalog.documents().values() {
-        let source = context
-            .source
-            .document(document.path())
-            .ok_or_else(|| EditError::at("okf.context", "catalog path is absent from source"))?;
+        let source = context.source.document(document.path()).ok_or_else(|| {
+            EditError::new(
+                EditCode::Internal,
+                "okf.context",
+                "catalog path is absent from source",
+            )
+        })?;
         if !Arc::ptr_eq(document.text().shared(), source.text_arc()) {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::StaleContext,
                 "okf.context",
                 "catalog text does not match source identity",
             ));
@@ -256,7 +273,9 @@ fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> {
 }
 
 fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, EditError> {
-    resolve_index(work, target).ok_or_else(|| EditError::at(op, format!("no document '{target}'")))
+    resolve_index(work, target).ok_or_else(|| {
+        EditError::new(EditCode::NotFound, op, format!("no document '{target}'")).about(target)
+    })
 }
 
 fn join(dir: &str, slug: &str) -> String {
@@ -283,13 +302,15 @@ pub(crate) fn op_pkg_move(
         .enumerate()
         .any(|(i, document)| i != idx && document.path().as_str() == dest)
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "pkg.move",
             format!("'{dest}' already exists"),
-        ));
+        )
+        .about(dest));
     }
     work.rename_document(idx, dest)
-        .map_err(|error| EditError::at("pkg.move", error.to_string()))?;
+        .map_err(|error| EditError::wrap("pkg.move", &error))?;
     Ok(())
 }
 
@@ -302,7 +323,8 @@ pub(crate) fn op_pkg_rename(
     to: &str,
 ) -> Result<(), EditError> {
     if from.is_empty() {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::Unsupported,
             "pkg.rename",
             "cannot rename the root package",
         ));
@@ -314,10 +336,12 @@ pub(crate) fn op_pkg_rename(
         .iter()
         .any(|document| document.path().as_str().starts_with(&to_pfx))
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "pkg.rename",
             format!("directory '{to}' already exists"),
-        ));
+        )
+        .about(to));
     }
     let renames: Vec<_> = work
         .documents()
@@ -332,11 +356,16 @@ pub(crate) fn op_pkg_rename(
         })
         .collect();
     if renames.is_empty() {
-        return Err(EditError::at("pkg.rename", format!("no package '{from}'")));
+        return Err(EditError::new(
+            EditCode::NotFound,
+            "pkg.rename",
+            format!("no package '{from}'"),
+        )
+        .about(from));
     }
     for (index, path) in renames {
         work.rename_document(index, path)
-            .map_err(|error| EditError::at("pkg.rename", error.to_string()))?;
+            .map_err(|error| EditError::wrap("pkg.rename", &error))?;
     }
     Ok(())
 }
@@ -358,7 +387,8 @@ pub(crate) fn op_pkg_delete(
     cascade: bool,
 ) -> Result<(), EditError> {
     if path.is_empty() {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::Unsupported,
             "pkg.delete",
             "cannot delete the root package",
         ));
@@ -368,7 +398,12 @@ pub(crate) fn op_pkg_delete(
         let before = work.len();
         work.retain_documents(|document| !document.path().as_str().starts_with(&pfx));
         if work.len() == before {
-            return Err(EditError::at("pkg.delete", format!("no package '{path}'")));
+            return Err(EditError::new(
+                EditCode::NotFound,
+                "pkg.delete",
+                format!("no package '{path}'"),
+            )
+            .about(path));
         }
     } else {
         let parent = parent_of(path);
@@ -391,7 +426,7 @@ pub(crate) fn op_pkg_delete(
             .collect();
         for (index, path) in renames {
             work.rename_document(index, path)
-                .map_err(|error| EditError::at("pkg.delete", error.to_string()))?;
+                .map_err(|error| EditError::wrap("pkg.delete", &error))?;
         }
     }
     Ok(())
@@ -443,7 +478,7 @@ fn package_entries(
             format!("{directory}/{child}")
         };
         let index_path = BundlePath::parse(format!("{child_directory}/index.md"))
-            .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
+            .map_err(|error| EditError::wrap("pkg.index", &error))?;
         let title = if work.document(&index_path).is_some() {
             document_title(work, state, &index_path, "pkg.index")?
                 .unwrap_or_else(|| child_directory.rsplit('/').next().unwrap().to_owned())
@@ -487,9 +522,14 @@ fn document_title(
     if let Some(title) = frontmatter_value(work, state, path, "title", op)? {
         return Ok(Some(title));
     }
-    let document = work
-        .document(path)
-        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+    let document = work.document(path).ok_or_else(|| {
+        EditError::new(
+            EditCode::NotFound,
+            op,
+            format!("no document '{}'", path.as_str()),
+        )
+        .about(path.as_str())
+    })?;
     let shell = state.shell(work, path, op)?;
     Ok(shell
         .structure
@@ -641,7 +681,7 @@ fn authored_member_order(
     } else {
         format!("{directory}/index.md")
     })
-    .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
+    .map_err(|error| EditError::wrap("pkg.index", &error))?;
     let Some(document) = work.document(&path) else {
         return Ok(Vec::new());
     };
@@ -682,9 +722,14 @@ fn confirmed_member_block(
     path: &BundlePath,
     directory: &str,
 ) -> Result<(Vec<std::ops::Range<usize>>, usize), EditError> {
-    let document = work
-        .document(path)
-        .ok_or_else(|| EditError::at("pkg.index", format!("no document '{}'", path.as_str())))?;
+    let document = work.document(path).ok_or_else(|| {
+        EditError::new(
+            EditCode::NotFound,
+            "pkg.index",
+            format!("no document '{}'", path.as_str()),
+        )
+        .about(path.as_str())
+    })?;
     let source = document.text();
     let shell = state.shell(work, path, "pkg.index")?;
     let first_h1 = shell
@@ -733,7 +778,8 @@ fn confirmed_member_block(
     });
     let selected = confirmed.next().unwrap_or_default();
     if confirmed.next().is_some() {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::MalformedDocument,
             "pkg.index",
             "multiple shell-confirmed member-list blocks",
         ));
@@ -796,9 +842,13 @@ fn update_authored_index(
     title_override: Option<&str>,
     entries: &[IndexEntry],
 ) -> Result<(), EditError> {
-    let document = work
-        .document(index_path)
-        .ok_or_else(|| EditError::at("pkg.index", "index disappeared during lowering"))?;
+    let document = work.document(index_path).ok_or_else(|| {
+        EditError::new(
+            EditCode::Internal,
+            "pkg.index",
+            "index disappeared during lowering",
+        )
+    })?;
     let source = document.text();
     let newline = if source.contains("\r\n") {
         "\r\n"
@@ -912,7 +962,12 @@ fn write_package_index(
             .iter()
             .any(|candidate| candidate.as_str().starts_with(&prefix))
     {
-        return Err(EditError::at("pkg.index", format!("no package '{path}'")));
+        return Err(EditError::new(
+            EditCode::NotFound,
+            "pkg.index",
+            format!("no package '{path}'"),
+        )
+        .about(path));
     }
     let mut entries = package_entries(work, state, path)?;
     let mut keys: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
@@ -981,8 +1036,8 @@ fn write_package_index(
     } else {
         format!("{path}/index.md")
     };
-    let idx_path = BundlePath::parse(idx_path)
-        .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
+    let idx_path =
+        BundlePath::parse(idx_path).map_err(|error| EditError::wrap("pkg.index", &error))?;
     if work.document(&idx_path).is_some() {
         update_authored_index(work, state, &idx_path, path, title_override, &entries)?;
     } else {
@@ -1026,7 +1081,11 @@ pub(crate) fn op_pkg_retitle(
     title: &str,
 ) -> Result<(), EditError> {
     if title.trim().is_empty() {
-        return Err(EditError::at("pkg.retitle", "title cannot be empty"));
+        return Err(EditError::new(
+            EditCode::InvalidArgument,
+            "pkg.retitle",
+            "title cannot be empty",
+        ));
     }
     write_package_index(work, state, path, MemberOrder::Keep, Some(title))
 }
@@ -1044,7 +1103,11 @@ pub(crate) fn op_pkg_insert(
     docs: &[(String, String)],
 ) -> Result<(), EditError> {
     if name.is_empty() {
-        return Err(EditError::at("pkg.insert", "package name is required"));
+        return Err(EditError::new(
+            EditCode::InvalidArgument,
+            "pkg.insert",
+            "package name is required",
+        ));
     }
     let prefix = if parent_path.is_empty() {
         format!("{name}/")
@@ -1056,10 +1119,12 @@ pub(crate) fn op_pkg_insert(
         .iter()
         .any(|document| document.path().as_str().starts_with(&prefix))
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "pkg.insert",
             format!("package '{}' already exists", prefix.trim_end_matches('/')),
-        ));
+        )
+        .about(prefix.trim_end_matches('/')));
     }
     for (path, text) in docs {
         let norm = path.replace('\\', "/");
@@ -1069,7 +1134,7 @@ pub(crate) fn op_pkg_insert(
             None => norm.as_str(),
         };
         work.push_document(format!("{prefix}{rest}"), text.clone())
-            .map_err(|error| EditError::at("pkg.insert", error.to_string()))?;
+            .map_err(|error| EditError::wrap("pkg.insert", &error))?;
     }
     Ok(())
 }
@@ -1117,7 +1182,7 @@ fn okf_scalar(value: &str) -> String {
 
 fn okf_shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
     let text = SourceText::from_shared(Arc::new(source.to_owned()))
-        .map_err(|error| EditError::at(op, error.to_string()))?;
+        .map_err(|error| EditError::wrap(op, &error))?;
     parse_markdown(
         DocumentRevision::INITIAL,
         text,
@@ -1127,7 +1192,7 @@ fn okf_shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
         tree: snapshot.tree().clone(),
         structure: snapshot.structure().clone(),
     })
-    .map_err(|error| EditError::at(op, error.to_string()))
+    .map_err(|error| EditError::wrap(op, &error))
 }
 
 fn okf_line_ending(source: &str) -> &'static str {
@@ -1216,7 +1281,13 @@ fn okf_set_frontmatter(
                         && !token.flags().is_missing()
                 })
         })
-        .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                op,
+                "claimed document has no clean frontmatter",
+            )
+        })?;
     let newline = okf_line_ending(source);
     source.insert_str(
         close.range().start().to_usize(),
@@ -1232,7 +1303,13 @@ fn okf_set_h1(source: &mut String, title: &str, op: &str) -> Result<(), EditErro
         .headings
         .iter()
         .find(|heading| heading.level == 1)
-        .ok_or_else(|| EditError::at(op, "claimed document has no title heading"))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                op,
+                "claimed document has no title heading",
+            )
+        })?;
     let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
     let authored = &source[range.clone()];
     let leading = authored.len() - authored.trim_start().len();
@@ -1259,10 +1336,12 @@ pub(crate) fn op_concept_new(
         .iter()
         .any(|document| crate::okf::id_of(document.path().as_str()) == crate::okf::id_of(&path))
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "concept.new",
             format!("document '{slug}' already exists"),
-        ));
+        )
+        .about(slug));
     }
     let mut source = String::from("---\n");
     if !ty.is_empty() {
@@ -1274,7 +1353,7 @@ pub(crate) fn op_concept_new(
     }
     source.push_str(&format!("---\n\n# {title}\n"));
     work.push_document(path, source)
-        .map_err(|error| EditError::at("concept.new", error.to_string()))
+        .map_err(|error| EditError::wrap("concept.new", &error))
 }
 
 /// Retitle/redescribe an existing concept. Unmentioned fields, including
@@ -1336,7 +1415,7 @@ mod tests {
 
     fn apply(bundle: &[(String, String)], steps: Vec<Step>) -> Result<Pairs, EditError> {
         let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
-            .map_err(|error| EditError::at("bundle", error.to_string()))?;
+            .map_err(|error| EditError::wrap("bundle", &error))?;
         crate::edit::apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
     }
 

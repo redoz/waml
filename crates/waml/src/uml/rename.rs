@@ -1,5 +1,5 @@
 use super::lower::{find_doc, UmlLoweringState};
-use crate::edit::EditError;
+use crate::edit::{EditCode, EditError};
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode,
@@ -18,7 +18,7 @@ pub(crate) fn destination_path(source: &BundlePath, to: &str) -> Result<BundlePa
             None => format!("{to}.md"),
         }
     };
-    BundlePath::parse(destination).map_err(|error| EditError::at("node.rename", error.to_string()))
+    BundlePath::parse(destination).map_err(|error| EditError::wrap("node.rename", &error))
 }
 
 pub(crate) fn op_node_rename(
@@ -40,10 +40,12 @@ pub(crate) fn op_node_rename(
         .enumerate()
         .any(|(i, document)| i != idx && document.path() == &dest_path)
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "node.rename",
             format!("target slug '{to}' already exists"),
-        ));
+        )
+        .about(to));
     }
     let claimed_paths: Vec<_> = state.claimed_paths().cloned().collect();
     for referrer_path in claimed_paths {
@@ -74,7 +76,7 @@ pub(crate) fn op_node_rename(
         }
     }
     work.rename_document(idx, dest_path.as_str().to_owned())
-        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+        .map_err(|error| EditError::wrap("node.rename", &error))?;
     Ok(())
 }
 
@@ -111,13 +113,13 @@ fn rename_typed_references(
     target_after: &BundlePath,
 ) -> Result<String, EditError> {
     let text = SourceText::from_shared(std::sync::Arc::new(source.to_owned()))
-        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+        .map_err(|error| EditError::wrap("node.rename", &error))?;
     let markdown = parse_markdown(
         DocumentRevision::INITIAL,
         text.clone(),
         MarkdownDialect::WAML_DEFAULT,
     )
-    .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+    .map_err(|error| EditError::wrap("node.rename", &error))?;
     let tree = super::syntax::parse_full(text, markdown.structure());
     let mut edits = Vec::new();
     collect_reference_edits(
@@ -298,7 +300,7 @@ mod tests {
         steps: Vec<Step>,
     ) -> Result<Vec<(String, String)>, EditError> {
         let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
-            .map_err(|error| EditError::at("bundle", error.to_string()))?;
+            .map_err(|error| EditError::wrap("bundle", &error))?;
         crate::edit::apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
     }
 

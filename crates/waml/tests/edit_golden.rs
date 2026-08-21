@@ -1,5 +1,5 @@
 use waml::bundle_envelope::split_bundle;
-use waml::edit::{apply, Batch, EditError, Step};
+use waml::edit::{apply, Batch, EditCode, EditError, Step};
 use waml::okf::{self, DirectoryAddress};
 use waml::source::SourceBundle;
 use waml::uml;
@@ -259,8 +259,14 @@ title: Customer
     )
     .expect_err("a classifier is not a placement target");
 
+    // The rejection is machine-readable as well as legible: a caller can
+    // branch on the code and read the target off `subject` without parsing
+    // the sentence. This is the case that named `EditCode::WrongTarget`.
+    assert_eq!(error.code, EditCode::WrongTarget, "{error:?}");
+    assert_eq!(error.op, "place.set");
+    assert_eq!(error.subject.as_deref(), Some("order"), "{error:?}");
     assert!(
-        format!("{error:?}").contains("not a diagram"),
+        error.reason.contains("not a diagram"),
         "place.set at a classifier must say so, got: {error:?}"
     );
 }

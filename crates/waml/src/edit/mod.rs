@@ -12,28 +12,65 @@ use std::fmt;
 use waml_syntax::{ChangeMap, DocumentRevision, FullReparseReason, SourceText, TextChange};
 
 mod batch;
+mod code;
 #[cfg(test)]
 mod port_tests;
 mod reversible;
 
 pub use batch::{apply, Batch, Invalidation, InvalidationSink, Step};
+pub use code::EditCode;
+pub(crate) use code::EditCoded;
 
+/// A rejected edit operation.
+///
+/// Every field but `reason` is machine-readable, and together they say which
+/// step of the batch failed (`index`), which operation it was (`op`), what it
+/// was aimed at (`subject`, `selector`) and why it was refused (`code`).
+/// `reason` is the human sentence for a person at a CLI -- it is carried *in
+/// addition to* the code, never instead of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditError {
     pub index: usize,
     pub op: String,
+    /// Why the operation was refused, as a stable kebab-case code a caller can
+    /// branch on. See [`EditCode`].
+    pub code: EditCode,
     pub selector: Option<String>,
+    /// The thing the operation was aimed at -- a slug, path, package, attribute
+    /// or value name. Lifted out of `reason` so a caller does not have to parse
+    /// prose to find out *what* was not found or already existed.
+    pub subject: Option<String>,
     pub reason: String,
 }
 
 impl EditError {
-    pub(crate) fn at(op: &str, reason: impl Into<String>) -> EditError {
+    pub(crate) fn new(code: EditCode, op: &str, reason: impl Into<String>) -> EditError {
         EditError {
             index: 0,
             op: op.to_string(),
+            code,
             selector: None,
+            subject: None,
             reason: reason.into(),
         }
+    }
+
+    /// Record the thing this operation was aimed at.
+    pub(crate) fn about(mut self, subject: impl Into<String>) -> EditError {
+        self.subject = Some(subject.into());
+        self
+    }
+
+    /// Lift an error that already classified itself into an [`EditError`],
+    /// keeping both halves: its [`EditCode`] and its human message.
+    ///
+    /// This replaces `EditError::at(op, error.to_string())`, which kept only
+    /// the prose.
+    pub(crate) fn wrap<E>(op: &str, error: &E) -> EditError
+    where
+        E: code::EditCoded + fmt::Display + ?Sized,
+    {
+        EditError::new(error.edit_code(), op, error.to_string())
     }
 
     pub(crate) fn with_sel(mut self, sel: String) -> EditError {
@@ -46,8 +83,11 @@ impl fmt::Display for EditError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "edit step {} ({}) failed: {}",
-            self.index, self.op, self.reason
+            "edit step {} ({}) failed [{}]: {}",
+            self.index,
+            self.op,
+            self.code.as_str(),
+            self.reason
         )
     }
 }
@@ -133,9 +173,16 @@ impl EditBatch for ExactSourceEdit {
             .okf_analysis
             .catalog
             .document(self.document)
-            .ok_or_else(|| edit_error("source.document", "document is not in the catalog"))?;
+            .ok_or_else(|| {
+                EditError::new(
+                    EditCode::NotFound,
+                    "source.document",
+                    "document is not in the catalog",
+                )
+            })?;
         if document.revision() != self.base_revision {
-            return Err(edit_error(
+            return Err(EditError::new(
+                EditCode::StaleContext,
                 "source.base_revision",
                 "document revision does not match the edit base",
             ));
@@ -197,36 +244,43 @@ fn lower_exact_source_edit(
     }
     let replacement = SourceDocument::from_shared(path.clone(), replacement_text.shared().clone());
     host::replace_document(source_bundle, replacement).map_err(|reason| {
-        ExactSourceEditError::Transaction(edit_error("source.document", reason.to_string()))
+        ExactSourceEditError::Transaction(EditError::wrap("source.document", &reason))
     })
+}
+
+impl EditCoded for ExactSourceEditError {
+    fn edit_code(&self) -> EditCode {
+        match self {
+            Self::DocumentNotFound { .. } => EditCode::NotFound,
+            // The caller's base text is no longer the text we hold, or applying
+            // its changes did not reproduce the text it expected: in both cases
+            // the caller is working from a stale picture of the document.
+            Self::BaseIdentityMismatch { .. } | Self::ResultTextMismatch { .. } => {
+                EditCode::StaleContext
+            }
+            Self::InvalidChanges { .. } => EditCode::InvalidArgument,
+            Self::Transaction(error) => error.code,
+        }
+    }
 }
 
 impl From<ExactSourceEditError> for EditError {
     fn from(error: ExactSourceEditError) -> Self {
         match error {
             other @ ExactSourceEditError::DocumentNotFound { .. } => {
-                edit_error("source.document", other.to_string())
+                EditError::wrap("source.document", &other)
             }
             other @ ExactSourceEditError::BaseIdentityMismatch { .. } => {
-                edit_error("source.base_identity", other.to_string())
+                EditError::wrap("source.base_identity", &other)
             }
             other @ ExactSourceEditError::InvalidChanges { .. } => {
-                edit_error("source.change_map", other.to_string())
+                EditError::wrap("source.change_map", &other)
             }
             other @ ExactSourceEditError::ResultTextMismatch { .. } => {
-                edit_error("source.expected_text", other.to_string())
+                EditError::wrap("source.expected_text", &other)
             }
             ExactSourceEditError::Transaction(error) => error,
         }
-    }
-}
-
-fn edit_error(op: &str, reason: impl Into<String>) -> EditError {
-    EditError {
-        index: 0,
-        op: op.into(),
-        selector: None,
-        reason: reason.into(),
     }
 }
 

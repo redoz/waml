@@ -371,13 +371,30 @@ impl fmt::Display for ActionError {
 
 impl std::error::Error for ActionError {}
 
+impl crate::edit::EditCoded for ActionError {
+    fn edit_code(&self) -> crate::edit::EditCode {
+        use crate::edit::EditCode;
+        match self {
+            ActionError::UnknownDocument { .. } => EditCode::NotFound,
+            // Every one of these means "the basis you built this action against
+            // is not the basis I am holding" -- re-read and retry, do not
+            // reword.
+            ActionError::StaleSession { .. }
+            | ActionError::StaleDocument { .. }
+            | ActionError::DifferentTree { .. }
+            | ActionError::MismatchedCatalog
+            | ActionError::MismatchedAnalysisRevision { .. } => EditCode::StaleContext,
+            ActionError::InvalidRange { .. }
+            | ActionError::NonUtf8Boundary { .. }
+            | ActionError::Overlap { .. }
+            | ActionError::BasisScope { .. } => EditCode::InvalidArgument,
+            ActionError::StructuralInvariant { .. } => EditCode::Internal,
+        }
+    }
+}
+
 impl From<ActionError> for EditError {
     fn from(error: ActionError) -> Self {
-        EditError {
-            index: 0,
-            op: "syntax.action".into(),
-            selector: None,
-            reason: error.to_string(),
-        }
+        EditError::wrap("syntax.action", &error)
     }
 }

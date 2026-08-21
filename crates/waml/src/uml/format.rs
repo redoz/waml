@@ -77,14 +77,21 @@ impl From<ActionError> for FormatError {
         Self::Action(error)
     }
 }
+impl crate::edit::EditCoded for FormatError {
+    fn edit_code(&self) -> crate::edit::EditCode {
+        use crate::edit::EditCode;
+        match self {
+            FormatError::Action(error) => error.edit_code(),
+            FormatError::UnknownDocument { .. } => EditCode::NotFound,
+            FormatError::NotClaimed { .. } => EditCode::WrongTarget,
+            FormatError::StructuralInvariant { .. } => EditCode::Internal,
+        }
+    }
+}
+
 impl From<FormatError> for EditError {
     fn from(error: FormatError) -> Self {
-        EditError {
-            index: 0,
-            op: "uml.format".into(),
-            selector: None,
-            reason: error.to_string(),
-        }
+        EditError::wrap("uml.format", &error)
     }
 }
 

@@ -1,5 +1,5 @@
 use super::{RelationshipSelector, Selector};
-use crate::edit::{EditBatch, EditContext, EditError};
+use crate::edit::{EditBatch, EditCode, EditContext, EditError};
 use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
@@ -247,12 +247,14 @@ fn require_claimed(
         return Ok(());
     }
     if super::lower::resolve_index(work, target).is_none() {
-        Err(EditError::at(op, format!("no document '{target}'")))
+        Err(EditError::new(EditCode::NotFound, op, format!("no document '{target}'")).about(target))
     } else {
-        Err(EditError::at(
+        Err(EditError::new(
+            EditCode::WrongTarget,
             op,
             format!("'{target}' is not claimed by the UML projection"),
-        ))
+        )
+        .about(target))
     }
 }
 
@@ -286,14 +288,18 @@ fn require_diagram(
         {
             Ok(())
         }
-        Some(name) => Err(EditError::at(
+        Some(name) => Err(EditError::new(
+            EditCode::WrongTarget,
             op,
             format!("'{target}' is a {name}, not a diagram"),
-        )),
-        None => Err(EditError::at(
+        )
+        .about(target)),
+        None => Err(EditError::new(
+            EditCode::WrongTarget,
             op,
             format!("'{target}' declares no type, so it is not a diagram"),
-        )),
+        )
+        .about(target)),
     }
 }
 
@@ -380,7 +386,11 @@ pub(crate) fn lower_one_with_state(
             abstract_,
         } => {
             if !crate::uml::recognizes_type(ty) {
-                return Err(EditError::at("node.new", "type is not claimed by UML"));
+                return Err(EditError::new(
+                    EditCode::WrongTarget,
+                    "node.new",
+                    "type is not claimed by UML",
+                ));
             }
             super::lower::op_node_new(
                 work,

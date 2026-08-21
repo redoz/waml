@@ -14,7 +14,7 @@ type Bundle = Vec<(String, String)>;
 
 fn apply(bundle: &[(String, String)], steps: Vec<Step>) -> Result<Bundle, EditError> {
     let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
-        .map_err(|error| EditError::at("bundle", error.to_string()))?;
+        .map_err(|error| EditError::wrap("bundle", &error))?;
     crate::edit::apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
 }
 

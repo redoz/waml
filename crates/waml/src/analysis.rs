@@ -544,14 +544,107 @@ impl fmt::Display for InvalidPromotedMarkdownUpdateReason {
     }
 }
 
+/// Which kind of analysis failure occurred, as a stable kebab-case name.
+///
+/// This exists so [`okf::BundleError::Analysis`] can name the failure it is
+/// carrying instead of only quoting its message. It is a fieldless mirror of
+/// [`AnalysisError`], and [`AnalysisError::code`] is an exhaustive `match`, so a
+/// new `AnalysisError` variant fails to compile here rather than silently
+/// arriving under someone else's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AnalysisCode {
+    #[cfg_attr(feature = "serde", serde(rename = "source-too-large"))]
+    SourceTooLarge,
+    #[cfg_attr(feature = "serde", serde(rename = "shell-parse-failed"))]
+    ShellParseFailed,
+    #[cfg_attr(feature = "serde", serde(rename = "okf"))]
+    Okf,
+    #[cfg_attr(feature = "serde", serde(rename = "catalog-invariant"))]
+    CatalogInvariant,
+    #[cfg_attr(feature = "serde", serde(rename = "invalid-promoted-markdown-update"))]
+    InvalidPromotedMarkdownUpdate,
+    #[cfg_attr(feature = "serde", serde(rename = "specialization-failed"))]
+    SpecializationFailed,
+    #[cfg_attr(feature = "serde", serde(rename = "ambiguous-claim"))]
+    AmbiguousClaim,
+    #[cfg_attr(feature = "serde", serde(rename = "structural-invariant"))]
+    StructuralInvariant,
+}
+
+impl AnalysisCode {
+    /// Every code, in declaration order.
+    pub const ALL: &[AnalysisCode] = &[
+        AnalysisCode::SourceTooLarge,
+        AnalysisCode::ShellParseFailed,
+        AnalysisCode::Okf,
+        AnalysisCode::CatalogInvariant,
+        AnalysisCode::InvalidPromotedMarkdownUpdate,
+        AnalysisCode::SpecializationFailed,
+        AnalysisCode::AmbiguousClaim,
+        AnalysisCode::StructuralInvariant,
+    ];
+
+    /// The stable kebab-case wire name, identical to the `serde` name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AnalysisCode::SourceTooLarge => "source-too-large",
+            AnalysisCode::ShellParseFailed => "shell-parse-failed",
+            AnalysisCode::Okf => "okf",
+            AnalysisCode::CatalogInvariant => "catalog-invariant",
+            AnalysisCode::InvalidPromotedMarkdownUpdate => "invalid-promoted-markdown-update",
+            AnalysisCode::SpecializationFailed => "specialization-failed",
+            AnalysisCode::AmbiguousClaim => "ambiguous-claim",
+            AnalysisCode::StructuralInvariant => "structural-invariant",
+        }
+    }
+}
+
+impl fmt::Display for AnalysisCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl AnalysisError {
+    /// Which kind of failure this is, without its payload.
+    pub fn code(&self) -> AnalysisCode {
+        match self {
+            AnalysisError::SourceTooLarge { .. } => AnalysisCode::SourceTooLarge,
+            AnalysisError::Shell { .. } => AnalysisCode::ShellParseFailed,
+            AnalysisError::Okf(_) => AnalysisCode::Okf,
+            AnalysisError::CatalogInvariant { .. } => AnalysisCode::CatalogInvariant,
+            AnalysisError::InvalidPromotedMarkdownUpdate { .. } => {
+                AnalysisCode::InvalidPromotedMarkdownUpdate
+            }
+            AnalysisError::Specialization { .. } => AnalysisCode::SpecializationFailed,
+            AnalysisError::AmbiguousClaim { .. } => AnalysisCode::AmbiguousClaim,
+            AnalysisError::StructuralInvariant { .. } => AnalysisCode::StructuralInvariant,
+        }
+    }
+}
+
+impl crate::edit::EditCoded for AnalysisError {
+    fn edit_code(&self) -> crate::edit::EditCode {
+        use crate::edit::EditCode;
+        match self {
+            AnalysisError::SourceTooLarge { .. } => EditCode::InvalidArgument,
+            AnalysisError::Shell { .. } => EditCode::MalformedDocument,
+            AnalysisError::Okf(error) => error.edit_code(),
+            AnalysisError::InvalidPromotedMarkdownUpdate { .. } => EditCode::StaleContext,
+            // The candidate this crate built violates an invariant this crate
+            // maintains. The caller cannot fix that by asking differently.
+            AnalysisError::CatalogInvariant { .. }
+            | AnalysisError::Specialization { .. }
+            | AnalysisError::AmbiguousClaim { .. }
+            | AnalysisError::StructuralInvariant { .. } => EditCode::Internal,
+        }
+    }
+}
+
 impl From<AnalysisError> for crate::edit::EditError {
     fn from(error: AnalysisError) -> Self {
-        crate::edit::EditError {
-            index: 0,
-            op: "analysis.prepare".into(),
-            selector: None,
-            reason: error.to_string(),
-        }
+        crate::edit::EditError::wrap("analysis.prepare", &error)
     }
 }
 

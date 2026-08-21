@@ -8,7 +8,7 @@ use super::syntax::{
     UmlSyntaxKind,
 };
 use super::{DiagramDisplaySet, FieldEdit, NameSpec, TraceEdit, TransitionSelector};
-use crate::edit::{EditContext, EditError};
+use crate::edit::{EditCode, EditContext, EditError};
 use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
@@ -76,10 +76,12 @@ impl UmlLoweringState {
                 .iter()
                 .any(|(other, existing)| other != &id && existing == &path)
         {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "uml.structure",
                 format!("concept '{id}' or path '{}' already exists", path.as_str()),
-            ));
+            )
+            .about(id));
         }
         self.invalidate_text(&path);
         self.current_paths.insert(id, path);
@@ -99,13 +101,20 @@ impl UmlLoweringState {
         path: BundlePath,
     ) -> Result<(), EditError> {
         if from != to && self.current_paths.contains_key(&to) {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "uml.structure",
                 format!("concept '{to}' already exists"),
-            ));
+            )
+            .about(to));
         }
         let old_path = self.current_paths.remove(from).ok_or_else(|| {
-            EditError::at("uml.structure", format!("no claimed concept '{from}'"))
+            EditError::new(
+                EditCode::NotFound,
+                "uml.structure",
+                format!("no claimed concept '{from}'"),
+            )
+            .about(from)
         })?;
         if self
             .current_paths
@@ -113,10 +122,12 @@ impl UmlLoweringState {
             .any(|(other, existing)| other != &to && existing == &path)
         {
             self.current_paths.insert(from.to_owned(), old_path);
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "uml.structure",
                 format!("path '{}' already exists", path.as_str()),
-            ));
+            )
+            .about(path.as_str()));
         }
         self.invalidate_text(&old_path);
         self.invalidate_text(&path);
@@ -149,10 +160,14 @@ impl UmlLoweringState {
         target: &str,
         op: &str,
     ) -> Result<(BundlePath, Arc<SyntaxTree<UmlLanguage>>), EditError> {
-        let path = self
-            .path(target)
-            .cloned()
-            .ok_or_else(|| EditError::at(op, format!("no claimed concept '{target}'")))?;
+        let path = self.path(target).cloned().ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                op,
+                format!("no claimed concept '{target}'"),
+            )
+            .about(target)
+        })?;
         if !self.touched_islands.contains_key(&path) {
             self.reparse(candidate, &path, op)?;
         }
@@ -171,17 +186,22 @@ impl UmlLoweringState {
         path: &BundlePath,
         op: &str,
     ) -> Result<(), EditError> {
-        let document = candidate
-            .document(path)
-            .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+        let document = candidate.document(path).ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                op,
+                format!("no document '{}'", path.as_str()),
+            )
+            .about(path.as_str())
+        })?;
         let text = SourceText::from_shared(document.text_arc().clone())
-            .map_err(|error| EditError::at(op, error.to_string()))?;
+            .map_err(|error| EditError::wrap(op, &error))?;
         let markdown = parse_markdown(
             DocumentRevision::INITIAL,
             text.clone(),
             MarkdownDialect::WAML_DEFAULT,
         )
-        .map_err(|error| EditError::at(op, error.to_string()))?;
+        .map_err(|error| EditError::wrap(op, &error))?;
         self.touched_islands.insert(
             path.clone(),
             super::syntax::parse_full(text, markdown.structure()),
@@ -321,9 +341,14 @@ pub(crate) fn apply_step(
             } else {
                 format!("{directory}/{slug}.md")
             })
-            .map_err(|error| EditError::at("node.new", error.to_string()))?;
+            .map_err(|error| EditError::wrap("node.new", &error))?;
             let document = candidate.document(&inserted_path).ok_or_else(|| {
-                EditError::at("node.new", format!("inserted concept '{slug}' is absent"))
+                EditError::new(
+                    EditCode::Internal,
+                    "node.new",
+                    format!("inserted concept '{slug}' is absent"),
+                )
+                .about(slug)
             })?;
             state
                 .inserted_concept(
@@ -347,10 +372,12 @@ pub(crate) fn apply_step(
         super::Op::ClassifierRename { .. } => {
             if let Some((from, destination)) = rename {
                 let document = candidate.document(&destination).ok_or_else(|| {
-                    let mut error = EditError::at(
+                    let mut error = EditError::new(
+                        EditCode::Internal,
                         "node.rename",
                         format!("renamed concept '{}' is absent", destination.as_str()),
-                    );
+                    )
+                    .about(destination.as_str());
                     error.index = index;
                     error
                 })?;
@@ -405,7 +432,8 @@ fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
         || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
         || catalog.documents().len() != context.source.len()
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::StaleContext,
             "uml.context",
             "analysis/catalog revision does not match source",
         ));
@@ -456,10 +484,12 @@ pub(crate) fn op_transition_traces_edit(
     match edit {
         TraceEdit::Insert { index, label, href } => {
             if *index > traces.len() {
-                return Err(EditError::at(
+                return Err(EditError::new(
+                    EditCode::OutOfRange,
                     OP,
                     format!("trace index {index} is out of bounds"),
-                ));
+                )
+                .about(index.to_string()));
             }
             let clause = render_transition_trace(label, href, OP)?;
             if traces.is_empty() {
@@ -487,7 +517,12 @@ pub(crate) fn op_transition_traces_edit(
         }
         TraceEdit::Update { index, label, href } => {
             let trace = traces.get(*index).ok_or_else(|| {
-                EditError::at(OP, format!("trace index {index} is out of bounds"))
+                EditError::new(
+                    EditCode::OutOfRange,
+                    OP,
+                    format!("trace index {index} is out of bounds"),
+                )
+                .about(index.to_string())
             })?;
             validate_transition_trace(label, href, OP)?;
             let tokens = trace.link().and_then(|link| {
@@ -538,10 +573,12 @@ pub(crate) fn op_transition_traces_edit(
         }
         TraceEdit::Remove { index } => {
             if *index >= traces.len() {
-                return Err(EditError::at(
+                return Err(EditError::new(
+                    EditCode::OutOfRange,
                     OP,
                     format!("trace index {index} is out of bounds"),
-                ));
+                )
+                .about(index.to_string()));
             }
             let range = if traces.len() == 1 {
                 node_range(&traces_node)
@@ -554,7 +591,11 @@ pub(crate) fn op_transition_traces_edit(
         }
         TraceEdit::Move { from, to } => {
             if *from >= traces.len() || *to >= traces.len() {
-                return Err(EditError::at(OP, "trace move index is out of bounds"));
+                return Err(EditError::new(
+                    EditCode::OutOfRange,
+                    OP,
+                    "trace move index is out of bounds",
+                ));
             }
             if from == to {
                 return Ok(());
@@ -593,13 +634,15 @@ fn selected_transition(
         .filter_map(FlowNodeSyntax::cast)
         .find(|node| node.identity_token().text().write_to_string().trim() == selector.source_node)
         .ok_or_else(|| {
-            EditError::at(
+            EditError::new(
+                EditCode::NotFound,
                 op,
                 format!(
                     "no flow node '{}' in behavior '{}'",
                     selector.source_node, selector.behavior
                 ),
             )
+            .about(selector.source_node.as_str())
         })?;
     let mut transitions = Vec::new();
     syntax_nodes(
@@ -612,13 +655,15 @@ fn selected_transition(
         .filter_map(FlowTransitionSyntax::cast)
         .nth(selector.occurrence)
         .ok_or_else(|| {
-            EditError::at(
+            EditError::new(
+                EditCode::NotFound,
                 op,
                 format!(
                     "no transition occurrence {} from '{}' in behavior '{}'",
                     selector.occurrence, selector.source_node, selector.behavior
                 ),
             )
+            .about(selector.source_node.as_str())
         })?;
     Ok((path, transition))
 }
@@ -634,10 +679,15 @@ fn render_transition_trace(label: &str, href: &str, op: &str) -> Result<String, 
 
 fn validate_transition_trace(label: &str, href: &str, op: &str) -> Result<(), EditError> {
     if label.trim().is_empty() || href.trim().is_empty() {
-        return Err(EditError::at(op, "trace label and href must not be empty"));
+        return Err(EditError::new(
+            EditCode::InvalidArgument,
+            op,
+            "trace label and href must not be empty",
+        ));
     }
     if label.contains(['\r', '\n']) || href.contains(['\r', '\n']) {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::InvalidArgument,
             op,
             "trace label and href must fit on one line",
         ));
@@ -675,7 +725,9 @@ pub(crate) fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> 
 }
 
 pub(crate) fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, EditError> {
-    resolve_index(work, target).ok_or_else(|| EditError::at(op, format!("no document '{target}'")))
+    resolve_index(work, target).ok_or_else(|| {
+        EditError::new(EditCode::NotFound, op, format!("no document '{target}'")).about(target)
+    })
 }
 
 fn line_ending(source: &str) -> &'static str {
@@ -688,7 +740,7 @@ fn line_ending(source: &str) -> &'static str {
 
 fn shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
     let text = SourceText::from_shared(Arc::new(source.to_owned()))
-        .map_err(|error| EditError::at(op, error.to_string()))?;
+        .map_err(|error| EditError::wrap(op, &error))?;
     parse_markdown(
         DocumentRevision::INITIAL,
         text,
@@ -698,7 +750,7 @@ fn shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
         tree: snapshot.tree().clone(),
         structure: snapshot.structure().clone(),
     })
-    .map_err(|error| EditError::at(op, error.to_string()))
+    .map_err(|error| EditError::wrap(op, &error))
 }
 
 fn syntax_nodes(
@@ -753,7 +805,14 @@ fn replace_range(
         .documents()
         .iter()
         .position(|document| document.path() == path)
-        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                op,
+                format!("no document '{}'", path.as_str()),
+            )
+            .about(path.as_str())
+        })?;
     work.document_at_mut(index)
         .expect("resolved document")
         .text_mut()
@@ -771,7 +830,14 @@ fn replace_document(
         .documents()
         .iter()
         .position(|document| document.path() == path)
-        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                op,
+                format!("no document '{}'", path.as_str()),
+            )
+            .about(path.as_str())
+        })?;
     *work
         .document_at_mut(index)
         .expect("resolved document")
@@ -1012,7 +1078,13 @@ fn set_frontmatter(
                         && !token.flags().is_missing()
                 })
         })
-        .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                op,
+                "claimed document has no clean frontmatter",
+            )
+        })?;
     let newline = line_ending(source);
     source.insert_str(
         close.range().start().to_usize(),
@@ -1028,7 +1100,13 @@ fn set_h1(source: &mut String, title: &str, op: &str) -> Result<(), EditError> {
         .headings
         .iter()
         .find(|heading| heading.level == 1)
-        .ok_or_else(|| EditError::at(op, "claimed document has no title heading"))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                op,
+                "claimed document has no title heading",
+            )
+        })?;
     let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
     let authored = &source[range.clone()];
     let leading = authored.len() - authored.trim_start().len();
@@ -1124,10 +1202,12 @@ pub(crate) fn op_attr_add(
         .iter()
         .any(|(_, attribute)| attribute.name_token().text().write_to_string() == name)
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "attr.add",
             format!("attribute '{name}' already exists in {node}"),
-        ));
+        )
+        .about(name));
     }
     let visibility = visibility
         .map(|value| format!("{} ", value.marker()))
@@ -1162,22 +1242,35 @@ pub(crate) fn op_attr_set(
                 .iter()
                 .any(|(_, attribute)| attribute.name_token().text().write_to_string() == *new_name)
         {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::AlreadyExists,
                 "attr.set",
                 format!("attribute '{new_name}' already exists in {node}"),
-            ));
+            )
+            .about(new_name));
         }
     }
     let (_syntax, attribute) = attributes
         .into_iter()
         .find(|(_, attribute)| attribute.name_token().text().write_to_string() == name)
-        .ok_or_else(|| EditError::at("attr.set", format!("no attribute '{name}' in {node}")))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                "attr.set",
+                format!("no attribute '{name}' in {node}"),
+            )
+            .about(name)
+        })?;
     let source = work.document(&path).expect("claimed document").text();
     let mut edits = Vec::<(Range<usize>, String)>::new();
     if let Some(token) = ty_token {
-        let type_syntax = attribute
-            .type_syntax()
-            .ok_or_else(|| EditError::at("attr.set", "attribute has no type reference"))?;
+        let type_syntax = attribute.type_syntax().ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                "attr.set",
+                "attribute has no type reference",
+            )
+        })?;
         edits.push((
             node_content_range(source, type_syntax.syntax()),
             type_text(work, &path, token),
@@ -1195,9 +1288,13 @@ pub(crate) fn op_attr_set(
             if let Some(existing) = attribute.multiplicity() {
                 edits.push((node_content_range(source, existing.syntax()), replacement));
             } else {
-                let type_syntax = attribute
-                    .type_syntax()
-                    .ok_or_else(|| EditError::at("attr.set", "attribute has no type reference"))?;
+                let type_syntax = attribute.type_syntax().ok_or_else(|| {
+                    EditError::new(
+                        EditCode::MalformedDocument,
+                        "attr.set",
+                        "attribute has no type reference",
+                    )
+                })?;
                 let end = node_range(type_syntax.syntax()).end;
                 edits.push((end..end, format!(" {replacement}")));
             }
@@ -1240,7 +1337,14 @@ pub(crate) fn op_attr_rm(
         .into_iter()
         .find(|(_, attribute)| attribute.name_token().text().write_to_string() == name)
         .map(|(syntax, _)| syntax)
-        .ok_or_else(|| EditError::at("attr.rm", format!("no attribute '{name}' in {node}")))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                "attr.rm",
+                format!("no attribute '{name}' in {node}"),
+            )
+            .about(name)
+        })?;
     remove_owned_node(work, &path, &tree, "Attributes", &syntax, "attr.rm")
 }
 
@@ -1265,10 +1369,12 @@ pub(crate) fn op_value_add(
         .filter_map(|syntax| value_literal(&source[node_range(syntax)]))
         .any(|value| value == literal)
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "value.add",
             format!("value '{literal}' already in {node}"),
-        ));
+        )
+        .about(literal));
     }
     append_line(
         work,
@@ -1291,7 +1397,14 @@ pub(crate) fn op_value_rm(
     let syntax = nodes(&tree, UmlSyntaxKind::Value)
         .into_iter()
         .find(|syntax| value_literal(&source[node_range(syntax)]).as_deref() == Some(literal))
-        .ok_or_else(|| EditError::at("value.rm", format!("no value '{literal}' in {node}")))?;
+        .ok_or_else(|| {
+            EditError::new(
+                EditCode::NotFound,
+                "value.rm",
+                format!("no value '{literal}' in {node}"),
+            )
+            .about(literal)
+        })?;
     remove_owned_node(work, &path, &tree, "Values", &syntax, "value.rm")
 }
 
@@ -1381,14 +1494,16 @@ pub(crate) fn op_rel_add(
     ends: &Option<(RelEnd, RelEnd)>,
 ) -> Result<(), EditError> {
     if kind.is_ended() != ends.is_some() {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::InvalidArgument,
             "rel.add",
             if kind.is_ended() {
                 format!("relationship '{}' requires ends", kind.as_str())
             } else {
                 format!("relationship '{}' does not take ends", kind.as_str())
             },
-        ));
+        )
+        .about(kind.as_str()));
     }
     let (path, tree) = state.tree(work, source_id, "rel.add")?;
     let source = work.document(&path).expect("claimed document").text();
@@ -1400,13 +1515,15 @@ pub(crate) fn op_rel_add(
             relationship.kind == kind && relationship.target_id == stored_id(work, target)
         })
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "rel.add",
             format!(
                 "relationship '{} {target}' already exists in {source_id}",
                 kind.as_str()
             ),
-        ));
+        )
+        .about(format!("{} {target}", kind.as_str())));
     }
     let name = name
         .as_ref()
@@ -1431,13 +1548,15 @@ fn relationship_target<'a>(
 ) -> Result<(&'a str, &'a RelBy), EditError> {
     match selector {
         Selector::Rel { source, by } => Ok((source, by)),
-        _ => Err(EditError::at(
+        _ => Err(EditError::new(
+            EditCode::WrongTarget,
             op,
             format!(
                 "selector '{}' does not address a relationship",
                 render_selector(selector)
             ),
         )
+        .about(render_selector(selector))
         .with_sel(render_selector(selector))),
     }
 }
@@ -1468,22 +1587,38 @@ pub(crate) fn op_rel_set(
         .find(|(_, relationship)| relationship_matches(relationship, &resolved))
         .ok_or_else(|| {
             let display = render_selector(selector);
-            EditError::at("rel.set", format!("no relationship '{display}'")).with_sel(display)
+            EditError::new(
+                EditCode::NotFound,
+                "rel.set",
+                format!("no relationship '{display}'"),
+            )
+            .about(display.clone())
+            .with_sel(display)
         })?;
     let mut edits = Vec::<(Range<usize>, String)>::new();
     if let Some((from, to)) = ends {
         if !relationship.kind.is_ended() {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::InvalidArgument,
                 "rel.set",
                 format!("'{}' does not take ends", relationship.kind.as_str()),
-            ));
+            )
+            .about(relationship.kind.as_str()));
         }
-        let from_syntax = syntax
-            .source_end()
-            .ok_or_else(|| EditError::at("rel.set", "relationship has no source end"))?;
-        let to_syntax = syntax
-            .to_end()
-            .ok_or_else(|| EditError::at("rel.set", "relationship has no target end"))?;
+        let from_syntax = syntax.source_end().ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                "rel.set",
+                "relationship has no source end",
+            )
+        })?;
+        let to_syntax = syntax.to_end().ok_or_else(|| {
+            EditError::new(
+                EditCode::MalformedDocument,
+                "rel.set",
+                "relationship has no target end",
+            )
+        })?;
         edits.push((
             node_content_range(source, from_syntax.syntax()).start
                 ..node_content_range(source, to_syntax.syntax()).end,
@@ -1500,9 +1635,13 @@ pub(crate) fn op_rel_set(
         {
             edits.push((node_content_range(source, &existing), replacement));
         } else {
-            let target = syntax
-                .link()
-                .ok_or_else(|| EditError::at("rel.set", "relationship has no target link"))?;
+            let target = syntax.link().ok_or_else(|| {
+                EditError::new(
+                    EditCode::MalformedDocument,
+                    "rel.set",
+                    "relationship has no target link",
+                )
+            })?;
             let end = node_range(&target).end;
             edits.push((end..end, format!(" as {replacement}")));
         }
@@ -1544,7 +1683,13 @@ pub(crate) fn op_rel_rm(
         })
         .ok_or_else(|| {
             let display = render_selector(selector);
-            EditError::at("rel.rm", format!("no relationship '{display}'")).with_sel(display)
+            EditError::new(
+                EditCode::NotFound,
+                "rel.rm",
+                format!("no relationship '{display}'"),
+            )
+            .about(display.clone())
+            .with_sel(display)
         })?;
     remove_owned_node(work, &path, &tree, "Relationships", &syntax, "rel.rm")
 }
@@ -1570,10 +1715,12 @@ pub(crate) fn op_node_new(
         .iter()
         .any(|document| okf::id_of(document.path().as_str()) == okf::id_of(&path))
     {
-        return Err(EditError::at(
+        return Err(EditError::new(
+            EditCode::AlreadyExists,
             "node.new",
             format!("document '{slug}' already exists"),
-        ));
+        )
+        .about(slug));
     }
     let mut source = format!("---\ntype: {}\n", scalar(&ty.as_str()));
     if !stereotype.is_empty() {
@@ -1588,7 +1735,7 @@ pub(crate) fn op_node_new(
     }
     source.push_str(&format!("---\n\n# {title}\n"));
     work.push_document(path, source)
-        .map_err(|error| EditError::at("node.new", error.to_string()))
+        .map_err(|error| EditError::wrap("node.new", &error))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1871,20 +2018,21 @@ pub(crate) fn op_node_rm(
     id: &str,
     cascade: bool,
 ) -> Result<(), EditError> {
-    let path = state
-        .path(id)
-        .cloned()
-        .ok_or_else(|| EditError::at("node.rm", format!("no document '{id}'")))?;
+    let path = state.path(id).cloned().ok_or_else(|| {
+        EditError::new(EditCode::NotFound, "node.rm", format!("no document '{id}'")).about(id)
+    })?;
     if !cascade {
         let references = referrers_source(work, id);
         if !references.is_empty() {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::ReferencedElsewhere,
                 "node.rm",
                 format!(
                     "'{id}' referenced by: {} (use --cascade)",
                     references.join(", ")
                 ),
-            ));
+            )
+            .about(id));
         }
     }
     let index = work

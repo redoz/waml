@@ -1,4 +1,4 @@
-use crate::edit::EditError;
+use crate::edit::{EditCode, EditError};
 use crate::source::{BundlePath, SourceBundle};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,7 +79,8 @@ impl SourceDelta {
             SourceDelta::Text(changes) => apply_text_changes(changes, source),
             SourceDelta::Structural { before, after } => {
                 if source != before {
-                    return Err(EditError::at(
+                    return Err(EditError::new(
+                        EditCode::StaleContext,
                         "history.restore",
                         "source bundle no longer matches structural history",
                     ));
@@ -116,10 +117,15 @@ fn apply_text_changes(
 
     for change in changes {
         let document = candidate.document_mut(&change.path).ok_or_else(|| {
-            EditError::at(
+            // Not `NotFound`: the caller never named this document, the
+            // history did. A document the history expects having vanished is
+            // the same staleness as one whose text has moved on, below.
+            EditError::new(
+                EditCode::StaleContext,
                 "history.restore",
                 format!("missing document '{}'", change.path),
             )
+            .about(change.path.as_str())
         })?;
         let end = change.start + change.removed.len();
         let matches_preimage = document
@@ -127,10 +133,12 @@ fn apply_text_changes(
             .get(change.start..end)
             .is_some_and(|text| text == change.removed);
         if !matches_preimage {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::StaleContext,
                 "history.restore",
                 format!("document '{}' no longer matches history", change.path),
-            ));
+            )
+            .about(change.path.as_str()));
         }
 
         document

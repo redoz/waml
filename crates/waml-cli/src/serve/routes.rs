@@ -250,9 +250,29 @@ fn apply_failure_response(failure: ApplyFailure) -> Response {
             }),
         )
             .into_response(),
-        ApplyFailure::Edit(message) => (
+        // Decoding failed before the edit layer saw anything, so there is no
+        // code to report. Kept under the same `error`/`reason` pair the edit
+        // rejection uses -- clients matching on `error` predate the split.
+        ApplyFailure::Decode(message) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({"error": "edit rejected", "reason": message})),
+        )
+            .into_response(),
+        // `error` and `reason` are unchanged from before the edit error was
+        // carried structurally; `code`, `op`, `index` and `subject` are added
+        // beside them, so a client that only reads `reason` still works and a
+        // client that wants to branch no longer has to parse prose. Pinned by
+        // `a_rejected_batch_is_422_with_the_edit_error_shape`.
+        ApplyFailure::Edit(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "error": "edit rejected",
+                "reason": error.reason,
+                "code": error.code.as_str(),
+                "op": error.op,
+                "index": error.index,
+                "subject": error.subject,
+            })),
         )
             .into_response(),
         ApplyFailure::Invalid(message) => (
@@ -457,6 +477,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+
+        // The 422 body is a wire contract: another process reads it. `error`
+        // and `reason` are what it has always carried; `code`, `op`, `index`
+        // and `subject` were added when `EditError` gained an `EditCode`, and
+        // `code` is the stable kebab-case name from `EditCode`'s one table.
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "edit rejected");
+        assert_eq!(body["code"], "not-found");
+        assert_eq!(body["op"], "attr.add");
+        assert_eq!(body["index"], 0);
+        assert_eq!(body["subject"], "missing-node");
+        assert_eq!(
+            body["reason"], "no document 'missing-node'",
+            "the human sentence must survive alongside the code, got: {body}"
+        );
     }
 
     #[tokio::test]

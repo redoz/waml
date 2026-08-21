@@ -1,7 +1,7 @@
 //! The mixed OKF/UML edit batch: `Step`, `Batch`, `apply`, and the invalidation
 //! seam that keeps the OKF and UML lowering states in sync as steps apply.
 
-use super::{EditContext, EditError};
+use super::{EditCode, EditContext, EditError};
 use crate::okf::lower::OkfLoweringState;
 use crate::source::{BundlePath, SourceBundle};
 use crate::uml::lower::UmlLoweringState;
@@ -177,7 +177,8 @@ impl<'a> MixedLoweringCursor<'a> {
             || !Arc::ptr_eq(catalog, self.original.uml.syntax.catalog())
             || catalog.documents().len() != self.original.source.len()
         {
-            return Err(EditError::at(
+            return Err(EditError::new(
+                EditCode::StaleContext,
                 "edit.context",
                 "analysis/catalog revision does not match source",
             ));

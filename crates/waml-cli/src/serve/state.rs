@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use waml::analysis::{prepare_candidate, PreparedCandidate, PreviousAnalyses};
 use waml::bundle_envelope::encode_bundle_envelope;
 use waml::diagnostic::Diagnostic;
-use waml::edit::{EditBatch, EditContext};
+use waml::edit::{EditBatch, EditContext, EditError};
 use waml::source::SourceBundle;
 
 use crate::io;
@@ -79,7 +79,7 @@ impl ServeState {
             return Err(ApplyFailure::Stale { current });
         }
 
-        let batch = to_batch(dtos).map_err(ApplyFailure::Edit)?;
+        let batch = to_batch(dtos).map_err(ApplyFailure::Decode)?;
         let changed = batch
             .lower(EditContext {
                 source: self.prepared.source(),
@@ -87,7 +87,7 @@ impl ServeState {
                 session_revision: self.prepared.revision(),
                 uml: self.prepared.uml(),
             })
-            .map_err(|error| ApplyFailure::Edit(error.to_string()))?;
+            .map_err(ApplyFailure::Edit)?;
 
         let validated = prepare_candidate(
             changed,
@@ -214,9 +214,15 @@ pub use waml_ops_dto::DocumentWrite;
 pub enum ApplyFailure {
     /// The caller's `at` revision is behind the server's current one.
     Stale { current: u64 },
-    /// The op batch itself could not be built or lowered (bad op index in
-    /// the message, matching the CLI's `run apply` error text).
-    Edit(String),
+    /// An op in the request could not be decoded into a `Step` (bad op index
+    /// in the message, matching the CLI's `run apply` error text). Distinct
+    /// from `Edit`: nothing reached the edit layer, so there is no `EditCode`
+    /// to report.
+    Decode(String),
+    /// The batch decoded but the edit layer refused it. Carried whole so the
+    /// response can publish its `code`, `op`, `index` and `subject` rather
+    /// than only the sentence they were formatted into.
+    Edit(EditError),
     /// The candidate lowered but failed revalidation — nothing was written.
     Invalid(String),
     /// A path in the request escapes the bundle root — rejected client
@@ -362,10 +368,15 @@ mod tests {
             attr_add("missing-node", "x", "String"),
         ];
         let error = match state.apply_ops(0, &ops) {
-            Err(ApplyFailure::Edit(message)) => message,
+            Err(ApplyFailure::Edit(error)) => error,
             other => panic!("expected an Edit failure naming the index, got {other:?}"),
         };
-        assert!(error.contains('1'), "error should name index 1: {error}");
+        // Was `error.contains('1')` against the formatted message -- a digit
+        // search over prose. The failure now arrives structured, so the index,
+        // the code and the target it choked on are all assertable directly.
+        assert_eq!(error.index, 1, "{error}");
+        assert_eq!(error.code, waml::edit::EditCode::NotFound, "{error}");
+        assert_eq!(error.subject.as_deref(), Some("missing-node"), "{error}");
 
         assert_eq!(state.revision(), 0);
         let after = std::fs::read(dir.path().join("order.md")).unwrap();

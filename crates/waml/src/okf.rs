@@ -139,7 +139,15 @@ pub enum BundleError {
         first_path: String,
         second_path: String,
     },
-    Analysis(String),
+    /// Analysis failed for a reason that is not itself an OKF bundle problem.
+    ///
+    /// `code` names which kind of failure it was, so a caller can branch;
+    /// `message` is the original human sentence, which is all this variant used
+    /// to carry.
+    Analysis {
+        code: crate::analysis::AnalysisCode,
+        message: String,
+    },
 }
 
 impl fmt::Display for BundleError {
@@ -157,12 +165,36 @@ impl fmt::Display for BundleError {
                 formatter,
                 "duplicate concept id '{id}' from '{first_path}' and '{second_path}'"
             ),
-            BundleError::Analysis(reason) => formatter.write_str(reason),
+            BundleError::Analysis { message, .. } => formatter.write_str(message),
         }
     }
 }
 
 impl std::error::Error for BundleError {}
+
+impl crate::edit::EditCoded for BundleError {
+    fn edit_code(&self) -> crate::edit::EditCode {
+        use crate::edit::EditCode;
+        match self {
+            BundleError::InvalidDirectoryAddress(_) | BundleError::InvalidConceptId(_) => {
+                EditCode::InvalidArgument
+            }
+            BundleError::DuplicateConceptId { .. } => EditCode::AlreadyExists,
+            BundleError::Analysis { code, .. } => match code {
+                crate::analysis::AnalysisCode::SourceTooLarge => EditCode::InvalidArgument,
+                crate::analysis::AnalysisCode::ShellParseFailed => EditCode::MalformedDocument,
+                crate::analysis::AnalysisCode::InvalidPromotedMarkdownUpdate => {
+                    EditCode::StaleContext
+                }
+                crate::analysis::AnalysisCode::Okf
+                | crate::analysis::AnalysisCode::CatalogInvariant
+                | crate::analysis::AnalysisCode::SpecializationFailed
+                | crate::analysis::AnalysisCode::AmbiguousClaim
+                | crate::analysis::AnalysisCode::StructuralInvariant => EditCode::Internal,
+            },
+        }
+    }
+}
 
 /// An untyped OKF link (`[text](href)`) drawn from a concept's body (OKF §5.3).
 #[derive(Debug, Clone, PartialEq)]
@@ -484,7 +516,10 @@ impl Bundle {
             .map(|analysis| analysis.bundle)
             .map_err(|error| match error {
                 crate::analysis::AnalysisError::Okf(source) => source,
-                other => BundleError::Analysis(other.to_string()),
+                other => BundleError::Analysis {
+                    code: other.code(),
+                    message: other.to_string(),
+                },
             })
     }
 
