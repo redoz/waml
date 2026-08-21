@@ -670,6 +670,50 @@ fn ambiguous_zero_width_boundary_falls_back() {
     ));
 }
 
+/// End of input is not a neutral context for a window's last block.
+///
+/// A setext heading whose line carries leading indentation begins *after* that
+/// indentation, so the space closes the markdown region before it and the
+/// region window ends between the space and the `x`. Read as a whole document
+/// that window is `- next\n\n `, whose list item runs to the end of input and
+/// takes the trailing space with it. In the document the space belongs to the
+/// list, not the item, because the following line closes the item first.
+#[test]
+fn window_ending_mid_line_sees_the_line_it_stops_inside() {
+    assert!(matches!(
+        exact_oracle(
+            "# Mo\n- nextx\n\n x\n-- \n",
+            "# Mo\n- next\n\n x\n-- \n",
+            &[TextChange {
+                old_range: range(11, 12),
+                replacement: Arc::from("")
+            }]
+        ),
+        ReparseOutcome::Incremental { .. }
+    ));
+}
+
+/// The same rule with the window ending on a line boundary.
+///
+/// A blank line after an empty list item closes the item, and the blank
+/// belongs to the list. At end of input there is nothing to close the item, so
+/// a window read on its own hands the blank to the item instead — and the
+/// window's own bytes are identical either way.
+#[test]
+fn window_ending_on_a_blank_line_sees_the_block_that_follows() {
+    assert!(matches!(
+        exact_oracle(
+            "para\n\n-\n\ntail\n-\n",
+            "parx\n\n-\n\ntail\n-\n",
+            &[TextChange {
+                old_range: range(3, 4),
+                replacement: Arc::from("x")
+            }]
+        ),
+        ReparseOutcome::Incremental { .. }
+    ));
+}
+
 #[test]
 fn covering_container_boundaries_are_compared_globally() {
     assert!(matches!(

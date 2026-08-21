@@ -241,9 +241,8 @@ pub(crate) fn parse_window(
             if candidates.next().is_some() {
                 return Err(window_not_consumed());
             }
-            let blocks = crate::markdown::block::parse(text, structure.dialect, start, end)?;
-            diagnostics.extend(blocks.diagnostics.iter().cloned());
-            let elements = blocks.root.children().to_vec();
+            let elements =
+                parse_window_blocks(text, structure.dialect, start, end, &mut diagnostics)?;
             if elements.len() != 1
                 || !matches!(
                     &elements[0],
@@ -260,9 +259,7 @@ pub(crate) fn parse_window(
             elements
         }
         ShellWindowKind::MarkdownRegion => {
-            let blocks = crate::markdown::block::parse(text, structure.dialect, start, end)?;
-            diagnostics.extend(blocks.diagnostics.iter().cloned());
-            blocks.root.children().to_vec()
+            parse_window_blocks(text, structure.dialect, start, end, &mut diagnostics)?
         }
         ShellWindowKind::Tail => {
             if end != source.len() {
@@ -303,6 +300,53 @@ pub(crate) fn parse_window(
         elements: elements.into(),
         diagnostics: diagnostics.into(),
     })
+}
+
+/// Parses the blocks of a window that still has document text after it.
+///
+/// [`crate::markdown::block::parse`] is handed `source[start..end]` and reads
+/// `end` as the end of input — and end of input is not a neutral context. It
+/// closes every container still open, which hands the innermost one whatever
+/// blank space trails the window; a real following line closes those
+/// containers first and leaves that space to an ancestor. Either way the
+/// window's own bytes are unchanged, so the difference is invisible to every
+/// check that compares text.
+///
+/// Parse one line past the window instead, so the parser sees the line that
+/// actually follows, and keep the elements that land inside the window. The
+/// caller's width check then rejects the parse whenever they no longer tile
+/// it, which is the honest answer for a following line that reshapes the
+/// window's own last block rather than merely closing it.
+fn parse_window_blocks(
+    text: &SourceText,
+    dialect: MarkdownDialect,
+    start: usize,
+    end: usize,
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
+    let source = text.shared();
+    let lookahead = source[end..]
+        .find('\n')
+        .map_or(source.len(), |offset| end + offset + 1);
+    let blocks = crate::markdown::block::parse(text, dialect, start, lookahead)?;
+    let mut elements = Vec::new();
+    let mut at = start;
+    for child in blocks.root.children() {
+        let next = at + element_width(child).to_usize();
+        if next > end {
+            break;
+        }
+        elements.push(child.clone());
+        at = next;
+    }
+    diagnostics.extend(
+        blocks
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.range.end().to_usize() <= end)
+            .cloned(),
+    );
+    Ok(elements)
 }
 
 fn element_width(element: &GreenElement<OkfMarkdownLanguage>) -> TextSize {
