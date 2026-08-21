@@ -1,0 +1,131 @@
+name: Release
+
+# Packages a tagged version. Triggered only by pushing a `v*` tag, which is a
+# deliberate human act — nothing here fires on a normal push.
+#
+# The release is created as a DRAFT. Nothing becomes public until someone opens
+# it and presses publish, so a tag pushed by mistake costs a deleted draft
+# rather than a retracted release.
+#
+# Cutting one:
+#   git tag v0.1.0 && git push origin v0.1.0
+# then review the draft at the repository's Releases page.
+#
+# No third-party actions beyond the two already pinned in ci.yml: the upload
+# uses the `gh` CLI, which is preinstalled on GitHub runners.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to package (packaging only, no release is created)"
+        required: true
+
+permissions:
+  # write: to draft the release. actions:read: so `gh run download` can fetch
+  # this run's own artifacts.
+  contents: write
+  actions: read
+
+jobs:
+  windows:
+    name: windows binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Build the CLI
+        run: cargo build --release -p waml-cli
+      # PowerShell rather than 7z/certutil: Compress-Archive and Get-FileHash
+      # are part of the OS, so this does not depend on what happens to be on
+      # PATH, and Get-FileHash prints a hash rather than a banner.
+      - name: Stage the zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.tag || github.ref_name }}"
+          $staging = "waml-$version-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force -Path "dist/$staging" | Out-Null
+          Copy-Item target/release/waml.exe, LICENSE, THIRD-PARTY.md, README.md "dist/$staging/"
+          Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip"
+          # A release asset nobody can verify is one nobody should trust, so
+          # publish the hash beside it.
+          (Get-FileHash "dist/$staging.zip" -Algorithm SHA256).Hash |
+            Set-Content "dist/$staging.zip.sha256"
+          Get-ChildItem dist
+
+      - name: Check the binary runs
+        shell: pwsh
+        run: ./target/release/waml.exe --version
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-zip
+          path: dist/*.zip*
+
+  extension:
+    name: vscode extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@10.12.4 --activate
+
+      - name: Package the extension
+        working-directory: editors/vscode
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm run package
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vsix
+          path: editors/vscode/*.vsix
+
+  draft:
+    name: draft release
+    # Only a real tag push drafts a release; a manual run just packages.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # `gh run download` rather than actions/download-artifact: the repo pins
+      # every action by SHA, and adding one more third-party action for a job
+      # the preinstalled CLI already does is supply-chain surface for nothing.
+      - name: Collect the artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download "${{ github.run_id }}" --dir dist
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          find dist -type f | sort
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --notes "Draft. Review the assets, write the notes, then publish." \
+            $(find dist -type f | sort)

@@ -21,7 +21,9 @@ pub mod upgrade;
 mod web_artifact;
 
 #[derive(Parser)]
-#[command(name = "waml", about = "Tools for WAML documents")]
+// `version` reads CARGO_PKG_VERSION, so a shipped binary can say which build
+// it is. A release asset that cannot answer that is unsupportable.
+#[command(name = "waml", version, about = "Tools for WAML documents")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
