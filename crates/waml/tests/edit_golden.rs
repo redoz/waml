@@ -217,3 +217,50 @@ fn placement_set_and_rm_address_a_qualified_slug() {
         "place.rm must remove a placement it can address"
     );
 }
+
+/// `place.set` writes a `## Layout` section, which only a diagram has any use
+/// for. Aiming one at a classifier used to succeed silently: the result parses
+/// and round-trips, so nothing downstream ever objected.
+#[test]
+fn placement_ops_refuse_a_target_that_is_not_a_diagram() {
+    let bundle = vec![
+        (
+            "order.md".to_string(),
+            "---
+type: uml.Class
+title: Order
+---
+# Order
+"
+            .to_string(),
+        ),
+        (
+            "customer.md".to_string(),
+            "---
+type: uml.Class
+title: Customer
+---
+# Customer
+"
+            .to_string(),
+        ),
+    ];
+
+    let error = apply_pairs(
+        &bundle,
+        vec![Step::Uml(uml::Op::PlacementSet {
+            diagram: "order".into(),
+            subject_title: "Customer".into(),
+            subject_slug: "customer".into(),
+            reference_title: "Order".into(),
+            reference_slug: "order".into(),
+            directions: vec![waml::layout::Direction::LeftOf],
+        })],
+    )
+    .expect_err("a classifier is not a placement target");
+
+    assert!(
+        format!("{error:?}").contains("not a diagram"),
+        "place.set at a classifier must say so, got: {error:?}"
+    );
+}

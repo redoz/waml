@@ -256,6 +256,47 @@ fn require_claimed(
     }
 }
 
+/// A placement op targets a DIAGRAM. Nothing else has a `## Layout` section
+/// to write into.
+///
+/// Without this, `place.set` against a classifier wrote a `## Layout` block
+/// into it and reported success. The result round-trips and parses, so nothing
+/// downstream objects — it is simply a section in a document that has no use
+/// for one.
+fn require_diagram(
+    state: &super::lower::UmlLoweringState,
+    work: &SourceBundle,
+    target: &str,
+    op: &str,
+) -> Result<(), EditError> {
+    require_claimed(state, work, target, op)?;
+    let index = super::lower::resolve_index(work, target)
+        .expect("require_claimed proved the document resolves");
+    let text = work.documents()[index].text();
+    let declared = crate::frontmatter::parse_frontmatter_source(text)
+        .as_ref()
+        .and_then(|fm| fm.get_str("type"))
+        .map(str::to_owned);
+    match declared.as_deref() {
+        Some(name)
+            if matches!(
+                crate::model::ElementType::parse(name),
+                crate::model::ElementType::Diagram(_)
+            ) =>
+        {
+            Ok(())
+        }
+        Some(name) => Err(EditError::at(
+            op,
+            format!("'{target}' is a {name}, not a diagram"),
+        )),
+        None => Err(EditError::at(
+            op,
+            format!("'{target}' declares no type, so it is not a diagram"),
+        )),
+    }
+}
+
 pub(crate) fn lower_one_with_state(
     work: &mut SourceBundle,
     state: &mut super::lower::UmlLoweringState,
@@ -406,7 +447,7 @@ pub(crate) fn lower_one_with_state(
             reference_slug,
             directions,
         } => {
-            require_claimed(state, work, diagram, "place.set")?;
+            require_diagram(state, work, diagram, "place.set")?;
             super::lower::op_place_set(
                 work,
                 state,
@@ -423,7 +464,7 @@ pub(crate) fn lower_one_with_state(
             subject_slug,
             reference_slug,
         } => {
-            require_claimed(state, work, diagram, "place.rm")?;
+            require_diagram(state, work, diagram, "place.rm")?;
             super::lower::op_place_rm(work, state, diagram, subject_slug, reference_slug)
         }
         Op::EditTransitionTraces { selector, edit } => {
