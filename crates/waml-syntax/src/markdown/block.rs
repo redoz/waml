@@ -9,12 +9,20 @@ use crate::{
     SyntaxIdentity, TextRange, TextSize, TreeDiagnostic,
 };
 
-#[allow(dead_code)]
 pub(crate) struct BlockParse {
     pub root: GreenNode<OkfMarkdownLanguage>,
     pub diagnostics: Arc<[TreeDiagnostic<Diagnostic>]>,
+    /// Inline sub-trees, one per block that carried inline content. Asserted by
+    /// this file's tests; no reader outside them, since `parse_markdown` hands
+    /// callers the assembled `root` rather than the pieces.
+    #[allow(dead_code)] // read by this module's block tests
     pub inline_roots: Arc<[GreenNode<OkfMarkdownLanguage>]>,
+    /// Link-reference definition ranges and the reference map built from them.
+    /// Produced by the inline pass and carried here for the reference-resolving
+    /// consumer that has not landed.
+    #[allow(dead_code)] // consumer: link-reference resolution
     pub definitions: Arc<[TextRange]>,
+    #[allow(dead_code)] // consumer: link-reference resolution
     pub references: super::reference::MarkdownReferenceMap,
 }
 

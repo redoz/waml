@@ -1,10 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use waml_syntax::{
-    rebase_unchanged_green, transfer_mapped_annotations, ChangeMap, GreenElement, GreenFactory,
-    MarkdownStructureMap, SourceText, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TextSize,
-    TreeDiagnostic,
+    rebase_unchanged_green, ChangeMap, GreenElement, GreenFactory, MarkdownStructureMap,
+    SourceText, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TextSize, TreeDiagnostic,
 };
+// Only `reparse_island` (test-gated below) needs the annotation transfer.
+#[cfg(test)]
+use waml_syntax::transfer_mapped_annotations;
 
 mod ast;
 mod kind;
@@ -12,7 +14,6 @@ mod parser;
 
 pub(in crate::uml) use parser::{expected_layout_role, LayoutRole};
 
-#[allow(dead_code)]
 pub(crate) fn parse_full(
     text: SourceText,
     structure: &MarkdownStructureMap,
@@ -106,7 +107,11 @@ fn document_range(range: TextRange, offset: usize) -> Option<TextRange> {
     .ok()
 }
 
-#[allow(dead_code)]
+// Incremental island reparse. Complete and tested, but NOT wired up: every
+// production path still goes through `parse_full` (see `uml::lower`), so the
+// shipping build must not carry it. `cfg(test)` keeps the proof suite green and
+// lets whoever lands the fast path delete one attribute to switch it on.
+#[cfg(test)]
 pub(in crate::uml) fn reparse_island(
     previous: &SyntaxTree<UmlLanguage>,
     previous_structure: &MarkdownStructureMap,
@@ -227,7 +232,6 @@ pub(in crate::uml) fn reparse_island(
     )))
 }
 
-#[allow(dead_code)]
 fn recover_exact_source(root: &waml_syntax::GreenNode<UmlLanguage>) -> Option<SourceText> {
     fn walk(
         root: &waml_syntax::GreenNode<UmlLanguage>,
@@ -300,7 +304,8 @@ fn recover_exact_source(root: &waml_syntax::GreenNode<UmlLanguage>) -> Option<So
     (offset == source.len() && root.width() == source.len()).then_some(source)
 }
 
-#[allow(dead_code)]
+// Helpers below serve `reparse_island` only, so they share its gate.
+#[cfg(test)]
 fn mapped_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     TextRange::new(
         map.translate_start_boundary(range.start())?,
@@ -308,7 +313,7 @@ fn mapped_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     )
     .ok()
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn expanded_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     let mut mapped = mapped_range(range, map)?;
     for segment in map
@@ -326,7 +331,7 @@ fn expanded_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     }
     Some(mapped)
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn select_owner(
     islands: &[parser::Island],
     changed: TextRange,
@@ -350,7 +355,7 @@ fn select_owner(
     }
     (owners.len() == 1).then(|| owners[0])
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn has_annotations(node: &waml_syntax::GreenNode<UmlLanguage>) -> bool {
     !node.annotations().is_empty()
         || node.children().iter().any(|child| match child {

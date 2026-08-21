@@ -358,14 +358,6 @@ fn content_height() -> f64 {
 }
 
 impl ColorsOverlay {
-    // Mirrors `FontsOverlay`/`IconsOverlay`'s API shape; not yet consumed here
-    // (App drives this page purely through `set_visible`/`overlay_action`),
-    // kept public for parity and future toggle-style callers.
-    #[allow(dead_code)]
-    pub fn visible(&self) -> bool {
-        self.shell.is_open()
-    }
-
     pub fn set_visible(&mut self, cx: &mut Cx, visible: bool) {
         self.shell.set_open(cx, visible);
     }

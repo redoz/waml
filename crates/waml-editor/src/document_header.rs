@@ -117,13 +117,17 @@ pub enum DocumentHeaderAction {
 }
 
 pub struct DocumentHeaderLayout {
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Which breadcrumb segments survived the width squeeze, in draw order.
+    /// The draw path consumes `segment_rects`; this is the same decision in
+    /// index form, and the elision tests assert on it.
+    #[allow(dead_code)] // read by this file's elision tests, not by the draw path
     pub visible_indices: Vec<usize>,
     pub segment_rects: Vec<(usize, Rect)>,
-    #[allow(dead_code)]
-    pub height: f64,
 }
 
+/// Test seam: every production caller knows whether a document is active and
+/// goes to `header_height_for_document`.
+#[cfg(test)]
 pub fn header_height(has_breadcrumb: bool, has_right_dock: bool) -> f64 {
     header_height_for_document(has_breadcrumb, has_right_dock, false)
 }
@@ -146,12 +150,10 @@ pub fn layout_header(
     right_button_width: f64,
 ) -> DocumentHeaderLayout {
     let has_right_dock = right_button_width > 0.0;
-    let height = header_height(!label_widths.is_empty(), has_right_dock);
     if available_width <= 0.0 || label_widths.is_empty() {
         return DocumentHeaderLayout {
             visible_indices: Vec::new(),
             segment_rects: Vec::new(),
-            height,
         };
     }
 
@@ -198,7 +200,6 @@ pub fn layout_header(
     DocumentHeaderLayout {
         visible_indices,
         segment_rects,
-        height,
     }
 }
 
@@ -304,7 +305,6 @@ impl DocumentHeaderState {
         true
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // consumed by DocumentHeader::set_zoom (Task 8)
     fn replace_zoom(&mut self, zoom: Option<u32>) -> bool {
         if self.zoom == zoom {
             return false;

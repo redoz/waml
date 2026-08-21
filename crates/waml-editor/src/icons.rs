@@ -4974,7 +4974,6 @@ impl IconSet {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 // The catalog is deliberately complete: unused glyph variants are kept so the
 // enum == field == DSL == `get` == `ALL` == `label` order invariant holds.
-#[allow(dead_code)]
 pub enum Icon {
     #[default]
     Package,

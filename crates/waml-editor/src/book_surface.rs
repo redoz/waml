@@ -538,7 +538,7 @@ impl BookSurface {
 
     // Test accessor: which sections currently hold a live child, sorted for
     // a deterministic assertion.
-    #[allow(dead_code)] // exercised only by this file's widget tests
+    #[cfg(test)]
     pub(crate) fn live_section_indices(&self) -> Vec<usize> {
         let mut indices: Vec<usize> = self.live.keys().copied().collect();
         indices.sort_unstable();
@@ -678,7 +678,7 @@ impl BookSurface {
     }
 
     // Test accessor.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn scroll(&self) -> f64 {
         self.scroll
     }

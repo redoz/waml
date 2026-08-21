@@ -24,7 +24,6 @@ script_mod! {
 /// What `OverlayShell::handle_event` tells the owning widget to do.
 // No consumer until Task 3 (`ShortcutsOverlay` migration) — `#[allow(dead_code)]`
 // follows the `LinearGeom` precedent so the workspace clippy gate stays green.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub enum OverlayShellAction {
     #[default]
@@ -34,7 +33,6 @@ pub enum OverlayShellAction {
 }
 
 /// Handed to the consumer by `begin`: where + how wide to draw its content.
-#[allow(dead_code)]
 pub struct OverlayShellPass {
     /// Top-left of the (already scroll-shifted, about-to-be-clipped) content.
     pub origin: DVec2,
@@ -45,26 +43,19 @@ pub struct OverlayShellPass {
 // Not yet consumed outside this file's own tests until Task 2 (`OverlayShell`)
 // wires it up — `#[allow(dead_code)]` follows the `LinearGeom` precedent
 // (popup/menu.rs) so the workspace clippy gate stays green in the meantime.
-#[allow(dead_code)]
 /// Vertical padding between the panel edge and the content column (lpx).
 pub const PANEL_PAD_V: f64 = 20.0;
-#[allow(dead_code)]
 /// Horizontal padding between the panel edge and the content column (lpx).
 pub const PANEL_PAD_H: f64 = 24.0;
-#[allow(dead_code)]
 /// Minimum margin the panel keeps off the top/bottom window edges (lpx); the
 /// panel never grows taller than `window.y - 2*WINDOW_MARGIN`.
 pub const WINDOW_MARGIN: f64 = 56.0;
-#[allow(dead_code)]
 /// Scrollbar thumb width (lpx).
 pub const SCROLLBAR_W: f64 = 4.0;
-#[allow(dead_code)]
 /// Inset of the thumb from the panel's right edge (lpx).
 pub const SCROLLBAR_INSET: f64 = 3.0;
-#[allow(dead_code)]
 /// Shortest the thumb ever gets so it stays grabbable (lpx).
 pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
-#[allow(dead_code)]
 /// Height of the source-bright top edge hairline (lpx).
 pub const EDGE_H: f64 = 1.5;
 
@@ -72,7 +63,6 @@ pub const EDGE_H: f64 = 1.5;
 /// under a clip. `content_h` is the consumer's measured content height; the
 /// panel clamps to `max_panel_h`, the overflow scrolls, and `scroll` is always
 /// kept in `[0, max_scroll]` by `set_scroll`. Mirrors `LinearGeom`.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Default)]
 pub struct PanelGeom {
     window: DVec2,
@@ -81,7 +71,6 @@ pub struct PanelGeom {
     scroll: f64,
 }
 
-#[allow(dead_code)]
 impl PanelGeom {
     pub fn new(window: DVec2, panel_w: f64, content_h: f64) -> Self {
         Self {
@@ -185,7 +174,6 @@ impl PanelGeom {
 /// including the caption band — the `MenuPopup`/`SelectFlyout` idiom. Open/close
 /// is authoritative on the OWNER (App drives it for mutual exclusion); the
 /// shell only tracks the `open` flag it is told, plus scroll + geometry.
-#[allow(dead_code)]
 #[derive(Script, ScriptHook)]
 pub struct OverlayShell {
     /// Window-overlay draw list (`begin_overlay_reuse`), same as `MenuPopup`.
@@ -218,7 +206,6 @@ pub struct OverlayShell {
     thumb_drag: Option<f64>,
 }
 
-#[allow(dead_code)]
 impl OverlayShell {
     pub fn is_open(&self) -> bool {
         self.open

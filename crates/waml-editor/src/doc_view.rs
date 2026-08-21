@@ -4,8 +4,6 @@
 //! into. Pure Rust: nothing here is a widget, so there is no `script_mod`.
 
 use makepad_widgets::*;
-use waml::edit::PendingEdit;
-use waml::source::SourceBundle;
 
 use crate::document::EditIntent;
 use crate::editor_session::SessionChange;
@@ -498,22 +496,19 @@ pub enum PopupRequest {
 
 #[derive(Clone, Copy)]
 pub struct ViewData<'a> {
-    pub source: &'a SourceBundle,
+    /// The document bundle. Only the test-gated action-preparation helpers
+    /// below read it; the views themselves reach source through the session.
+    #[cfg(test)]
+    pub source: &'a waml::source::SourceBundle,
     pub okf_analysis: &'a waml::analysis::OkfAnalysis,
     pub uml_analysis: &'a waml::uml::Analysis,
-    #[allow(dead_code)]
     pub revision: u64,
-}
-
-#[allow(dead_code)]
-pub struct PreparedAction {
-    pub title: String,
-    pub edit: PendingEdit,
 }
 
 impl<'a> From<crate::editor_session::EditorSnapshot<'a>> for ViewData<'a> {
     fn from(snapshot: crate::editor_session::EditorSnapshot<'a>) -> Self {
         Self {
+            #[cfg(test)]
             source: snapshot.source,
             okf_analysis: snapshot.okf_analysis,
             uml_analysis: snapshot.uml_analysis,
@@ -522,7 +517,16 @@ impl<'a> From<crate::editor_session::EditorSnapshot<'a>> for ViewData<'a> {
     }
 }
 
-#[allow(dead_code)]
+/// A model action already lowered to a `PendingEdit`, with the title to show
+/// for it. Test seam, with [`ViewData`]'s helpers below: the repair/format
+/// actions are exercised end-to-end in tests, but no surface offers them yet.
+#[cfg(test)]
+pub struct PreparedAction {
+    pub title: String,
+    pub edit: waml::edit::PendingEdit,
+}
+
+#[cfg(test)]
 impl ViewData<'_> {
     fn document_id(&self, concept_id: &str) -> Option<waml::analysis::DocumentId> {
         let path = self.source.document_by_concept_id(concept_id)?.path();
@@ -545,36 +549,13 @@ impl ViewData<'_> {
                 let batch = waml::action::SyntaxChangeBatch::new(action)?;
                 Ok(PreparedAction {
                     title,
-                    edit: PendingEdit::new(batch),
+                    edit: waml::edit::PendingEdit::new(batch),
                 })
             })
             .collect()
     }
-
-    pub fn uml_format_action(
-        self,
-        concept_id: &str,
-    ) -> Result<Option<PreparedAction>, waml::edit::EditError> {
-        let Some(document) = self.document_id(concept_id) else {
-            return Ok(None);
-        };
-        let context =
-            waml::uml::ActionContext::new(self.okf_analysis, self.uml_analysis, self.revision)
-                .map_err(waml::edit::EditError::from)?;
-        let action = waml::uml::Formatter
-            .format(context, document)
-            .map_err(waml::edit::EditError::from)?;
-        let title = action.title.clone();
-        let batch =
-            waml::action::SyntaxChangeBatch::new(action).map_err(waml::edit::EditError::from)?;
-        Ok(Some(PreparedAction {
-            title,
-            edit: PendingEdit::new(batch),
-        }))
-    }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocViewIdentity {
     StructuralDiagram(crate::canvas::StructuralVisualKind),
@@ -617,7 +598,6 @@ pub enum RevealTarget {
     },
 }
 
-#[allow(dead_code)]
 pub trait DocView {
     fn identity(&self) -> DocViewIdentity;
 

@@ -4,7 +4,6 @@
 //!
 //! Built up incrementally across several tasks; `tree_panel.rs` only starts
 //! consuming it in Task 6, so allow dead code until then.
-#![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 
@@ -88,6 +87,8 @@ pub struct TreeLayout {
 }
 
 impl TreeLayout {
+    /// Test seam: production builds layouts through `Default`.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }

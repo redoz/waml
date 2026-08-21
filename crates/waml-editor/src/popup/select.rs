@@ -6,7 +6,6 @@
 //! own `SelectLead` visual. Item model + pure width clamp live here too; the
 //! clamp is unit-tested directly. See
 //! `docs/superpowers/specs/2026-07-22-select-box-flyout-design.md`.
-#![allow(dead_code)]
 
 use crate::frame::SurfaceExt;
 use crate::icons::{Icon, IconSet};

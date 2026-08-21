@@ -40,11 +40,6 @@ impl ServeState {
         })
     }
 
-    #[allow(dead_code)] // consumed by Task 7 (ui.rs's api-only degradation message)
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub fn revision(&self) -> u64 {
         self.prepared.revision()
     }
@@ -250,7 +245,7 @@ mod tests {
         let dir = fixture();
         let state = ServeState::load(dir.path()).unwrap();
         assert_eq!(state.revision(), 0);
-        assert_eq!(state.root(), dir.path());
+        assert_eq!(state.root, dir.path());
     }
 
     #[test]

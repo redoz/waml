@@ -5,7 +5,9 @@ use crate::{SyntaxIdentity, TextRange};
 #[derive(Clone, Debug)]
 pub struct MarkdownReferenceDefinition {
     pub label: Arc<str>,
-    #[allow(dead_code)]
+    /// The block node the definition was written in, for a
+    /// jump-to-definition that has not landed.
+    #[allow(dead_code)] // consumer: link-reference resolution
     pub owner: SyntaxIdentity,
     pub source_range: TextRange,
     pub destination: Arc<str>,

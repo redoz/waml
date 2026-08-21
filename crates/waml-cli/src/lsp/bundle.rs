@@ -44,7 +44,6 @@ pub struct LspAnalysisState {
     pub revision: u64,
 }
 
-#[allow(dead_code)]
 impl LspAnalysisState {
     pub fn empty() -> Result<Self, BoxError> {
         Self::from_documents(None, std::iter::empty::<(PathBuf, String)>())
@@ -80,22 +79,10 @@ impl LspAnalysisState {
         })
     }
 
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    pub fn source(&self) -> &SourceBundle {
-        &self.source
-    }
-
-    pub fn okf(&self) -> &OkfAnalysis {
-        &self.okf
-    }
-
-    pub fn uml(&self) -> &uml::Analysis {
-        &self.uml
-    }
-
+    /// Open at whatever generation the host currently holds. Test seam: every
+    /// production caller knows the generation it raced against and goes
+    /// straight to [`Self::open_expected`].
+    #[cfg(test)]
     pub fn open(&self, physical: PathBuf, version: i32, text: String) -> Result<Self, BoxError> {
         let physical = normalize_physical(physical);
         let expected = self
@@ -180,6 +167,9 @@ impl LspAnalysisState {
         self.prepare(next_host, source)
     }
 
+    /// Close at whatever generation the host currently holds. Test seam, the
+    /// mirror of [`Self::open`]: production goes to `close_expected`.
+    #[cfg(test)]
     pub fn close(&self, physical: &Path) -> Result<Option<Self>, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
         let Some(generation) = self.open_generation(&physical) else {
@@ -609,10 +599,10 @@ mod tests {
             )
             .unwrap();
         let closed = changed.close(&physical).unwrap().unwrap();
-        assert_eq!(closed.revision(), 3);
-        assert_eq!(closed.source().documents()[0].text(), disk);
-        assert_eq!(closed.okf().catalog.session_revision(), closed.revision());
-        assert_eq!(closed.uml().session_revision(), closed.revision());
+        assert_eq!(closed.revision, 3);
+        assert_eq!(closed.source.documents()[0].text(), disk);
+        assert_eq!(closed.okf.catalog.session_revision(), closed.revision);
+        assert_eq!(closed.uml.session_revision(), closed.revision);
     }
 
     #[test]
@@ -626,9 +616,9 @@ mod tests {
                 "---\ntype: Notes\n---\n# Notes\n".into(),
             )
             .unwrap();
-        assert_eq!(open.source().documents().len(), 1);
+        assert_eq!(open.source.documents().len(), 1);
         let closed = open.close(&physical).unwrap().unwrap();
-        assert!(closed.source().documents().is_empty());
+        assert!(closed.source.documents().is_empty());
         assert!(closed.close(&physical).unwrap().is_none());
         assert!(open
             .change(&PathBuf::from("C:/missing.md"), 1, 2, String::new())
@@ -645,27 +635,27 @@ mod tests {
         let generation = opened.open_generation(&physical).unwrap();
         let logical = logical_path(None, &physical).unwrap();
         let before_text = opened
-            .source()
+            .source
             .document(&logical)
             .unwrap()
-            .slice(0..opened.source().document(&logical).unwrap().text().len())
+            .slice(0..opened.source.document(&logical).unwrap().text().len())
             .unwrap();
-        let before_id = opened.okf().catalog.id_for_path(&logical).unwrap();
-        let before_document_revision = opened.okf().catalog.document(before_id).unwrap().revision();
+        let before_id = opened.okf.catalog.id_for_path(&logical).unwrap();
+        let before_document_revision = opened.okf.catalog.document(before_id).unwrap().revision();
 
         for version in [4, 3] {
             let rejected = opened.change(&physical, generation, version, "# stale\n".into());
             assert!(rejected.is_err());
-            assert_eq!(opened.revision(), 1);
-            assert_eq!(opened.source().documents()[0].text(), "# Four\n");
-            assert_eq!(opened.okf().catalog.id_for_path(&logical), Some(before_id));
+            assert_eq!(opened.revision, 1);
+            assert_eq!(opened.source.documents()[0].text(), "# Four\n");
+            assert_eq!(opened.okf.catalog.id_for_path(&logical), Some(before_id));
             assert_eq!(
-                opened.okf().catalog.document(before_id).unwrap().revision(),
+                opened.okf.catalog.document(before_id).unwrap().revision(),
                 before_document_revision
             );
             assert_eq!(
                 before_text.as_str(),
-                opened.source().document(&logical).unwrap().text()
+                opened.source.document(&logical).unwrap().text()
             );
         }
     }
@@ -714,8 +704,8 @@ mod tests {
         v3_installed.wait();
         assert!(stale_worker.join().unwrap().is_err());
         let final_state = current.read().unwrap();
-        assert_eq!(final_state.revision(), 2);
-        assert_eq!(final_state.source().documents()[0].text(), "# Three\n");
+        assert_eq!(final_state.revision, 2);
+        assert_eq!(final_state.source.documents()[0].text(), "# Three\n");
         assert_eq!(final_state.client_version(&physical), Some(3));
     }
 
@@ -744,8 +734,8 @@ mod tests {
                 "# Old didOpen work\n".into(),
             )
             .is_err());
-        assert_eq!(reopened.source().documents()[0].text(), "# Reopened\n");
-        assert_eq!(reopened.revision(), 3);
+        assert_eq!(reopened.source.documents()[0].text(), "# Reopened\n");
+        assert_eq!(reopened.revision, 3);
     }
 
     #[test]
@@ -785,15 +775,15 @@ mod tests {
         let g2 = reopened.open_generation(&physical).unwrap();
         assert_ne!(g1, g2);
         let logical = logical_path(None, &physical).unwrap();
-        let document_id = reopened.okf().catalog.id_for_path(&logical).unwrap();
+        let document_id = reopened.okf.catalog.id_for_path(&logical).unwrap();
         let document_revision = reopened
-            .okf()
+            .okf
             .catalog
             .document(document_id)
             .unwrap()
             .revision();
         let allocation = reopened
-            .source()
+            .source
             .document(&logical)
             .unwrap()
             .slice(0..5)
@@ -803,17 +793,17 @@ mod tests {
 
         assert!(stale_close.join().unwrap().unwrap().is_none());
         let final_state = current.read().unwrap();
-        assert_eq!(final_state.revision(), 3);
+        assert_eq!(final_state.revision, 3);
         assert_eq!(final_state.client_version(&physical), Some(1));
-        assert_eq!(final_state.source().documents()[0].text(), "# G2\n");
+        assert_eq!(final_state.source.documents()[0].text(), "# G2\n");
         assert_eq!(final_state.open_generation(&physical), Some(g2));
         assert_eq!(
-            final_state.okf().catalog.id_for_path(&logical),
+            final_state.okf.catalog.id_for_path(&logical),
             Some(document_id)
         );
         assert_eq!(
             final_state
-                .okf()
+                .okf
                 .catalog
                 .document(document_id)
                 .unwrap()
@@ -833,9 +823,9 @@ mod tests {
             .unwrap();
 
         assert!(opened.open(collision, 1, "# Collision\n".into()).is_err());
-        assert_eq!(opened.revision(), 1);
-        assert_eq!(opened.source().documents().len(), 1);
-        assert_eq!(opened.source().documents()[0].text(), "# First\n");
+        assert_eq!(opened.revision, 1);
+        assert_eq!(opened.source.documents().len(), 1);
+        assert_eq!(opened.source.documents()[0].text(), "# First\n");
     }
 
     #[test]

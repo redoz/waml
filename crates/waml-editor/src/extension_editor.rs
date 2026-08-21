@@ -110,7 +110,6 @@ impl EditorExtension for UmlEditorExtension {
 /// every shipped stage names its icon. An unknown name degrades to that same
 /// default **and** emits an `UnknownIcon` warning diagnostic, mirroring
 /// `waml::view::surface::resolve_surface` exactly.
-#[allow(dead_code)]
 pub fn resolve_icon(
     icon: Option<&IconId>,
     target: &RowTarget,

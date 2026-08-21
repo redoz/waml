@@ -24,27 +24,26 @@ use crate::markdown_hosts::WamlCodeHighlightHost;
 use crate::source_view::SourceView;
 
 /// A folder's book model: its sections, walked depth-first, plus every
-/// diagnostic the walk produced. The remaining per-field `#[allow(dead_code)]`
-/// mark fields only this file's unit tests read today -- clippy's lib target
-/// does not count unit tests as callers.
+/// diagnostic the walk produced. The per-field allows below mark fields only
+/// this file's unit tests read today; each names what would consume it.
 pub struct BookModel {
     pub directory: String,
     /// The book root's display title. Only unit tests read it: the tab title
     /// is taken from `folder_documents::title_for` at open time
     /// (`book_documents::open`), and no shipped chrome re-titles from the
     /// model afterwards.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // consumer: chrome that re-titles a book after a rename
     pub title: String,
     pub sections: Vec<BookSection>,
     /// Everything the walk degraded or warned about. Only unit tests read
     /// it: Phase 1 has no surface listing a book's diagnostics -- sections
     /// degrade visibly to `Link` instead, which carries its own reason.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // consumer: the book-mode Phase 2 diagnostics strip
     pub diagnostics: Vec<Diagnostic>,
     /// The session revision the model was built from. Only unit tests read
     /// it: `BookView` guards staleness with its own `revision` field rather
     /// than reading it back off the model.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // consumer: a staleness check that trusts the model
     pub revision: u64,
 }
 
@@ -79,7 +78,7 @@ pub enum SectionBody {
         /// Only unit tests read this today: the open-full affordance
         /// navigates through the section's `target`
         /// (`book_view::navigation_for_section`), not through the body.
-        #[allow(dead_code)]
+        #[allow(dead_code)] // consumer: a per-section action keyed by concept
         concept_id: String,
     },
     /// A row this build does not render inline: an unrenderable resolved

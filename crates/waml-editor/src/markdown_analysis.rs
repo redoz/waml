@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
-
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use waml::analysis::{
@@ -35,10 +33,17 @@ pub struct SemanticAnalysisCompletion {
     pub prepared: Arc<PreparedSemanticSnapshot>,
 }
 
+/// Why one document failed semantic analysis. Recorded per document in
+/// [`PreparedSemanticSnapshot::diagnostics`] but not yet rendered anywhere --
+/// the consumer is the editor's diagnostics surface, which has not landed. The
+/// per-field allows below are what remains of a file-wide blanket allow.
 #[derive(Clone)]
 pub struct SemanticFailureDiagnostic {
+    #[allow(dead_code)] // consumer: the editor diagnostics surface
     pub document: DocumentId,
+    #[allow(dead_code)] // consumer: the editor diagnostics surface
     pub session_revision: u64,
+    #[allow(dead_code)] // consumer: the editor diagnostics surface
     pub error: Arc<AnalysisError>,
 }
 

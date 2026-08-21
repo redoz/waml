@@ -11,7 +11,6 @@
 // Not yet instantiated as a `PopupRoot` child (that lands in Task 5) --
 // module-wide allow keeps the dead-code gate green in the meantime, matching
 // `base.rs`/`node_menu.rs`/`select.rs`.
-#![allow(dead_code)]
 
 use crate::frame::SurfaceExt;
 use crate::icons::{Icon, IconSet};
@@ -160,7 +159,6 @@ script_mod! {
 
 /// Not yet instantiated as a `PopupRoot` child (that lands in Task 5) — keeps
 /// the dead-code gate green in the meantime, mirroring `MenuPopup`.
-#[allow(dead_code)]
 #[derive(Script, ScriptHook, Widget)]
 pub struct ConflictList {
     #[uid]
@@ -239,7 +237,6 @@ impl Widget for ConflictList {
     }
 }
 
-#[allow(dead_code)]
 impl ConflictList {
     /// Open the card at `placed` (already clamped by `Presenter::place`
     /// against `content_size`), flattening `conflicts` into rows. Row rects

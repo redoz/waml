@@ -246,6 +246,7 @@ impl SelectionState {
         self.search_spotlight = keys.filter(|keys| !keys.is_empty());
     }
 
+    #[cfg(test)]
     pub(crate) fn search_spotlight(&self) -> Option<&HashSet<String>> {
         self.search_spotlight.as_ref()
     }

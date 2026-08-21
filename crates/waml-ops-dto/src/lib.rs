@@ -1154,7 +1154,6 @@ impl OpDto {
 }
 
 /// Decompose a relationship selector into wire fields for compatibility conversion.
-#[allow(dead_code)]
 fn sel_parts(
     sel: &uml::RelationshipSelector,
 ) -> (String, Option<String>, Option<String>, Option<String>) {

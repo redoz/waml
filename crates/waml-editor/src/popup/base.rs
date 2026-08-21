@@ -1,6 +1,5 @@
 //! The popup contract: the item shape, the closed-result, the per-event verdict,
 //! the surface trait, and the two pure event predicates the authority routes on.
-#![allow(dead_code)]
 
 use crate::icons::Icon;
 use makepad_widgets::*;

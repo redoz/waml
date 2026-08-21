@@ -8,11 +8,12 @@
 
 use waml::solve::sizing::{self, PT_TO_LPX};
 
-/// Which embedded face a leaf measures against (maps to `sizing::Font`).
+/// Which embedded face a leaf measures against. A one-for-one mirror of
+/// `waml::solve::sizing::Font`, so `core_font` stays a total map; `mono_sheet`
+/// only ever asks for `Mono` today.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Font {
-    /// Reserved for a future non-mono `StyleSheet`; `mono_sheet` is all-Mono today.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // mirrors `sizing::Font::Sans`; `core_font` maps it
     Sans,
     Mono,
 }
@@ -61,9 +62,6 @@ pub enum Token {
     TextDim,
     Accent,
     Amber,
-    /// Reserved for form-field styling; not yet used by `mono_sheet`.
-    #[allow(dead_code)]
-    Field,
 }
 
 /// Padding, in logical px.

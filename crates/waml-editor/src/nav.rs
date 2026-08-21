@@ -6,9 +6,8 @@
 // tree panel / app wiring lands (later tasks of the same plan); until then a
 // bin crate's dead-code lint would otherwise flag every item. Same convention
 // as `icons.rs`'s catalog surface.
-#![allow(dead_code)]
 
-use crate::tree::{build_tree, ProjectTree, TreeKind, TreeNode};
+use crate::tree::{ProjectTree, TreeKind, TreeNode};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavState {
@@ -39,19 +38,24 @@ pub struct PackageRow {
     pub depth: usize,
 }
 
-/// Nested directory-only rows for the title dropdown, depth-indented.
+/// Nested directory-only rows for the title dropdown, depth-indented. Test
+/// seam: a refresh needs both this and `view`, and a tree build runs the
+/// folder-view chain for every directory in the bundle recursively, so
+/// production builds the tree once and shares it through `packages_of`.
+#[cfg(test)]
 pub fn packages(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
     mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
 ) -> Vec<PackageRow> {
-    packages_of(&build_tree(okf, uml, "Untitled", mask, limits), okf)
+    packages_of(
+        &crate::tree::build_tree(okf, uml, "Untitled", mask, limits),
+        okf,
+    )
 }
 
-/// `packages` against a tree the caller already built. A tree build runs the
-/// folder-view chain for every directory in the bundle, recursively, so a
-/// refresh that needs both this and `view` must build it once and share it.
+/// `packages` against a tree the caller already built.
 pub fn packages_of(full: &ProjectTree, okf: &waml::analysis::OkfAnalysis) -> Vec<PackageRow> {
     let root_title = okf
         .bundle
@@ -127,6 +131,8 @@ fn under(wrapper: &TreeNode, children: Vec<TreeNode>) -> ProjectTree {
     }
 }
 
+/// The tree projected for `state`. Test seam, the mirror of `packages`.
+#[cfg(test)]
 pub fn view(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -134,7 +140,10 @@ pub fn view(
     mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
 ) -> NavView {
-    view_of(&build_tree(okf, uml, "Untitled", mask, limits), state)
+    view_of(
+        &crate::tree::build_tree(okf, uml, "Untitled", mask, limits),
+        state,
+    )
 }
 
 /// `view` against a tree the caller already built; see `packages_of`.

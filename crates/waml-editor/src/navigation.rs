@@ -41,8 +41,10 @@ pub enum NavigationIntent {
         current_concept_id: String,
         href: String,
     },
-    #[allow(dead_code)]
-    // Diagnostic list actions construct this intent in the integration follow-up.
+    /// Jump to a byte range in a document's source. The handler is landed
+    /// (`App::navigate_to_source_range`); the producer is not -- the
+    /// diagnostics list is the surface that will build this intent.
+    #[allow(dead_code)] // no producer until the diagnostics list lands
     SourceRange {
         document: DocumentId,
         revision: DocumentRevision,

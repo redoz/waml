@@ -3,7 +3,6 @@
 //! command enum; not a widget, so nothing registers with the vm. Lands ahead of
 //! its wiring (Tasks 3-5), so like `popup/base.rs` and `doc_view.rs` a bin
 //! crate's dead-code lint would flag every item until then.
-#![allow(dead_code)]
 
 use makepad_widgets::*;
 

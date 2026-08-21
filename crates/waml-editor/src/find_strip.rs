@@ -41,15 +41,16 @@ impl FindModel {
         let current = self.current.unwrap_or(0);
         format!("{} of {}", current + 1, self.total)
     }
+}
 
+impl FindModel {
     /// Advance the cursor one step, wrapping at either end. A no-op (cursor
     /// stays `None`) when there is nothing to walk.
     ///
-    /// No production caller: `App` (Task 13, `app/actions.rs`) rebuilds a
-    /// fresh `FindModel` from `SearchSession`'s own cursor after every
-    /// `advance` instead of stepping this model in place -- the session is
-    /// the single ordering (spec: no second cursor to drift out of sync).
-    #[allow(dead_code)]
+    /// Test seam: `App` rebuilds a fresh `FindModel` from `SearchSession`'s own
+    /// cursor after every advance rather than stepping this model in place --
+    /// the session is the single ordering, with no second cursor to drift.
+    #[cfg(test)]
     pub fn step(&mut self, forward: bool) {
         if self.total == 0 {
             self.current = None;
@@ -249,9 +250,9 @@ impl FindStrip {
         self.view.redraw(cx);
     }
 
-    /// No production caller yet -- Task 14's Esc handling ("clear ...  the
-    /// find strip if open") is the first one that needs to ask.
-    #[allow(dead_code)]
+    /// Test seam: the app tracks strip visibility through its own session
+    /// state, so nothing in production asks the widget.
+    #[cfg(test)]
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -290,7 +291,7 @@ impl FindStripRef {
     }
 
     /// See [`FindStrip::is_open`].
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn is_open(&self) -> bool {
         self.borrow().is_some_and(|inner| inner.is_open())
     }

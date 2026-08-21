@@ -10,7 +10,6 @@ use waml::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
 pub enum PositionError {
     ByteOffsetOutOfBounds { offset: usize, len: usize },
     ByteOffsetNotCharBoundary { offset: usize },
@@ -50,7 +49,6 @@ impl fmt::Display for PositionError {
 
 impl std::error::Error for PositionError {}
 
-#[allow(dead_code)]
 fn line_bounds(text: &str, target_line: u32) -> Option<Range<usize>> {
     let bytes = text.as_bytes();
     let mut line = 0_u32;
@@ -113,7 +111,6 @@ pub fn to_lsp_position(
     Ok(lsp::Position::new(line_column.line, character))
 }
 
-#[allow(dead_code)]
 pub fn from_lsp_position(
     position: lsp::Position,
     document: &DocumentVersion,
@@ -163,7 +160,9 @@ pub fn to_lsp_range(
     ))
 }
 
-#[allow(dead_code)]
+/// Byte range for an LSP range. Test seam: the server converts positions one at
+/// a time, so only the round-trip tests want the paired form.
+#[cfg(test)]
 pub fn from_lsp_range(
     range: lsp::Range,
     document: &DocumentVersion,

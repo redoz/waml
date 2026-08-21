@@ -934,7 +934,9 @@ fn verify_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>, source: &SourceTe
 
 /// Safely advance an OKF shell tree. A full parse is deliberately retained as
 /// the oracle whenever a local synchronization proof is unavailable.
-#[allow(dead_code)]
+/// Test seam: production always wants the structure map too and calls
+/// [`reparse_okf_markdown_with_structure`] directly.
+#[cfg(test)]
 pub(crate) fn reparse_okf_markdown(
     previous: &SyntaxTree<OkfMarkdownLanguage>,
     new_text: SourceText,

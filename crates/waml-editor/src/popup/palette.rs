@@ -11,7 +11,6 @@
 // The shell doesn't call `show_at(PopupSpec::Palette)` until Task 11, so
 // several `pub` methods here have no in-crate caller yet -- matches
 // `select.rs`/`conflict_list.rs`'s module-wide allow for the same reason.
-#![allow(dead_code)]
 
 use std::collections::HashSet;
 
@@ -654,10 +653,6 @@ fn palette_semantic_sections(
 impl PalettePopup {
     pub fn is_open(&self) -> bool {
         self.open
-    }
-
-    pub fn query(&self) -> &str {
-        &self.query
     }
 
     /// Every row title currently rendered, in draw order -- for App-level

@@ -108,6 +108,9 @@ pub enum SourceRangeMapError {
 
 #[derive(Clone, Copy)]
 pub struct EditorSnapshot<'a> {
+    /// Only `ViewData`'s test-gated action helpers read this; the views take
+    /// source off the owned `EditorSessionSnapshot` instead.
+    #[cfg(test)]
     pub source: &'a SourceBundle,
     pub okf_analysis: &'a OkfAnalysis,
     pub uml_analysis: &'a waml::uml::Analysis,
@@ -117,6 +120,7 @@ pub struct EditorSnapshot<'a> {
 impl EditorSessionSnapshot {
     pub fn borrowed(&self) -> EditorSnapshot<'_> {
         EditorSnapshot {
+            #[cfg(test)]
             source: &self.source,
             okf_analysis: &self.okf_analysis,
             uml_analysis: &self.uml_analysis,
@@ -235,54 +239,42 @@ impl ProposedSourceEdit {
     }
 }
 
-// These variant fields are read only through the derived Debug impl (used by
-// `Display` below to render diagnostics); rustc's dead_code lint does not count a
-// derive-generated field access as a read, so each field needs a narrow allow.
-// They are not scaffolding for an unlanded consumer — Display is already landed.
+// Every field below is read only through the derived `Debug`, which the landed
+// `Display` impl formats diagnostics with. rustc does not count a
+// derive-generated field access as a read, so the whole enum needs the allow --
+// this is a confused lint, not scaffolding: the consumer is `Display`, right
+// below.
+#[allow(dead_code)] // read via #[derive(Debug)], which `Display` below formats
 #[derive(Debug)]
 pub enum SourceEditError {
     DocumentNotFound {
-        #[allow(dead_code)]
         document: DocumentId,
     },
     DocumentPathInvariant {
-        #[allow(dead_code)]
         document: DocumentId,
     },
     StaleBaseRevision {
-        #[allow(dead_code)]
         document: DocumentId,
-        #[allow(dead_code)]
         base: DocumentRevision,
-        #[allow(dead_code)]
         current: DocumentRevision,
     },
     RevisionOverflow {
-        #[allow(dead_code)]
         document: DocumentId,
-        #[allow(dead_code)]
         current: DocumentRevision,
     },
     InvalidChanges {
-        #[allow(dead_code)]
         document: DocumentId,
-        #[allow(dead_code)]
         reason: FullReparseReason,
     },
     SyntaxRevisionMismatch {
-        #[allow(dead_code)]
         document: DocumentId,
-        #[allow(dead_code)]
         expected: DocumentRevision,
-        #[allow(dead_code)]
         actual: DocumentRevision,
     },
     ResultTextMismatch {
-        #[allow(dead_code)]
         document: DocumentId,
     },
     BaseIdentityMismatch {
-        #[allow(dead_code)]
         document: DocumentId,
     },
     Edit(EditError),

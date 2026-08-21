@@ -21,7 +21,6 @@ pub enum MarkOutcome {
     None,
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 pub struct MarkingCore {
     open: bool,
@@ -43,7 +42,6 @@ pub struct MarkingCore {
     sticky: bool,
 }
 
-#[allow(dead_code)]
 impl MarkingCore {
     pub fn is_open(&self) -> bool {
         self.open
@@ -58,9 +56,6 @@ impl MarkingCore {
     }
     pub fn armed(&self) -> Option<usize> {
         self.armed
-    }
-    pub fn is_sticky(&self) -> bool {
-        self.sticky
     }
     /// Checklist open: an enabled commit toggles and stays open, instead of the
     /// default pick-one-and-close. Light-dismiss is unaffected.
@@ -377,7 +372,6 @@ mod tests {
         let mut c = MarkingCore::default();
         c.begin_popup(menu(), T);
         c.set_sticky(true);
-        assert!(c.is_sticky());
         c.press(dvec2(P.x, P.y), Some(0));
         assert_eq!(
             c.release(Some(0)),

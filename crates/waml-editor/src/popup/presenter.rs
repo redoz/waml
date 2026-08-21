@@ -11,7 +11,6 @@ use makepad_widgets::*;
 
 pub struct Presenter;
 
-#[allow(dead_code)]
 impl Presenter {
     /// Normalize an event into the space the surfaces hit-test in (main-window
     /// coords). Identity for the overlay backing; the DComp backing translates.

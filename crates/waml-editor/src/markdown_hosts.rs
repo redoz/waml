@@ -189,7 +189,7 @@ impl EditorMarkdownAssetHost {
     // Production code drives the host through `MarkdownAssetLease`; the
     // direct-lease entry points below survive as this module's test seam
     // (2026-08-04, review M-8 -- the unused wrappers were deleted then).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn bind_item(&mut self, item: PresentationItemId, document: BundlePath) {
         self.documents
             .entry(DIRECT_LEASE)
@@ -197,7 +197,7 @@ impl EditorMarkdownAssetHost {
             .insert(item, document);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn unbind_document(&mut self, document: &BundlePath) {
         self.unbind_lease_document(DIRECT_LEASE, document);
     }
@@ -340,7 +340,7 @@ impl EditorMarkdownAssetHost {
 impl MarkdownAssetLease {
     /// Test seam: assertions key the host's internal maps by lease id
     /// (2026-08-04, review M-8).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn id(&self) -> MarkdownAssetLeaseId {
         self.id
     }

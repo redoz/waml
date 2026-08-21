@@ -104,7 +104,6 @@ pub fn core_registry() -> MiddlewareRegistry {
 /// live. Grows alongside `core_registry()`: a middleware whose editor half
 /// is missing here mints rows nothing can open or draw an icon for.
 // Consumer: Tasks 10-11's icon-resolution wiring, deferred.
-#[allow(dead_code)]
 pub fn editor_registry() -> Vec<Box<dyn EditorExtension>> {
     vec![Box::new(CoreEditorExtension), Box::new(UmlEditorExtension)]
 }

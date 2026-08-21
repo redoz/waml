@@ -259,23 +259,14 @@ impl FolderView {
         })
     }
 
-    /// Unused outside tests until Task D2 surfaces the diagnostics strip;
-    /// that commit removes this allow.
-    #[allow(dead_code)]
-    pub fn directory(&self) -> &str {
-        &self.directory
-    }
-
     pub fn row_views(&self) -> Vec<FolderRowView> {
         self.views.clone()
     }
 
-    /// The projected rows themselves, for Task G3's gesture->`RowOp`
-    /// mapping functions (`enter_row_op` et al.), which need `caps` and
-    /// `RowId` -- `row_views` erases both into a display-only shape.
-    ///
-    /// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
-    #[allow(dead_code)]
+    /// The projected rows themselves -- `caps` and `RowId` included, which
+    /// `row_views` erases into a display-only shape. Test seam: the gesture
+    /// tests assert against them; the list widget draws from `row_views`.
+    #[cfg(test)]
     pub fn rows(&self) -> &[Row] {
         &self.rows
     }

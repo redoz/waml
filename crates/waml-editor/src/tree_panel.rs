@@ -434,7 +434,6 @@ pub struct ProjectTree {
     /// The rows that blanked were the fork widget's. Whether the same holds now
     /// that this file draws its own labels is UNVERIFIED -- do not delete it to
     /// find out as a side effect of some other change.
-    #[allow(dead_code)]
     #[redraw]
     #[live]
     draw_title: DrawText,
@@ -1070,17 +1069,13 @@ impl ProjectTree {
         self.dock
     }
 
-    /// The layout width the app must reserve in the left slot for this panel.
-    #[allow(dead_code)]
-    pub fn slot_width(&self) -> f64 {
-        crate::dock::slot_width(self.dock, PROJECT_TREE_W)
-    }
-
     pub fn drawn_rect(&self, cx: &Cx) -> Rect {
         self.view.area().rect(cx)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Test seam: production always states its fold-reset intent explicitly
+    /// through `set_view_with_fold_reset`.
+    #[cfg(test)]
     pub fn set_view(&mut self, cx: &mut Cx, view: NavView) {
         self.set_view_with_fold_reset(cx, view, false);
     }
@@ -1243,7 +1238,8 @@ impl ProjectTree {
     /// Fold/unfold the directory row keyed `key`. Returns `false` for a key no
     /// directory in the current tree carries, so a caller acting on a stale key
     /// learns nothing happened rather than silently opening the wrong folder.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Test seam: the shell folds through row gestures, not by key.
+    #[cfg(test)]
     pub fn toggle_directory(&mut self, cx: &mut Cx, key: &str) -> bool {
         if !self.directory_keys.contains(key) {
             return false;

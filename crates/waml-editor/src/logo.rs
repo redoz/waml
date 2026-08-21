@@ -432,7 +432,6 @@ const FADE_SECS: f64 = 0.4;
 ///
 /// `#[allow(dead_code)]`: the `logo_harness` bin path-includes `logo.rs` without
 /// the `App` wiring, so the payload/readers look unused in that unit.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) enum LogoAction {
     #[default]

@@ -125,18 +125,10 @@ impl ViewOption {
         ViewOption::ShowConstraints,
     ];
 
-    /// Independent on/off state (lit while on) vs. a one-shot action.
-    pub fn is_toggle(self) -> bool {
-        matches!(
-            self,
-            ViewOption::ShowHiddenBorders | ViewOption::ShowConstraints
-        )
-    }
-
-    /// Human-readable name. No consumer yet -- the bar has no tooltips and the
-    /// statusbar doesn't report view state; kept because it is the natural home
-    /// for that copy and the tests pin it.
-    #[allow(dead_code)]
+    /// Human-readable name. Test seam: the bar has no tooltips and the
+    /// statusbar does not report view state, so nothing renders this copy yet;
+    /// the tests pin it so it stays in step with the enum.
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             ViewOption::ZoomIn => "Zoom In",
@@ -146,6 +138,14 @@ impl ViewOption {
             ViewOption::ShowHiddenBorders => "Show Hidden Borders",
             ViewOption::ShowConstraints => "Show Constraints",
         }
+    }
+
+    /// Independent on/off state (lit while on) vs. a one-shot action.
+    pub fn is_toggle(self) -> bool {
+        matches!(
+            self,
+            ViewOption::ShowHiddenBorders | ViewOption::ShowConstraints
+        )
     }
 }
 

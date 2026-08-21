@@ -1122,7 +1122,7 @@ impl ClassDiagramSurface {
     }
 
     /// The active spotlight set, for tests. See `set_search_spotlight`.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn search_spotlight(&self) -> Option<&HashSet<String>> {
         self.selection.search_spotlight()
     }

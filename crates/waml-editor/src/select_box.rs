@@ -5,7 +5,6 @@
 //! relays it to `PopupRoot::show_at(PopupSpec::Select{…})`, and the close comes
 //! back through the tag-filtered queue into `on_closed`. See
 //! `docs/superpowers/specs/2026-07-22-select-box-flyout-design.md`.
-#![allow(dead_code)]
 
 use crate::cursor;
 use crate::icons::{Icon, IconSet};
@@ -329,10 +328,6 @@ impl SelectBox {
         }
         self.view.redraw(cx);
         picked
-    }
-
-    pub fn is_open(&self) -> bool {
-        self.open
     }
 }
 

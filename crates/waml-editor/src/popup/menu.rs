@@ -65,7 +65,6 @@ pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 /// it and the rows scroll under a clip; `scroll` is the vertical offset (lpx),
 /// always kept in `[0, max_scroll]` by `set_scroll`. The menu leaves both unset
 /// (`max_height == None`, `scroll == 0`) so its geometry is unchanged.
-#[allow(dead_code)]
 #[derive(Default)]
 pub struct LinearGeom {
     anchor: DVec2,
@@ -75,7 +74,6 @@ pub struct LinearGeom {
     scroll: f64,
 }
 
-#[allow(dead_code)]
 impl LinearGeom {
     pub fn new(anchor: DVec2, rows: usize) -> Self {
         Self {
@@ -364,7 +362,6 @@ script_mod! {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Script, ScriptHook, Widget)]
 pub struct MenuPopup {
     #[uid]
@@ -456,7 +453,6 @@ impl Widget for MenuPopup {
     }
 }
 
-#[allow(dead_code)]
 impl MenuPopup {
     pub fn is_open(&self) -> bool {
         self.mark.is_open()
@@ -506,10 +502,6 @@ impl MenuPopup {
     ) {
         self.open_popup(cx, anchor, items, None, max_height);
         self.mark.set_sticky(true);
-    }
-
-    pub fn is_sticky(&self) -> bool {
-        self.mark.is_sticky()
     }
 
     /// Re-seed an OPEN surface's rows, keeping its geometry and armed row. A

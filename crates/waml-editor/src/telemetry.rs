@@ -63,9 +63,9 @@ impl RingBuffer {
         self.events.push_back(event);
     }
 
-    // Production reach is via `recent_events`, whose consumer (the in-editor
-    // log panel) is a later slice; tests exercise it today.
-    #[allow(dead_code)]
+    /// Test seam: reached through `recent_events`, whose own consumer (an
+    /// in-editor log panel) has not landed.
+    #[cfg(test)]
     fn snapshot(&self) -> Vec<TelemetryEvent> {
         self.events.iter().cloned().collect()
     }
@@ -78,21 +78,6 @@ type SharedRing = Arc<Mutex<RingBuffer>>;
 fn global_ring() -> &'static SharedRing {
     static RING: OnceLock<SharedRing> = OnceLock::new();
     RING.get_or_init(|| Arc::new(Mutex::new(RingBuffer::new(CAPACITY))))
-}
-
-/// Snapshot of the captured events, oldest first. Feed for a future in-editor
-/// log panel; cheap enough (clone of at most [`CAPACITY`] small structs) to
-/// call on demand, not per frame.
-// Unreferenced until the in-editor log panel lands (this is its feed; the
-// seam ships with O-3 so the panel is a pure consumer).
-#[allow(dead_code)]
-pub fn recent_events() -> Vec<TelemetryEvent> {
-    // A poisoned mutex only means some thread panicked mid-push; the data is
-    // still the best record available -- and telemetry must never panic.
-    match global_ring().lock() {
-        Ok(ring) => ring.snapshot(),
-        Err(poisoned) => poisoned.into_inner().snapshot(),
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

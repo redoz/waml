@@ -26,7 +26,6 @@
 //! editor file to seed a non-editor one, which re-creates the exact tangle this
 //! split exists to undo.
 
-use std::io;
 use std::path::{Path, PathBuf};
 
 use waml::view::chain::ProjectConfig;
@@ -54,12 +53,12 @@ pub(crate) fn load(project_root: &Path) -> ProjectConfig {
 /// Store `config` to `<project>/.waml/project.json`, creating the directory if
 /// needed, stamped with the current [`ProjectConfig::VERSION`].
 ///
-/// No caller in the editor yet: nothing in the UI edits a depth cap, so the
-/// file is hand-written today. It exists so that whatever grows one -- a
-/// project-properties panel here, `waml config` in the CLI -- writes through
-/// the same seam it reads through, rather than minting a second writer.
-#[allow(dead_code)]
-pub(crate) fn store(project_root: &Path, config: &ProjectConfig) -> io::Result<()> {
+/// Test seam: nothing in the UI edits a depth cap, so the file is hand-written
+/// today. It exists so that whatever grows one -- a project-properties panel
+/// here, `waml config` in the CLI -- writes through the same seam it reads
+/// through, rather than minting a second writer.
+#[cfg(test)]
+pub(crate) fn store(project_root: &std::path::Path, config: &ProjectConfig) -> std::io::Result<()> {
     let stamped = ProjectConfig {
         version: ProjectConfig::VERSION,
         ..config.clone()

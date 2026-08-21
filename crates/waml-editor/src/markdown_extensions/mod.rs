@@ -607,7 +607,8 @@ enum NativeDispatch {
 }
 
 impl MarkdownExtensionLease {
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Test seam: assertions key the registry's internal maps by lease id.
+    #[cfg(test)]
     pub fn id(&self) -> MarkdownExtensionLeaseId {
         self.id
     }
