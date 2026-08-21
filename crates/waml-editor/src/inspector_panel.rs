@@ -1313,15 +1313,8 @@ impl Inspector {
     /// The current dock state. Plan-specified symmetry accessor (mirrors
     /// `ProjectTree::dock_state`); no in-crate caller yet since the app
     /// currently only reads `slot_width()`.
-    #[allow(dead_code)]
     pub fn dock_state(&self) -> DockState {
         self.dock
-    }
-
-    /// The layout width the app must reserve in the right slot for this panel.
-    #[allow(dead_code)]
-    pub fn slot_width(&self) -> f64 {
-        crate::dock::slot_width(self.dock, INSPECTOR_W)
     }
 
     pub fn drawn_rect(&self, cx: &Cx) -> Rect {
@@ -1924,16 +1917,13 @@ mod tests {
         );
     }
 
-    // The document header's right-dock toggle is the panel's only affordance
-    // now, so the state machine it drives must be strictly binary -- landing in
-    // `Peek` would self-collapse the column out from under the user.
+    // The document header's right-dock toggle is the panel's only affordance,
+    // so the state machine it drives must stay strictly binary.
     #[test]
     fn the_caption_toggle_moves_the_column_between_flag_and_pinned() {
         use crate::dock::{next, DockEvent, DockState};
         assert_eq!(next(DockState::Flag, DockEvent::Toggle), DockState::Pinned);
         assert_eq!(next(DockState::Pinned, DockEvent::Toggle), DockState::Flag);
-        assert_ne!(next(DockState::Flag, DockEvent::Toggle), DockState::Peek);
-        assert_ne!(next(DockState::Pinned, DockEvent::Toggle), DockState::Peek);
     }
 
     #[test]

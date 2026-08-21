@@ -1,16 +1,12 @@
 //! Pure state model for the docked/collapsible Model + Inspector panels. Holds
-//! the `DockState` enum, its transition table (`next`), the peek auto-collapse
-//! timer (`PeekTimer`, a pure dt function testable without a live `Cx`), and
-//! the slot/center width arithmetic that makes Pin shrink the center. No
-//! makepad types here.
+//! the `DockState` enum, its transition table (`next`), the open/close motion
+//! curve (`DockMotion`), and the slot/center width arithmetic that makes Pin
+//! shrink the center. No makepad types here, so it is unit-tested standalone.
 //!
-//! This module is pure and unit-tested standalone. Parts of its public API have
-//! no production sender any more -- `Peek` and everything that serves it
-//! (`PeekTimer`, `peek_hover_span`, `FlagActivate`, `PointerLeft`, `PinToggle`,
-//! `FLAG_W`, `DockEdge`, `header_controls_visible`) went inert when both panels
-//! became binary `Flag` <-> `Pinned` columns. The states stay modelled and
-//! tested rather than deleted for compatibility with the complete dock-state
-//! model.
+//! Both panels are binary: a panel is either a `Flag` (nothing drawn) or a
+//! `Pinned` column that shrinks the center. The old floating `Peek` state and
+//! its auto-collapse timer were deleted along with the `peek_layer` that hosted
+//! them.
 
 /// Which visual state a dock panel is in. Replaces the panels' old separate
 /// `collapsed` / `pinned` / `folded` bools.
@@ -19,11 +15,6 @@ pub enum DockState {
     /// Resting: a thin sideways-label strip at the body edge, no body drawn.
     #[default]
     Flag,
-    /// Unpinned + expanded: body floats over the (frozen) center, auto-collapsing
-    /// back to `Flag` after `PEEK_COLLAPSE_SECS`. No panel enters this state any
-    /// more -- the `peek_layer` that hosted the floating body was deleted when the
-    /// inspector became a binary column, and both panels now toggle Flag <-> Pinned.
-    Peek,
     /// Docked column: consumes layout width, the center shrinks, sticky.
     Pinned,
 }
@@ -31,18 +22,9 @@ pub enum DockState {
 /// A user/pointer event that may transition a `DockState`. See the plan's
 /// authoritative transition table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum DockEvent {
-    /// Hover or click the flag strip.
-    FlagActivate,
-    /// Pointer left the flag AND the body for `PEEK_COLLAPSE_SECS` (peek only).
-    PointerLeft,
-    /// Header pin button: Peek -> Pinned, or Pinned -> Flag (unpin).
-    PinToggle,
     /// A shell dock toggle (the caption tree button or document-header
-    /// right-dock button). Moves Flag <-> Pinned directly: a column summoned
-    /// from shell chrome is a deliberate act, so it must not land in the
-    /// self-collapsing `Peek` state the flag strip opens into.
+    /// right-dock button). Moves Flag <-> Pinned.
     Toggle,
     /// The responsive shell forced a dock open, idempotently. Drives any state to
     /// `Pinned` and never collapses.
@@ -57,26 +39,15 @@ pub enum DockEvent {
     Close,
 }
 
-/// The transition table. Any unlisted (state, event) pair is a no-op (returns
-/// the state unchanged) — notably `PointerLeft` in `Pinned` (docked columns
-/// never auto-collapse).
+/// The transition table.
 pub fn next(state: DockState, ev: DockEvent) -> DockState {
     use DockEvent::*;
     use DockState::*;
     match (state, ev) {
-        (Flag, FlagActivate) => Peek,
-        (Peek, PointerLeft) => Flag,
-        (Peek, PinToggle) => Pinned,
-        (Pinned, PinToggle) => Flag,
         (Flag, Toggle) => Pinned,
         (Pinned, Toggle) => Flag,
-        // Neither `Toggle` sender ever enters Peek — this arm exists so the
-        // pair is total rather than silently falling through the catch-all,
-        // and collapsing is the safer reading of a toggle-off.
-        (Peek, Toggle) => Flag,
         (_, Open) => Pinned,
         (_, Close) => Flag,
-        (s, _) => s,
     }
 }
 
@@ -92,18 +63,15 @@ pub fn apply(state: &mut DockState, ev: DockEvent) -> bool {
     true
 }
 
-/// Flag-strip width (px). The slot always reserves at least this much, so the
-/// flag never occludes the canvas corner.
-#[cfg_attr(not(test), allow(dead_code))]
-pub const FLAG_W: f64 = 28.0;
-
 /// The layout width a panel's slot reserves in the `flow: Right` dock row.
-/// Only `Pinned` reserves a column and thereby shrinks the center; `Flag`/`Peek`
-/// reserve nothing (a collapsed panel draws zero pixels and must not carve a
-/// window-bg gutter down the edge).
+/// Only `Pinned` reserves a column and thereby shrinks the center; `Flag`
+/// reserves nothing (a collapsed panel draws zero pixels and must not carve a
+/// window-bg gutter down the edge). Test seam: the shell animates its slots
+/// through `responsive_layout`, which interpolates the same widths.
+#[cfg(test)]
 pub fn slot_width(state: DockState, body_w: f64) -> f64 {
     match state {
-        DockState::Flag | DockState::Peek => 0.0,
+        DockState::Flag => 0.0,
         DockState::Pinned => body_w,
     }
 }
@@ -218,23 +186,6 @@ pub fn narrow_entry_states(tree: DockState, inspector: DockState) -> (DockState,
     }
 }
 
-/// Whether the logical state includes the panel body. Presentation visibility
-/// gates drawing.
-pub fn body_visible(state: DockState) -> bool {
-    !matches!(state, DockState::Flag)
-}
-
-/// Whether the header pin/collapse controls should be shown. They must stay
-/// reachable whenever the panel is expanded (`Peek`/`Pinned`) so a `Pinned`
-/// panel is never stranded with no unpin/collapse affordance — independent of
-/// whether the element-picker bar is showing. (A classifier/package preview
-/// hides the picker, but a `Pinned` inspector switched onto such a tab must
-/// still expose its controls, since `Pinned` never auto-collapses.)
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn header_controls_visible(state: DockState) -> bool {
-    body_visible(state)
-}
-
 /// In narrow mode the inspector floats above the center column, so its host
 /// starts below a visible document header. Wide mode remains a full-height
 /// reserved column beside the center.
@@ -275,71 +226,6 @@ pub fn narrow_toggle_states(
             } else {
                 (tree, next_inspector)
             }
-        }
-    }
-}
-
-/// The `[lo, hi)` x-interval to treat as "inside the panel" for the `Peek`
-/// auto-collapse timer, given the body's on-screen x-span (`body_x`, `body_w`)
-/// and the docked edge. The body starts one `FLAG_W` *inside* the window edge
-/// (the reserved flag gutter it does not itself span); this widens the span by
-/// `FLAG_W` toward that edge so the pointer that opened the peek from the flag
-/// strip still reads as "inside" and keeps the timer cancelled.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn peek_hover_span(body_x: f64, body_w: f64, edge: DockEdge) -> (f64, f64) {
-    match edge {
-        DockEdge::Left => (body_x - FLAG_W, body_x + body_w),
-        DockEdge::Right => (body_x, body_x + body_w + FLAG_W),
-    }
-}
-
-/// Seconds an unpinned peek lingers after the pointer leaves before collapsing.
-#[cfg_attr(not(test), allow(dead_code))]
-pub const PEEK_COLLAPSE_SECS: f64 = 0.6;
-
-/// Auto-collapse timer for `Peek`. Pure dt accumulator — the caller arms it
-/// when the pointer leaves the flag+body, cancels it when the pointer returns
-/// (or the panel pins), and calls `advance(dt)` each armed frame. Testable
-/// without a `Cx`.
-#[derive(Default)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub struct PeekTimer {
-    armed: bool,
-    elapsed: f64,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl PeekTimer {
-    /// Start (or restart) the countdown from zero.
-    pub fn arm(&mut self) {
-        self.armed = true;
-        self.elapsed = 0.0;
-    }
-
-    /// Stop the countdown (pointer returned, or panel left Peek).
-    pub fn cancel(&mut self) {
-        self.armed = false;
-        self.elapsed = 0.0;
-    }
-
-    pub fn is_armed(&self) -> bool {
-        self.armed
-    }
-
-    /// Accumulate `dt` seconds. Returns `true` exactly once, on the frame the
-    /// elapsed time first reaches `PEEK_COLLAPSE_SECS`; the timer then
-    /// auto-cancels so it won't fire again until re-armed. A no-op (returns
-    /// `false`) while unarmed.
-    pub fn advance(&mut self, dt: f64) -> bool {
-        if !self.armed {
-            return false;
-        }
-        self.elapsed += dt.max(0.0);
-        if self.elapsed >= PEEK_COLLAPSE_SECS {
-            self.cancel();
-            true
-        } else {
-            false
         }
     }
 }
@@ -490,33 +376,11 @@ mod tests {
     }
 
     #[test]
-    fn transition_table_matches_spec() {
+    fn toggle_flips_between_flag_and_pinned() {
         use DockEvent::*;
         use DockState::*;
-        // Flag: only FlagActivate advances (to Peek).
-        assert_eq!(next(Flag, FlagActivate), Peek);
-        assert_eq!(next(Flag, PointerLeft), Flag);
-        assert_eq!(next(Flag, PinToggle), Flag);
-        // Peek: PointerLeft -> Flag, PinToggle -> Pinned.
-        assert_eq!(next(Peek, PointerLeft), Flag);
-        assert_eq!(next(Peek, PinToggle), Pinned);
-        assert_eq!(next(Peek, FlagActivate), Peek);
-        // Pinned: PinToggle unpins -> Flag; never auto-collapses.
-        assert_eq!(next(Pinned, PinToggle), Flag);
-        assert_eq!(next(Pinned, PointerLeft), Pinned);
-        assert_eq!(next(Pinned, FlagActivate), Pinned);
-    }
-
-    #[test]
-    fn toggle_skips_peek_in_both_directions() {
-        use DockEvent::*;
-        use DockState::*;
-        // The caption tree toggle jumps straight to the docked column and back;
-        // it must never park the tree in the self-collapsing Peek state.
         assert_eq!(next(Flag, Toggle), Pinned);
         assert_eq!(next(Pinned, Toggle), Flag);
-        // Unreachable for the tree (it never peeks), but defined for totality.
-        assert_eq!(next(Peek, Toggle), Flag);
     }
 
     #[test]
@@ -527,7 +391,6 @@ mod tests {
         // so a user who closed it isn't fought by the next click. Every state
         // lands on Pinned, including Pinned itself (a no-op, so no redraw).
         assert_eq!(next(Flag, Open), Pinned);
-        assert_eq!(next(Peek, Open), Pinned);
         assert_eq!(next(Pinned, Open), Pinned);
     }
 
@@ -540,57 +403,24 @@ mod tests {
         // diagrams opened). Every state lands on Flag, including Flag itself (a
         // no-op, so no redraw).
         assert_eq!(next(Pinned, Close), Flag);
-        assert_eq!(next(Peek, Close), Flag);
         assert_eq!(next(Flag, Close), Flag);
     }
 
     #[test]
-    fn full_cycle_flag_peek_pinned_flag() {
+    fn apply_reports_only_real_changes() {
         let mut s = DockState::default();
         assert_eq!(s, DockState::Flag);
-        s = next(s, DockEvent::FlagActivate);
-        assert_eq!(s, DockState::Peek);
-        s = next(s, DockEvent::PinToggle);
+        assert!(apply(&mut s, DockEvent::Toggle));
         assert_eq!(s, DockState::Pinned);
-        s = next(s, DockEvent::PinToggle);
+        assert!(!apply(&mut s, DockEvent::Open));
+        assert!(apply(&mut s, DockEvent::Close));
         assert_eq!(s, DockState::Flag);
     }
 
     #[test]
     fn slot_width_only_pinned_reserves_body() {
         assert_eq!(slot_width(DockState::Flag, 280.0), 0.0);
-        assert_eq!(slot_width(DockState::Peek, 280.0), 0.0);
         assert_eq!(slot_width(DockState::Pinned, 280.0), 280.0);
-    }
-
-    #[test]
-    fn body_visible_only_when_expanded() {
-        assert!(!body_visible(DockState::Flag));
-        assert!(body_visible(DockState::Peek));
-        assert!(body_visible(DockState::Pinned));
-    }
-
-    #[test]
-    fn header_controls_visible_whenever_expanded() {
-        // Hidden only in Flag (no body drawn). A Pinned panel MUST keep its
-        // controls — even on a classifier/package preview tab (picker hidden) —
-        // or it strands with no unpin/collapse affordance (Pinned never
-        // auto-collapses).
-        assert!(!header_controls_visible(DockState::Flag));
-        assert!(header_controls_visible(DockState::Peek));
-        assert!(header_controls_visible(DockState::Pinned));
-    }
-
-    #[test]
-    fn peek_hover_span_widens_toward_docked_edge() {
-        // Left panel: body at [28, 308) (one FLAG_W inside the left edge).
-        // The span must reach the window edge (0) to cover the flag gutter.
-        assert_eq!(peek_hover_span(28.0, 280.0, DockEdge::Left), (0.0, 308.0));
-        // Right panel: body at [W-348, W-28). The span must reach the right
-        // window edge (W) to cover the flag gutter, without moving its left end.
-        let w = 1280.0;
-        let body_x = w - 348.0;
-        assert_eq!(peek_hover_span(body_x, 320.0, DockEdge::Right), (body_x, w));
     }
 
     #[test]
@@ -602,37 +432,5 @@ mod tests {
         let center_flag = total - slot_width(DockState::Flag, 280.0) - right;
         let center_pinned = total - slot_width(DockState::Pinned, 280.0) - right;
         assert_eq!(center_flag - center_pinned, 280.0);
-    }
-
-    #[test]
-    fn peek_timer_fires_once_after_threshold() {
-        let mut t = PeekTimer::default();
-        assert!(!t.advance(1.0)); // unarmed: no-op
-        t.arm();
-        assert!(!t.advance(0.3)); // 0.3 < 0.6
-        assert!(!t.advance(0.2)); // 0.5 < 0.6
-        assert!(t.advance(0.2)); // 0.7 >= 0.6 -> fire
-        assert!(!t.is_armed()); // auto-cancelled
-        assert!(!t.advance(1.0)); // stays fired-off until re-armed
-    }
-
-    #[test]
-    fn peek_timer_cancel_prevents_fire() {
-        let mut t = PeekTimer::default();
-        t.arm();
-        assert!(!t.advance(0.5));
-        t.cancel();
-        assert!(!t.is_armed());
-        assert!(!t.advance(1.0));
-    }
-
-    #[test]
-    fn peek_timer_rearm_restarts_countdown() {
-        let mut t = PeekTimer::default();
-        t.arm();
-        assert!(!t.advance(0.5));
-        t.arm(); // pointer left again -> restart
-        assert!(!t.advance(0.3)); // only 0.3 since re-arm
-        assert!(t.advance(0.4)); // 0.7 -> fire
     }
 }
