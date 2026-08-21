@@ -431,8 +431,6 @@ struct ValueScan {
     invalid_escape: Option<(usize, usize)>,
 }
 
-/// True if `c` is a double-quote escape this decoder understands:
-/// `\\ \" \n \r \t \0 \uXXXX`. Anything else is a genuine unknown escape.
 /// The offset just past the UTF-8 character that starts at `at`.
 fn char_end(bytes: &[u8], at: usize) -> usize {
     let mut end = at + 1;
@@ -445,6 +443,8 @@ fn char_end(bytes: &[u8], at: usize) -> usize {
     end
 }
 
+/// True if `c` is a double-quote escape this decoder understands:
+/// `\\ \" \n \r \t \0 \uXXXX`. Anything else is a genuine unknown escape.
 fn is_known_double_quote_escape(bytes: &[u8], at: usize, limit: usize) -> Option<usize> {
     match bytes.get(at) {
         Some(b'\\' | b'"' | b'n' | b'r' | b't' | b'0') => Some(at + 1),
