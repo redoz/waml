@@ -82,13 +82,18 @@ pub fn label_requests(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> 
     )
 }
 
-pub(crate) fn label_requests_with_policy(
-    edges: &[SceneEdge],
+/// Takes an ITERATOR of edges rather than a slice so a caller whose edges live
+/// inside a richer element can hand them over by reference instead of cloning
+/// them into a second list — `LabelRequest::edge` indexes the sequence passed
+/// here, so any copy made to satisfy the signature is a list that can desync
+/// from the original.
+pub(crate) fn label_requests_with_policy<'a>(
+    edges: impl IntoIterator<Item = &'a SceneEdge>,
     display: &ResolvedDiagramDisplay,
     policy: crate::StructuralVisualPolicy,
 ) -> Vec<LabelRequest> {
     let mut requests = Vec::new();
-    for (index, edge) in edges.iter().enumerate() {
+    for (index, edge) in edges.into_iter().enumerate() {
         push_requests(
             index,
             edge.kind,

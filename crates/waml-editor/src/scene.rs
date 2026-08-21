@@ -93,6 +93,21 @@ pub struct SceneEdge {
     pub points: Vec<(f64, f64)>,
 }
 
+/// A drawable edge while `build_scene` is still working on it: the `SceneEdge`
+/// the canvas will stroke, plus the keys of the nodes its ends attach to.
+///
+/// The keys are not fields of `SceneEdge` because that carries RECTS — the
+/// renderer wants geometry, not identity. Endpoint clipping needs both at once,
+/// so before this struct the keys rode in a second `Vec` pushed alongside the
+/// edges and later walked by `zip`: two lists whose alignment was maintained by
+/// hand at every `push`, and whose desync no type could catch. One element that
+/// owns both is the only shape in which they cannot come apart.
+struct DrawableEdge {
+    edge: SceneEdge,
+    source_key: String,
+    target_key: String,
+}
+
 /// A placement relation projected from the diagram's `## Layout` for drag-time
 /// overlay + conflict prediction: a 2-operand single-direction placement, its
 /// operands resolved to `SceneNode.key` slugs. Multi-operand / alignment
@@ -1057,13 +1072,15 @@ pub fn build_scene(
         }
     }
     let model_edges = drawable_edges(model);
-    let edges: Vec<(BoxId, BoxId)> = model_edges
+    // A projection of `model_edges`, not a second list: it is derived from it in
+    // one expression, so it is in `model_edges`' order by construction.
+    let edge_pairs: Vec<(BoxId, BoxId)> = model_edges
         .iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
     // Label text is known before any geometry is, so the connected-gap floor can
     // be sized to hold each pair's terminal labels. These requests index into
-    // `model_edges`, which is the same list (same order) as `edges`.
+    // `model_edges`, hence into `edge_pairs` too.
     let sizing_requests =
         crate::edge_labels::model_label_requests_with_policy(&model_edges, &display, policy);
 
@@ -1072,14 +1089,13 @@ pub fn build_scene(
     // hard separation/alignment constraints projected inside the stress
     // solve, instead of switching the whole diagram onto the edge-blind
     // rigid-offset strip packer the moment any `place` statement is authored.
-    let relationship_pairs = edges.clone();
     let (scene, resolve_diags) = if diagram.kind == waml::model::DiagramKind::UseCase {
-        waml::solve::use_case::resolve_use_case(diagram, &relationship_pairs)
+        waml::solve::use_case::resolve_use_case(diagram, &edge_pairs)
     } else {
         resolve::resolve(diagram)
     };
-    let connected = connected_pairs(&edges);
-    let label_widths = waml::solve::connected_label_widths(&edges, &sizing_requests);
+    let connected = connected_pairs(&edge_pairs);
+    let label_widths = waml::solve::connected_label_widths(&edge_pairs, &sizing_requests);
     let compiled = constrain::compile(
         &scene,
         &sizes,
@@ -1144,8 +1160,7 @@ pub fn build_scene(
     // route::route presence-filtered out, desyncing the stream) fall back to a
     // straight center-to-center polyline WITHOUT advancing the cursor, so later
     // edges stay aligned.
-    let mut edges: Vec<SceneEdge> = Vec::new();
-    let mut edge_endpoint_keys: Vec<(String, String)> = Vec::new();
+    let mut drawable: Vec<DrawableEdge> = Vec::new();
     let mut route_cursor = 0usize;
     for e in drawable_edges(model) {
         if let (Some(&source), Some(&target)) =
@@ -1158,31 +1173,42 @@ pub fn build_scene(
                 }
                 _ => fallback_route(source, target),
             };
-            edges.push(SceneEdge {
-                source,
-                target,
-                kind: e.kind,
-                name: e.name.clone(),
-                from_end: e.from_end.clone(),
-                to_end: e.to_end.clone(),
-                points,
+            drawable.push(DrawableEdge {
+                edge: SceneEdge {
+                    source,
+                    target,
+                    kind: e.kind,
+                    name: e.name.clone(),
+                    from_end: e.from_end.clone(),
+                    to_end: e.to_end.clone(),
+                    points,
+                },
+                source_key: e.source.clone(),
+                target_key: e.target.clone(),
             });
-            edge_endpoint_keys.push((e.source.clone(), e.target.clone()));
         }
     }
 
-    // Requests index into `edges` (the scene's drawable edges), and `edges` is
-    // NOT `solved.routes`: presence-filtering and the straight-polyline fallback
-    // above let the two lists desync. Hand placement the very polylines the
-    // requests were built from, so a label can never be placed against another
-    // edge's route.
+    // `requests` and the polyline lists below are VIEWS of `drawable`, each
+    // derived from it in one expression at the point of use. `LabelRequest::edge`
+    // is a POSITION, so a request and the polyline it is placed against are only
+    // the same edge while both lists carry `drawable`'s order; deriving both from
+    // the one collection is what keeps them in it.
+    //
+    // They are deliberately not views of `solved.routes`, which the loop above is
+    // free to diverge from: it presence-filters and substitutes a straight
+    // fallback, so resolving a label index against the router's list would place
+    // a label on another edge's route.
     //
     // Rerouting is part of placement: an edge whose label fits nowhere asks the
     // router for a path that leaves room for it. `place_labels_with_reroute`
-    // disables the reroute when this list and the router's own route list have
-    // desynced, degrading to a plain placement pass.
-    let requests = crate::edge_labels::label_requests_with_policy(&edges, &display, policy);
-    let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
+    // detects that divergence itself and degrades to a plain placement pass.
+    let requests = crate::edge_labels::label_requests_with_policy(
+        drawable.iter().map(|d| &d.edge),
+        &display,
+        policy,
+    );
+    let mut routes: Vec<Vec<(f64, f64)>> = drawable.iter().map(|d| d.edge.points.clone()).collect();
     let _reroute_unresolved = waml::solve::place_labels_with_reroute_policy(
         &mut solved,
         &routing.context(&SolveConfig::default()),
@@ -1195,22 +1221,25 @@ pub fn build_scene(
             projected_headings: routing.hard_obstacles.as_deref(),
         },
     );
-    // A reroute moves polylines, and the scene draws from `edges`, not from
+    // A reroute moves polylines, and the scene draws from `drawable`, not from
     // `solved.routes`.
-    for (edge, points) in edges.iter_mut().zip(&routes) {
-        edge.points.clone_from(points);
+    for (d, points) in drawable.iter_mut().zip(&routes) {
+        d.edge.points.clone_from(points);
     }
-    for (edge, (source_key, target_key)) in edges.iter_mut().zip(&edge_endpoint_keys) {
-        if edge.points.len() < 2 {
+    // Endpoint clipping needs an edge AND the keys of the nodes it attaches to.
+    // Both live on the same element, so there is no second list to walk in step.
+    for d in &mut drawable {
+        if d.edge.points.len() < 2 {
             continue;
         }
         if let (Some(source_port), Some(target_port)) =
-            (ports.get(source_key), ports.get(target_key))
+            (ports.get(&d.source_key), ports.get(&d.target_key))
         {
-            waml::solve::route::clip_route_endpoints(&mut edge.points, source_port, target_port);
+            waml::solve::route::clip_route_endpoints(&mut d.edge.points, source_port, target_port);
         }
     }
-    let final_routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|edge| edge.points.clone()).collect();
+    let final_routes: Vec<Vec<(f64, f64)>> =
+        drawable.iter().map(|d| d.edge.points.clone()).collect();
     let unresolved = waml::solve::place_labels_final(
         &mut solved,
         &final_routes,
@@ -1218,10 +1247,18 @@ pub fn build_scene(
         &waml::solve::label::LabelConfig::default(),
         routing.hard_obstacles.as_deref(),
     );
+    // `place_labels_final` leaves a label unplaced for exactly two reasons: the
+    // request's edge position does not resolve into `final_routes`, or the
+    // polyline it resolves to has zero length. The first can no longer happen --
+    // `requests` and `final_routes` are both derived from `drawable`, so they are
+    // the same length and in the same order by construction. What survives is the
+    // geometric case: endpoint clipping can collapse a route to a point when two
+    // nodes overlap, and a point has no place to hang a label from.
     debug_assert!(
         unresolved.is_empty(),
         "edge labels with no position at all: {unresolved:?}"
     );
+    let edges: Vec<SceneEdge> = drawable.into_iter().map(|d| d.edge).collect();
 
     let relations = project_relations(diagram);
     let conflicts = project_conflicts(&dropped);
