@@ -26,3 +26,10 @@ test-support = []
 [dev-dependencies]
 serde_json = { workspace = true }
 proptest.workspace = true
+
+# Measures per-edit semantic reanalysis cost against bundle size (audit A14).
+# Not a CI gate: timing gates flap on shared runners. See
+# docs/design/bundle-reanalysis-cost.md.
+[[bench]]
+name = "bundle_reanalysis"
+harness = false

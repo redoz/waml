@@ -1296,7 +1296,7 @@ fn analyze_okf_inner(
         catalog: candidate.clone(),
         documents: Arc::new(markdown_documents),
     };
-    let bundle = okf::shell::derive(&candidate, &markdown)?;
+    let bundle = okf::shell::derive(&candidate, &markdown, previous)?;
     Ok(OkfAnalysis {
         catalog: candidate.clone(),
         markdown,
@@ -1925,12 +1925,25 @@ mod tests {
             MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap();
+        let clean = analyze_okf(&source, None, 1).unwrap();
         let mut documents = (*analysis.markdown.documents).clone();
         documents.insert(id, other);
         analysis.markdown.documents = Arc::new(documents);
 
         assert!(matches!(
-            okf::shell::derive(&analysis.catalog, &analysis.markdown),
+            okf::shell::derive(&analysis.catalog, &analysis.markdown, None),
+            Err(AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Shell,
+                ..
+            })
+        ));
+        // ...and still rejects it when a previous analysis is offered as a
+        // reuse source. `derive` skips revalidating a document only when
+        // *both* the catalog version and the Markdown snapshot arrive by
+        // pointer from that previous analysis; here the snapshot is a
+        // different allocation, so the check must run and must fail.
+        assert!(matches!(
+            okf::shell::derive(&analysis.catalog, &analysis.markdown, Some(&clean)),
             Err(AnalysisError::StructuralInvariant {
                 stage: AnalysisStage::Shell,
                 ..

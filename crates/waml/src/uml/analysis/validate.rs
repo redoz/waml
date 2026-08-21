@@ -50,12 +50,21 @@ fn obsolete_diagram_message(ty: &str) -> Option<&'static str> {
     }
 }
 
-fn type_scalar_range(document: &crate::analysis::DocumentVersion, ty: &str) -> Option<TextRange> {
+/// The source range of the `type:` scalar, read off the document's *existing*
+/// parse rather than a fresh one.
+///
+/// The string-taking `inspect_frontmatter_string_scalar` parses the whole
+/// document to find one token. This runs once per untyped or wrongly-typed
+/// document on every keystroke anywhere in the bundle, and a real bundle is
+/// full of untyped documents (index pages, notes, contracts). Reparsing them
+/// all was the largest single item in a per-edit reanalysis; the snapshot the
+/// shell already produced answers the same question for free.
+fn type_scalar_range(
+    snapshot: &waml_syntax::MarkdownSyntaxSnapshot,
+    ty: &str,
+) -> Option<TextRange> {
     let Ok(crate::frontmatter::FrontmatterStringScalar::String { value, range }) =
-        crate::frontmatter::inspect_frontmatter_string_scalar(
-            document.text().shared().as_str(),
-            "type",
-        )
+        crate::frontmatter::inspect_parsed_frontmatter_string_scalar(snapshot, "type")
     else {
         return None;
     };
@@ -90,7 +99,10 @@ pub(crate) fn validate_document_types(
         } else {
             continue;
         };
-        let Some(range) = type_scalar_range(document, &concept.ty) else {
+        let Some(snapshot) = context.markdown.document(*id) else {
+            continue;
+        };
+        let Some(range) = type_scalar_range(snapshot, &concept.ty) else {
             continue;
         };
         let line = document

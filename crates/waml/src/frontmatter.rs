@@ -659,6 +659,21 @@ fn validated_frontmatter_syntax(
         waml_syntax::MarkdownDialect::WAML_DEFAULT,
     )
     .map_err(|_| FrontmatterRewriteError::InvalidFrontmatter)?;
+    validated_frontmatter_syntax_of(&snapshot, source)
+}
+
+/// The half of [`validated_frontmatter_syntax`] that needs a parse tree rather
+/// than a string.
+///
+/// Split out so a caller that *already holds* the document's parsed snapshot
+/// does not pay for a second full-document parse to read one frontmatter
+/// scalar. `validate_document_types` is such a caller, once per untyped
+/// document, on every keystroke anywhere in the bundle — which made this the
+/// single largest item in a per-edit reanalysis (audit A14).
+fn validated_frontmatter_syntax_of(
+    snapshot: &waml_syntax::MarkdownSyntaxSnapshot,
+    source: &str,
+) -> Result<Option<SyntaxNode<OkfMarkdownLanguage>>, FrontmatterRewriteError> {
     let Some(frontmatter) = snapshot
         .tree()
         .root()
@@ -710,6 +725,29 @@ pub(crate) fn inspect_frontmatter_string_scalar(
     let Some(frontmatter) = validated_frontmatter_syntax(source)? else {
         return Ok(FrontmatterStringScalar::NoFrontmatter);
     };
+    string_scalar_in(&frontmatter, key)
+}
+
+/// [`inspect_frontmatter_string_scalar`] against a snapshot the caller already
+/// parsed, reading the same bytes through the same rules.
+///
+/// The snapshot's own text is the source: passing a separately parsed tree and
+/// an unrelated string would let the two disagree about offsets.
+pub(crate) fn inspect_parsed_frontmatter_string_scalar(
+    snapshot: &waml_syntax::MarkdownSyntaxSnapshot,
+    key: &str,
+) -> Result<FrontmatterStringScalar, FrontmatterRewriteError> {
+    let source = snapshot.text().shared().as_str();
+    let Some(frontmatter) = validated_frontmatter_syntax_of(snapshot, source)? else {
+        return Ok(FrontmatterStringScalar::NoFrontmatter);
+    };
+    string_scalar_in(&frontmatter, key)
+}
+
+fn string_scalar_in(
+    frontmatter: &SyntaxNode<OkfMarkdownLanguage>,
+    key: &str,
+) -> Result<FrontmatterStringScalar, FrontmatterRewriteError> {
     let Some(mapping) = frontmatter
         .children()
         .filter_map(SyntaxElement::into_node)
@@ -2545,6 +2583,63 @@ mod tests {
             let source = format!("---\n{rendered}\n---\n");
             let parsed = parse_frontmatter_for_test(&source);
             prop_assert_eq!(parsed, fm, "rendered as {:?}", rendered);
+        }
+    }
+
+    /// The snapshot-taking reader and the string-taking one must agree, or
+    /// `validate_document_types` would report a different range than the
+    /// upgrade path rewrites. The only difference between them is who paid for
+    /// the parse.
+    #[test]
+    fn parsed_and_reparsed_frontmatter_scalars_agree() {
+        const SOURCES: &[&str] = &[
+            "---
+type: uml.Class
+title: One
+---
+# One
+",
+            "---
+type: \"uml.Class\"
+---
+# Quoted
+",
+            "---
+title: no type here
+---
+# Untyped
+",
+            "---
+type: Reference
+description: \"a: colon\"
+---
+# Ref
+",
+            "# No frontmatter at all
+",
+            "---
+type: uml.Class
+",
+            "---
+type:
+  - a list
+---
+# Nonscalar
+",
+        ];
+        for source in SOURCES {
+            let text = SourceText::from_shared(std::sync::Arc::new((*source).into())).unwrap();
+            let snapshot = parse_markdown(
+                DocumentRevision::INITIAL,
+                text,
+                MarkdownDialect::WAML_DEFAULT,
+            )
+            .expect("test source parses");
+            assert_eq!(
+                inspect_parsed_frontmatter_string_scalar(&snapshot, "type"),
+                inspect_frontmatter_string_scalar(source, "type"),
+                "disagreement on {source:?}"
+            );
         }
     }
 }

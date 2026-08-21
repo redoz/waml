@@ -3,7 +3,7 @@
 
 use crate::uml::syntax::{self, UmlLanguage};
 use std::sync::Arc;
-use waml_syntax::{AstNode, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize};
+use waml_syntax::{SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize};
 
 pub(crate) fn trimmed_token_range(token: &SyntaxToken<UmlLanguage>) -> TextRange {
     let authored = token.text().write_to_string();
@@ -29,6 +29,57 @@ pub(crate) fn field_value<T>(field: &crate::uml::DeclaredField<UmlLanguage, T>) 
     match field {
         crate::uml::DeclaredField::Valid { value, .. } => Some(value),
         _ => None,
+    }
+}
+
+/// [`items`] for several kinds at once, in a single traversal.
+///
+/// `analyze` needs fifteen different node kinds out of every document's UML
+/// tree, and it needed them badly enough to walk the whole tree fifteen times
+/// per document per keystroke, over every document in the bundle. This walks
+/// it once.
+///
+/// The buckets are exactly what the separate calls produced. `items` stops
+/// descending into a node once that node matches the kind it is looking for,
+/// but keeps descending for every *other* kind, so the fused walk carries a
+/// per-kind `seeking` flag down each branch and only suppresses the branch for
+/// the one kind that matched. Order is the same pre-order in both.
+pub(crate) fn items_by_kind<const N: usize>(
+    node: &SyntaxNode<UmlLanguage>,
+    kinds: [syntax::UmlSyntaxKind; N],
+) -> [Vec<SyntaxNode<UmlLanguage>>; N] {
+    let mut found = std::array::from_fn(|_| Vec::new());
+    let mut seeking = [true; N];
+    collect_by_kind(node, &kinds, &mut seeking, &mut found);
+    found
+}
+
+fn collect_by_kind<const N: usize>(
+    node: &SyntaxNode<UmlLanguage>,
+    kinds: &[syntax::UmlSyntaxKind; N],
+    seeking: &mut [bool; N],
+    found: &mut [Vec<SyntaxNode<UmlLanguage>>; N],
+) {
+    if !seeking.iter().any(|active| *active) {
+        return;
+    }
+    for child in node.children() {
+        let SyntaxElement::Node(child) = child else {
+            continue;
+        };
+        // Kinds are distinct, so at most one bucket can claim a node.
+        let matched = kinds
+            .iter()
+            .position(|kind| *kind == child.kind())
+            .filter(|index| seeking[*index]);
+        if let Some(index) = matched {
+            found[index].push(child.clone());
+            seeking[index] = false;
+            collect_by_kind(&child, kinds, seeking, found);
+            seeking[index] = true;
+        } else {
+            collect_by_kind(&child, kinds, seeking, found);
+        }
     }
 }
 
@@ -326,16 +377,108 @@ impl<L: waml_syntax::SyntaxLanguage, T> MapDeclaredField<L, T> for crate::uml::D
     }
 }
 
-pub(crate) fn attributes(node: SyntaxNode<UmlLanguage>) -> Vec<syntax::AttributeSyntax> {
-    let mut found = Vec::new();
-    for child in node.children() {
-        if let SyntaxElement::Node(child) = child {
-            if let Some(attribute) = syntax::AttributeSyntax::cast(child.clone()) {
-                found.push(attribute);
-            } else {
-                found.extend(attributes(child));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{analysis::prepare_candidate, source::SourceBundle};
+
+    /// Exactly the kinds `analyze` fuses into one traversal.
+    const FUSED: [syntax::UmlSyntaxKind; 14] = [
+        syntax::UmlSyntaxKind::Attribute,
+        syntax::UmlSyntaxKind::Value,
+        syntax::UmlSyntaxKind::Slot,
+        syntax::UmlSyntaxKind::Relationship,
+        syntax::UmlSyntaxKind::Member,
+        syntax::UmlSyntaxKind::InlineInstance,
+        syntax::UmlSyntaxKind::LayoutStatement,
+        syntax::UmlSyntaxKind::FlowNode,
+        syntax::UmlSyntaxKind::Lifeline,
+        syntax::UmlSyntaxKind::Gate,
+        syntax::UmlSyntaxKind::Message,
+        syntax::UmlSyntaxKind::SequenceOperand,
+        syntax::UmlSyntaxKind::SequenceFragment,
+        syntax::UmlSyntaxKind::InteractionUse,
+    ];
+
+    const FIXTURES: [(&str, &str); 8] = [
+        (
+            "class.md",
+            include_str!("../../../tests/fixtures/parser-platform/class.md"),
+        ),
+        (
+            "object.md",
+            include_str!("../../../tests/fixtures/parser-platform/object.md"),
+        ),
+        (
+            "enum.md",
+            include_str!("../../../tests/fixtures/parser-platform/enum.md"),
+        ),
+        (
+            "diagram.md",
+            include_str!("../../../tests/fixtures/parser-platform/diagram.md"),
+        ),
+        (
+            "sequence.md",
+            include_str!("../../../tests/fixtures/parser-platform/sequence.md"),
+        ),
+        (
+            "activity.md",
+            include_str!("../../../tests/fixtures/parser-platform/activity.md"),
+        ),
+        (
+            "state-machine.md",
+            include_str!("../../../tests/fixtures/parser-platform/state-machine.md"),
+        ),
+        // Deliberately included: recovery trees are where a fused walk is most
+        // likely to diverge from fourteen separate ones.
+        (
+            "recovery-sequence.md",
+            include_str!("../../../tests/fixtures/parser-platform/recovery/sequence.md"),
+        ),
+    ];
+
+    /// The fused walk is only a speedup if it is also the same answer.
+    ///
+    /// `items` stops descending at a node of the kind it wants but keeps
+    /// descending for every other kind, so a naive "stop at the first match"
+    /// fusion would silently drop nested declarations. This pins the buckets
+    /// node-for-node, in order, against one `items` call per kind.
+    #[test]
+    fn fused_kind_walk_matches_one_walk_per_kind() {
+        let candidate =
+            prepare_candidate(SourceBundle::try_from_pairs(FIXTURES).unwrap(), None, 1).unwrap();
+        let mut visited = 0_usize;
+        let mut collected = 0_usize;
+        for document in candidate.source().documents() {
+            let Some(id) = candidate.okf().catalog.id_for_path(document.path()) else {
+                continue;
+            };
+            let Some(snapshot) = candidate.uml().syntax.document(id) else {
+                continue;
+            };
+            visited += 1;
+            let root = snapshot.syntax().root();
+            let fused = items_by_kind(&root, FUSED);
+            for (index, kind) in FUSED.iter().enumerate() {
+                let separate = items(root.clone(), *kind);
+                collected += separate.len();
+                assert_eq!(
+                    fused[index].len(),
+                    separate.len(),
+                    "{kind:?} count differs in {}",
+                    document.path()
+                );
+                for (left, right) in fused[index].iter().zip(separate.iter()) {
+                    assert_eq!(
+                        left.range(),
+                        right.range(),
+                        "{kind:?} node order differs in {}",
+                        document.path()
+                    );
+                }
             }
         }
+        assert_eq!(visited, FIXTURES.len(), "every fixture is a UML document");
+        assert!(collected > 0, "the fixtures declare something to find");
     }
-    found
 }

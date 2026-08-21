@@ -40,7 +40,8 @@ use std::{
     sync::Arc,
 };
 use waml_syntax::{
-    ChangeMap, SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxTree, TextRange, WamlSectionKind,
+    AstNode, ChangeMap, SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxTree, TextRange,
+    WamlSectionKind,
 };
 
 mod behavior;
@@ -61,7 +62,7 @@ use extract::{
     declared_relationship, declared_slot, declared_value,
 };
 use project::declared_projection;
-use syntax_util::{attributes, direct_section_items, items};
+use syntax_util::{direct_section_items, items_by_kind};
 use validate::{validate_declared_semantics, validate_document_types, validate_shared_context};
 
 pub(crate) use diagnostics::behavior_diagnostic;
@@ -501,25 +502,43 @@ pub fn analyze(
                             .into(),
                 })?;
         island_snapshots.insert(id, Arc::new(islands));
-        let attributes = attributes(tree.root());
-        let values = items(tree.root(), syntax::UmlSyntaxKind::Value);
-        let slots = items(tree.root(), syntax::UmlSyntaxKind::Slot);
-        let relationships = items(tree.root(), syntax::UmlSyntaxKind::Relationship);
-        let members = items(tree.root(), syntax::UmlSyntaxKind::Member);
+        // One traversal for all fourteen kinds. Fifteen separate walks of every
+        // document's tree, on every keystroke anywhere in the bundle, was the
+        // second-largest item in a per-edit reanalysis (audit A14).
+        let [attribute_nodes, values, slots, relationships, members, inline_instances, layout, flow_nodes, lifelines, gates, messages, sequence_operands, sequence_fragments, interaction_uses] =
+            items_by_kind(
+                &tree.root(),
+                [
+                    syntax::UmlSyntaxKind::Attribute,
+                    syntax::UmlSyntaxKind::Value,
+                    syntax::UmlSyntaxKind::Slot,
+                    syntax::UmlSyntaxKind::Relationship,
+                    syntax::UmlSyntaxKind::Member,
+                    syntax::UmlSyntaxKind::InlineInstance,
+                    syntax::UmlSyntaxKind::LayoutStatement,
+                    syntax::UmlSyntaxKind::FlowNode,
+                    syntax::UmlSyntaxKind::Lifeline,
+                    syntax::UmlSyntaxKind::Gate,
+                    syntax::UmlSyntaxKind::Message,
+                    syntax::UmlSyntaxKind::SequenceOperand,
+                    syntax::UmlSyntaxKind::SequenceFragment,
+                    syntax::UmlSyntaxKind::InteractionUse,
+                ],
+            );
+        let attributes: Vec<syntax::AttributeSyntax> = attribute_nodes
+            .into_iter()
+            .map(|node| {
+                syntax::AttributeSyntax::cast(node)
+                    .expect("a node of kind Attribute casts to AttributeSyntax")
+            })
+            .collect();
+        // Not fused: this one stops at the first `MembersSection` it finds and
+        // takes only that section's direct children, which is a different walk.
         let member_groups = direct_section_items(
             tree.root(),
             syntax::UmlSyntaxKind::MembersSection,
             syntax::UmlSyntaxKind::MemberGroup,
         );
-        let inline_instances = items(tree.root(), syntax::UmlSyntaxKind::InlineInstance);
-        let layout = items(tree.root(), syntax::UmlSyntaxKind::LayoutStatement);
-        let flow_nodes = items(tree.root(), syntax::UmlSyntaxKind::FlowNode);
-        let lifelines = items(tree.root(), syntax::UmlSyntaxKind::Lifeline);
-        let gates = items(tree.root(), syntax::UmlSyntaxKind::Gate);
-        let messages = items(tree.root(), syntax::UmlSyntaxKind::Message);
-        let sequence_operands = items(tree.root(), syntax::UmlSyntaxKind::SequenceOperand);
-        let sequence_fragments = items(tree.root(), syntax::UmlSyntaxKind::SequenceFragment);
-        let interaction_uses = items(tree.root(), syntax::UmlSyntaxKind::InteractionUse);
         let fields: Vec<DeclaredAttribute> = attributes
             .into_iter()
             .map(|syntax| declared_attribute(&context, &document, syntax))

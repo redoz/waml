@@ -56,14 +56,46 @@ struct AuthoredIndex {
 pub(crate) fn derive(
     catalog: &Arc<DocumentCatalog>,
     markdown: &MarkdownSyntaxSet,
+    previous: Option<&crate::analysis::OkfAnalysis>,
 ) -> Result<Bundle, AnalysisError> {
-    let documents = validate(catalog, markdown)?;
+    let documents = validate(catalog, markdown, previous)?;
     project(documents).map_err(AnalysisError::Okf)
+}
+
+/// Whether this exact `(document, snapshot)` pair has already been through
+/// [`validate`] in `previous`.
+///
+/// `validate` is a pure function of that pair, and a `previous` analysis exists
+/// only because every one of its pairs passed — so a pair carried across by
+/// pointer cannot fail now. Reuse by pointer identity, not by a cache key:
+/// there is nothing here that can go stale, because a changed document gets a
+/// new `Arc` on both sides.
+///
+/// This matters because the check it skips, `exact_tree_source`, writes the
+/// document's entire green tree out and compares it to the source. Run over
+/// every document in the bundle on every keystroke, it was the largest
+/// remaining bundle-wide cost after the two fixes in audit A14.
+fn already_validated(
+    previous: Option<&crate::analysis::OkfAnalysis>,
+    document: &Arc<DocumentVersion>,
+    snapshot: &Arc<MarkdownSyntaxSnapshot>,
+) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    previous
+        .catalog
+        .document(document.id())
+        .is_some_and(|prior| Arc::ptr_eq(prior, document))
+        && previous
+            .markdown_snapshot(document.id())
+            .is_some_and(|prior| Arc::ptr_eq(prior, snapshot))
 }
 
 fn validate<'a>(
     catalog: &'a Arc<DocumentCatalog>,
     markdown: &'a MarkdownSyntaxSet,
+    previous: Option<&crate::analysis::OkfAnalysis>,
 ) -> Result<Vec<ShellDocument<'a>>, AnalysisError> {
     if !Arc::ptr_eq(catalog, markdown.catalog()) {
         return invariant("shell catalog is not the candidate catalog");
@@ -85,15 +117,17 @@ fn validate<'a>(
             ));
         }
         let source = document.text().shared();
-        if !exact_tree_source(snapshot.tree().root_green(), source.as_str())
-            || snapshot.tree().root().range().end().to_usize() != source.len()
-        {
-            return invariant(format!(
-                "shell tree text differs from candidate source for {}",
-                document.path()
-            ));
+        if !already_validated(previous, document, snapshot) {
+            if !exact_tree_source(snapshot.tree().root_green(), source.as_str())
+                || snapshot.tree().root().range().end().to_usize() != source.len()
+            {
+                return invariant(format!(
+                    "shell tree text differs from candidate source for {}",
+                    document.path()
+                ));
+            }
+            validate_structure(document, structure)?;
         }
-        validate_structure(document, structure)?;
         let (frontmatter, body_start) = shell_fields(document, snapshot.tree())?;
         let body_range = text_range(body_start, source.len(), document)?;
         let body = SourceSlice::from_shared_range(source.clone(), body_start..source.len())
