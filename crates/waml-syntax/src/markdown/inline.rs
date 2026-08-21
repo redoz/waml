@@ -8,7 +8,9 @@ use crate::{
     SyntaxAnnotation, SyntaxIdentity, TextRange, TextSize, TreeDiagnostic,
 };
 
-use super::reference::{decode_destination, normalize_label, MarkdownReferenceMap};
+use super::reference::{
+    decode_destination, normalize_label, MarkdownReferenceDefinition, MarkdownReferenceMap,
+};
 
 const DESTINATION_ANNOTATION: &str = "waml.markdown.link.destination";
 const DESTINATION_RANGE_ANNOTATION: &str = "waml.markdown.link.destination_range";
@@ -258,13 +260,36 @@ struct BracketOpener {
     active: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// What a matched `[...]` turned out to be, decided once by
+/// [`bracket_match_end`] and kept.
+///
+/// The scan cannot match a bracket pair without resolving it -- an unresolved
+/// `[...]` is not a link at all -- so the resolution is a by-product of
+/// matching, and recording it is free. Everything downstream reads it instead
+/// of reading the source again: two readings of one grammar can disagree, one
+/// reading cannot.
+#[derive(Clone, Debug)]
+enum BracketResolution {
+    /// `[label](destination "title")` -- the destination was written in the
+    /// parentheses that follow the label.
+    Inline(InlineDestination),
+    /// `[label]`, `[label][]` or `[label][other]` -- resolved through a
+    /// reference definition, which is carried here rather than looked up
+    /// again.
+    Reference {
+        normalized: Arc<str>,
+        definition: MarkdownReferenceDefinition,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct BracketMatch {
     start: usize,
     open: usize,
     label_end: usize,
     end: usize,
     image: bool,
+    resolution: BracketResolution,
 }
 
 /// The earliest delimiter the inline depth cap demotes to plain text, if any.
@@ -591,16 +616,8 @@ fn parse_inlines_within(
                 continue;
             }
         }
-        if let Some(matched) = bracket_by_start.get(&at).map(|&index| brackets[index]) {
-            let parsed = parse_link(
-                context,
-                matched,
-                end,
-                owner,
-                allow_links,
-                depth + 1,
-                &protected,
-            )?;
+        if let Some(matched) = bracket_by_start.get(&at).map(|&index| &brackets[index]) {
+            let parsed = parse_link(context, matched, owner, allow_links, depth + 1, &protected)?;
             flush(context.text, plain, at, &mut out)?;
             out.push(GreenElement::Node(parsed.node));
             at = parsed.end;
@@ -890,7 +907,7 @@ fn bracket_matches(
                 at += 1;
                 continue;
             }
-            let Some(close) = bracket_match_end(context, opener.open, at, end) else {
+            let Some((close, resolution)) = bracket_match_end(context, opener.open, at, end) else {
                 at += 1;
                 continue;
             };
@@ -900,6 +917,7 @@ fn bracket_matches(
                 label_end: at,
                 end: close,
                 image: opener.image,
+                resolution,
             });
             if !opener.image {
                 for earlier in &mut openers {
@@ -920,18 +938,24 @@ fn bracket_matches(
     matches
 }
 
+/// Whether the `]` at `label_end` closes a link, and if so where the link ends
+/// and *what it is*.
+///
+/// This is the only place either question is answered. The resolution comes
+/// back with the end offset because deciding the one decides the other:
+/// separating them is what let two readings of the same bytes drift apart.
 fn bracket_match_end(
     context: &InlineContext<'_>,
     open: usize,
     label_end: usize,
     end: usize,
-) -> Option<usize> {
+) -> Option<(usize, BracketResolution)> {
     let source = context.text.shared();
     let label = &source[open + 1..label_end];
     let after_label = label_end + 1;
     if source[after_label..end].starts_with('(') {
         if let Some(parts) = inline_destination(source, after_label, end) {
-            return Some(parts.close + 1);
+            return Some((parts.close + 1, BracketResolution::Inline(parts)));
         }
     }
     let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
@@ -945,11 +969,14 @@ fn bracket_match_end(
         (label, after_label)
     };
     let normalized = normalize_label(reference_label)?;
-    context
-        .references
-        .definitions
-        .contains_key(&normalized)
-        .then_some(reference_end)
+    let definition = context.references.definitions.get(&normalized)?;
+    Some((
+        reference_end,
+        BracketResolution::Reference {
+            normalized,
+            definition: definition.clone(),
+        },
+    ))
 }
 
 struct ParsedLink {
@@ -959,8 +986,6 @@ struct ParsedLink {
 
 /// Where a link points, and how the author said so.
 struct LinkTarget {
-    /// Offset just past the whole link.
-    close: usize,
     /// The destination the semantic layer reports, decoded.
     destination: String,
     /// The authored span the destination was read from -- inside this
@@ -978,107 +1003,70 @@ struct LinkTarget {
     kind: &'static str,
 }
 
-/// Reads a matched link's destination: either the `(...)` written right after
-/// the label, or the definition the label references.  Every failure here is
-/// an invariant break -- `bracket_matches` only matches a bracket pair it has
-/// already resolved -- so this reports, it does not recover.
-fn resolve_link_target(
-    context: &InlineContext<'_>,
-    matched: BracketMatch,
-    end: usize,
-) -> Result<LinkTarget, ParseError> {
-    let source = context.text.shared();
-    let BracketMatch {
-        open,
-        label_end,
-        end: matched_end,
-        ..
-    } = matched;
-    let label = &source[open + 1..label_end];
-    let after_label = label_end + 1;
-    if let Some(parts) = source[after_label..end]
-        .starts_with('(')
-        .then(|| inline_destination(source, after_label, end))
-        .flatten()
-        .filter(|parts| parts.close + 1 == matched_end)
-    {
-        let semantic_title = parts
-            .title
-            .clone()
-            .map(|range| decode_destination(&source[range.start + 1..range.end - 1]));
-        return Ok(LinkTarget {
-            close: parts.close + 1,
+/// Reads a matched link's destination off the resolution the bracket scan
+/// recorded.
+///
+/// Nothing is decided here. `bracket_match_end` already chose between the
+/// inline and the reference form, already found the definition a reference
+/// resolves through, and kept both; this only spells that choice the way the
+/// tree and the annotations want it. So there is no second reading to
+/// disagree with the first, and no failure to report: the function is total.
+fn resolve_link_target(source: &str, matched: &BracketMatch) -> LinkTarget {
+    match &matched.resolution {
+        BracketResolution::Inline(parts) => LinkTarget {
             destination: decode_destination(&source[parts.destination.clone()]),
             range: parts.destination.clone(),
-            title: semantic_title,
+            title: parts
+                .title
+                .clone()
+                .map(|range| decode_destination(&source[range.start + 1..range.end - 1])),
             reference: None,
-            parts: Some(parts),
+            parts: Some(parts.clone()),
             kind: "inline",
-        });
+        },
+        BracketResolution::Reference {
+            normalized,
+            definition,
+        } => LinkTarget {
+            destination: definition.destination.to_string(),
+            range: definition.destination_range.start().to_usize()
+                ..definition.destination_range.end().to_usize(),
+            title: definition.title.as_ref().map(ToString::to_string),
+            reference: Some(Arc::clone(normalized)),
+            parts: None,
+            kind: "reference",
+        },
     }
-    let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
-        let reference_end = find_unescaped(source, after_label + 1, end, ']').ok_or_else(|| {
-            ParseError::StructuralInvariant {
-                reason: "matched reference link has no closing label".into(),
-            }
-        })?;
-        let explicit = &source[after_label + 1..reference_end];
-        (
-            if explicit.is_empty() { label } else { explicit },
-            reference_end + 1,
-        )
-    } else {
-        (label, after_label)
-    };
-    let normalized =
-        normalize_label(reference_label).ok_or_else(|| ParseError::StructuralInvariant {
-            reason: "matched reference link has an invalid label".into(),
-        })?;
-    let definition = context
-        .references
-        .definitions
-        .get(&normalized)
-        .ok_or_else(|| ParseError::StructuralInvariant {
-            reason: "matched reference link has no definition".into(),
-        })?;
-    Ok(LinkTarget {
-        close: reference_end,
-        destination: definition.destination.to_string(),
-        range: definition.destination_range.start().to_usize()
-            ..definition.destination_range.end().to_usize(),
-        title: definition.title.as_ref().map(ToString::to_string),
-        reference: Some(normalized),
-        parts: None,
-        kind: "reference",
-    })
 }
 
 fn parse_link(
     context: &mut InlineContext<'_>,
-    matched: BracketMatch,
-    end: usize,
+    matched: &BracketMatch,
     owner: SyntaxIdentity,
     allow_links: bool,
     depth: usize,
     protected: &[std::ops::Range<usize>],
 ) -> Result<ParsedLink, ParseError> {
-    let BracketMatch {
+    let &BracketMatch {
         start,
         open,
         label_end,
-        end: matched_end,
+        // Where the match ends is the scan's answer, not something re-read
+        // here; it is also where the trailing `[...]` of a reference link
+        // stops.
+        end: close,
         image,
+        ..
     } = matched;
     let after_label = label_end + 1;
     let LinkTarget {
-        close,
         destination: semantic_destination,
         range: semantic_range,
         title: semantic_title,
         reference: normalized_reference,
         parts: destination_parts,
         kind: link_kind,
-    } = resolve_link_target(context, matched, end)?;
+    } = resolve_link_target(context.text.shared(), matched);
 
     let mut children = Vec::new();
     if image {
@@ -1207,7 +1195,6 @@ fn parse_link(
             owners.push(owner);
         }
     }
-    debug_assert_eq!(close, matched_end);
     Ok(ParsedLink {
         node: semantic_with_identity(
             if image { Kind::Image } else { Kind::Link },
@@ -1219,6 +1206,7 @@ fn parse_link(
     })
 }
 
+#[derive(Clone, Debug)]
 struct InlineDestination {
     destination: std::ops::Range<usize>,
     title: Option<std::ops::Range<usize>>,

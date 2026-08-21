@@ -322,3 +322,113 @@ fn direct_token_kinds(node: &SyntaxNode<OkfMarkdownLanguage>) -> Vec<Kind> {
         })
         .collect()
 }
+
+/// Every link form whose reading the bracket scan and the link builder used to
+/// derive independently.
+///
+/// The scan decides what a `[...]` is; the builder used to decide again from
+/// the same bytes, and a disagreement was a `StructuralInvariant` that failed
+/// the *whole document* -- or, where the disagreement was only about how far
+/// the link reached, a silently mis-tokenised one in a release build. The
+/// resolution is now recorded by the scan and read back, so each case below
+/// has exactly one reading. Every line is a place the two readings had to
+/// reach the same verdict by luck rather than by construction:
+///
+/// * `A` -- a shortcut label spanning a soft line break, needing normalization
+/// * `B` -- a collapsed `[...][]` whose label needs normalization
+/// * `C` -- a full reference whose second label needs normalization
+/// * `D` -- an inline `(` that does *not* close, so the bracket falls back to
+///   the reference reading: the inline attempt had to be rejected twice
+/// * `E` -- a real inline destination with a title
+/// * `F` -- `[w[id]`, which closes against the *innermost* `[`
+/// * `G` -- a label that normalizes to nothing, so it is no link at all
+/// * `H` -- a label with no definition, likewise
+/// * `I` -- a second label carrying an escaped `]`
+#[test]
+fn every_bracket_form_is_read_once_by_the_scan_and_never_re_derived() {
+    let source = concat!(
+        "[ref  label]: /first \"t\"\n",
+        "[id]: /second\n",
+        "[a\\]b]: /third\n",
+        "\n",
+        "A [Ref\nLabel]\n\nB [ref   label][]\n\nC [x][REF  LABEL]\n\nD [id](\n\n",
+        "E [z](/inline \"ti\")\n\nF [w[id]\n\nG [ ]\n\nH [undefined]\n\nI [x][a\\]b]\n",
+    );
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    assert_eq!(snapshot.tree().write_to_string(), source);
+
+    let text = |range: waml_syntax::TextRange| {
+        source[range.start().to_usize()..range.end().to_usize()].to_owned()
+    };
+    let found: Vec<_> = snapshot
+        .queries()
+        .links()
+        .map(|link| {
+            (
+                text(link.source_range),
+                link.destination.to_string(),
+                link.kind,
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (
+                "[Ref\nLabel]".to_owned(),
+                "/first".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+            (
+                "[ref   label][]".to_owned(),
+                "/first".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+            (
+                "[x][REF  LABEL]".to_owned(),
+                "/first".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+            (
+                "[id]".to_owned(),
+                "/second".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+            (
+                "[z](/inline \"ti\")".to_owned(),
+                "/inline".to_owned(),
+                MarkdownLinkKind::Inline
+            ),
+            (
+                "[id]".to_owned(),
+                "/second".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+            (
+                "[x][a\\]b]".to_owned(),
+                "/third".to_owned(),
+                MarkdownLinkKind::Reference
+            ),
+        ],
+        "G and H are not links at all, and D's unclosed `(` is left as text"
+    );
+
+    // A reference reports the destination of the definition the scan resolved
+    // it against, span included -- not the result of a second lookup.
+    let first = snapshot.queries().links().next().unwrap();
+    assert_eq!(text(first.destination_range.unwrap()), "/first");
+    assert_eq!(first.title.as_deref(), Some("t"));
+
+    // The bytes the scan refused to take are still spelled by the tree.
+    for literal in ["D [id](", "G [ ]", "H [undefined]", "F [w[id]"] {
+        assert!(
+            snapshot.tree().write_to_string().contains(literal),
+            "missing {literal:?}"
+        );
+    }
+}

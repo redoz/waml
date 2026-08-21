@@ -50,13 +50,13 @@ or commit SHA) and what did not.
 
 ## Active plans
 
-11 plans plus 1 plan directory. **Only three carry outstanding work**
+11 plans plus 1 plan directory. **Only two carry outstanding work**
 (`PARTIAL`/`HORIZON`); the rest are kept for rationale and are marked so they
 do not read as in-flight.
 
 | Plan | Verdict | Evidence |
 | --- | --- | --- |
-| `2026-08-04-issue-28-guard-single-authority.md` | **PARTIAL** | Task A subsumed by `completed/2026-08-04-frontmatter-yaml-alignment.md`. **Task D done 2026-08-21** (`e1b31d23`): the debug oracle compares whole trees, and doing so immediately exposed three defects, two of which are fixed. **Task C also done 2026-08-21**: the UML side reads frontmatter through the parser instead of splitting the line itself, which was writing single-quoted titles into relationship lines with their quotes. **B outstanding:** no `resolution` field on `BracketMatch` (`crates/waml-syntax/src/markdown/inline.rs:262`). |
+| `2026-08-04-issue-28-guard-single-authority.md` | **DONE — move to `completed/` when it lands on `main`** | Task A subsumed by `completed/2026-08-04-frontmatter-yaml-alignment.md`. **Task D done 2026-08-21** (`e1b31d23`): the debug oracle compares whole trees, and doing so immediately exposed three defects, two of which are fixed. **Task C done 2026-08-21**: the UML side reads frontmatter through the parser instead of splitting the line itself, which was writing single-quoted titles into relationship lines with their quotes. **Task B done 2026-08-21**: `bracket_match_end` returns a `BracketResolution` that `BracketMatch` stores and `resolve_link_target` reads, so the link builder no longer re-reads the source; that function is now total and all three `ParseError::StructuralInvariant` sites in it are gone. Nothing is left outstanding — the file stays here only until the work is on `main`. |
 | `2026-08-02-root-folder-toggle.md` | **PARTIAL** | No-reset half landed (`crates/waml-editor/src/app/tests/navigation.rs:1525`). The toggle-open-and-closed goal was overtaken by `completed/2026-08-05-folder-view-middleware.md`; needs a product decision before any code. |
 | `2026-08-02-web-text-shader-boot.md` | **PARTIAL** | Edits the makepad fork, not this repo — unverifiable from here. The boot number it targets already moved (31–38 s → ~9 s → ~1.7 s) via `completed/2026-08-02-web-batched-shader-link.md`. The `DrawTextSlug` migration itself is unconfirmed. |
 | `2026-08-05-atproto-collab.md` | **HORIZON** | Unstarted: no `crates/waml-collab/`, no `automerge` dependency. **MVP-scale:** 13 tasks, a new crate, ~1.1 MB added to the wasm artifact, and OAuth deliberately excluded at a self-estimated ~40% of total work. CRDT choice (automerge) is correct — makepad's wasm is not wasm-bindgen based, so JS CRDTs are not available. |

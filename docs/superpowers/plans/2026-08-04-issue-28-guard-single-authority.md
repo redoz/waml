@@ -1,6 +1,6 @@
 # Issue 28 — Guards and lowerers: single authority instead of re-lexing
 
-## Status — 2026-08-21: PARTIAL — tasks B and C are still outstanding
+## Status — 2026-08-21: ALL TASKS DONE — ready to move to `completed/` once landed on `main`
 
 Triage verdict from the A39 planning-hygiene pass. This is real, unfinished
 work, not stale paper. `2026-08-04-issue-triage-index.md` already re-scoped it
@@ -14,19 +14,43 @@ index: the `markdown/mod.rs` shell-structure scan was outside the YAML plan's
 file list — `crates/waml-syntax/src/markdown/mod.rs:228` still only *documents*
 that it agrees with the parser.
 
-**Task B — record the resolution in `BracketMatch`: NOT DONE.**
-`crates/waml-syntax/src/markdown/inline.rs` still has `struct BracketMatch`
-(line 262) with no `resolution` field, no `BracketResolution` enum, and
-`parse_link` (line 922) still re-derives; the
-`ParseError::StructuralInvariant` constructions the plan deletes are still
-there (lines 384, 689). Drift between the two copies is still promoted to a
-whole-document error.
+**Task B — record the resolution in `BracketMatch`: DONE (2026-08-21).**
+`bracket_match_end` now returns `(end, BracketResolution)` — `Inline(parts)`
+carrying the authored `(destination "title")` spans, or `Reference { normalized,
+definition }` carrying the definition it resolved against — and `BracketMatch`
+stores it. `resolve_link_target` reads that field and is now total: it takes
+`(&str, &BracketMatch)`, returns `LinkTarget` rather than
+`Result<LinkTarget, _>`, and its `LinkTarget::close` is gone because
+`BracketMatch::end` already is the end. All **three**
+`ParseError::StructuralInvariant` constructions in it are deleted, together
+with the `debug_assert_eq!(close, matched_end)` that existed precisely because
+the two readings could differ. `BracketMatch` loses `Copy` (a resolution owns
+an `Arc<str>` and ranges) and is passed by reference instead.
 
-**Task C — route okf and uml frontmatter reads through `parse_closed_syntax`:
-NOT DONE.** Two independent extractors survive:
-`crates/waml/src/okf/lower.rs:508 fn frontmatter_value` and
-`crates/waml/src/uml/lower.rs:909 fn frontmatter_value`, the latter still
-`split_once(':')`-based with its own `decode_scalar` (line 921).
+The plan's design survived contact, with two deviations:
+
+- The enum carries the resolved `MarkdownReferenceDefinition`, not just the
+  normalized label. The plan allowed `parse_link` to keep a lookup "treated as
+  unreachable"; carrying the definition removes the lookup, so there is no
+  miss to treat. The clone is five `Arc` bumps per reference link.
+- `Reference` has no `explicit_end` field. The plan wanted one, but
+  `BracketMatch::end` is already that number — storing it twice would
+  reintroduce, in miniature, exactly the two-copies problem the task removes.
+
+**The three deleted sites were unreachable, and that is the finding.** A
+throwaway release-build exhaustive single-edit sweep (1,311,604 trials over a
+48-document bracket/link corpus, all cores) raised **zero** parse errors
+against the pre-change build, and the full-parse digests are byte-identical
+before and after. What the sites guarded was not a live defect but the
+*possibility* of one: they fired only if the second reading disagreed with the
+first, and reaching a disagreement took a source change to one copy and not the
+other. Injecting a one-line drift into the old second reading (looking up
+`label` where the scan looks up `reference_label`) turns
+`crates/waml-syntax/tests/markdown_inlines.rs`'s new
+`every_bracket_form_is_read_once_by_the_scan_and_never_re_derived` into
+`Err(StructuralInvariant { reason: "matched reference link has no
+definition" })` — the **whole document** fails over one bad `[x][REF  LABEL]`.
+That test pins the nine forms where the two readings had to agree by luck.
 
 **Task C — one frontmatter authority: DONE (2026-08-21).** `uml/lower.rs`'s
 `frontmatter_value` read the entry's line, split it on `:` and unquoted the
@@ -54,9 +78,18 @@ Cost, debug only: `cargo test -p waml-syntax --test properties` went from
 2.32-2.35s to 2.38-2.48s. It immediately exposed two live splicing defects
 (b257bd40, 900de368).
 
-**Before implementing:** re-verify B/C/D line numbers against `main`, as the
-triage index instructs. The ordering constraints it records (this plan vs
-issues 34, 35, 36) no longer bind — those all landed.
+**Left for someone else.** The Task B sweep turned up an unrelated live
+incremental defect, in every one of its 48 corpus documents: after an
+incremental reparse a link's `destination_range` annotation can disagree with
+a full parse even though the green trees are identical. In
+`"[id]:\\/one \"t\"\n\nuse [x][id]\n"` a full parse reports the definition's
+destination span as `5..10` (`\/one`, the authored bytes) and the incremental
+one as `6..10`. 18,369 of 1,311,604 single-edit trials diverge this way; the
+tree and diagnostic fingerprints agree in all of them, which is why the debug
+oracle cannot see it — it excludes annotations by design, because annotations
+are transferred rather than reparsed. Unrelated to the bracket reading, and
+unchanged by this task: the count and the per-document digests are identical
+before and after.
 
 
 ## Context
@@ -185,7 +218,7 @@ the parser already computed. Each pair has verified drift today or a
   still forces `FrontmatterBoundaryChanged`. Run the property suite
   (`cargo test -p waml-syntax`) — it exercises the debug oracle.
 
-### Record the resolution in BracketMatch and delete the parse_link re-derivation
+### Record the resolution in BracketMatch and delete the parse_link re-derivation — DONE, see Status
 - In `crates/waml-syntax/src/markdown/inline.rs`: add
   `enum BracketResolution { Inline(DestinationParts), Reference { label: /* normalized */ , end: usize } }`
   and a `resolution` field on `BracketMatch` (line 257).
@@ -203,7 +236,7 @@ the parser already computed. Each pair has verified drift today or a
   requires normalization and an empty-`[]` collapsed reference, asserting both
   still resolve — these are the paths where the two copies could have drifted.
 
-### Route okf and uml frontmatter reads through parse_closed_syntax
+### Route okf and uml frontmatter reads through parse_closed_syntax — DONE, see Status
 - `crates/waml/src/frontmatter.rs`: keep `parse_closed_syntax` (272) as the
   single authority; expose a small
   `pub(crate) fn closed_value(node, key) -> Option<FmValue>` convenience if
