@@ -795,3 +795,57 @@ fn a_flow_mapping_is_a_value_not_a_plain_key() {
         );
     }
 }
+
+/// Regression: `outer_mapping` fuzz artifact
+/// `-\n\n\n\n########################################\n-`.
+///
+/// Seven or more `#` is not an ATX opener, so `#######` is a paragraph line;
+/// the `-` beneath it underlines that paragraph into a setext heading. The
+/// projection used to count the leading `#` run regardless of node kind and
+/// report level 7 (level 40 for the artifact) — a level no CommonMark document
+/// can express, and one the structure map's own scan path never agreed with.
+#[test]
+fn setext_heading_level_comes_from_the_underline_not_a_leading_hash_run() {
+    for (source, expected) in [
+        ("#######\n-\n", 2u8),
+        ("#######\n=\n", 1),
+        ("   #######\n   -\n", 2),
+        ("-\n\n\n\n#######\n-", 2),
+        ("-\n\n\n\n########################################\n-", 2),
+        // A `#` run that is short enough but is not followed by a space is
+        // likewise paragraph text, not a marker.
+        ("#hashtag\n-\n", 2),
+        // The plain cases the hash-counting fallback also got wrong: `=` is
+        // level 1, and it used to fall through to the hard-coded 2.
+        ("Title\n=====\n", 1),
+        ("Title\n-----\n", 2),
+    ] {
+        let shell = parse(source);
+        assert_eq!(shell.tree.write_to_string(), source);
+        let levels: Vec<u8> = shell
+            .structure
+            .headings
+            .iter()
+            .chain(shell.structure.nested_headings.iter())
+            .map(|heading| heading.level)
+            .collect();
+        assert_eq!(levels, vec![expected], "wrong level for {source:?}");
+        // A setext heading's first line is content, so the text span starts at
+        // the heading itself rather than after a phantom marker.
+        let heading = &shell.structure.headings[0];
+        assert_eq!(heading.text_range.start(), heading.range.start());
+    }
+}
+
+/// The block parser agrees: without an underline a 7-`#` line is a paragraph,
+/// and no heading reaches the structure map at all.
+#[test]
+fn seven_hashes_without_an_underline_is_a_paragraph() {
+    let shell = parse("#######\n");
+    assert_eq!(
+        shell.tree.root().child_at(0).unwrap().kind(),
+        OkfMarkdownSyntaxKind::Paragraph
+    );
+    assert!(shell.structure.headings.is_empty());
+    assert!(shell.structure.nested_headings.is_empty());
+}

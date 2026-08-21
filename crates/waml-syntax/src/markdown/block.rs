@@ -406,23 +406,12 @@ fn heading_at(
         return None;
     }
     let end = start + node.width().to_usize();
-    let line_end = source[start..end]
-        .find('\n')
-        .map_or(end, |offset| start + offset + 1);
-    let line = &source[start..line_end];
-    let trimmed = line.trim_start();
-    let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    let level = if hashes > 0 { hashes as u8 } else { 2 };
-    let text_start = if hashes > 0 {
-        start
-            + (line.len() - trimmed.len())
-            + hashes
-            + usize::from(trimmed.as_bytes().get(hashes) == Some(&b' '))
-    } else {
-        start
-    };
-    let text_range = range(text_start, line_end).ok()?;
-    Some((level, text_range))
+    // Share the projection's classifier rather than re-deriving the level here:
+    // WAML section grouping keys off "is this an h2", so a second, drifting
+    // copy of the ATX-vs-setext rule would silently group sections differently
+    // from the structure map every consumer downstream reads.
+    let heading = super::projection::heading(source, node.kind(), range(start, end).ok()?).ok()?;
+    Some((heading.level, heading.text_range))
 }
 
 #[allow(clippy::too_many_arguments)]

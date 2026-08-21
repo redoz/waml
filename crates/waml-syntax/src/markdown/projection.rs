@@ -187,7 +187,7 @@ fn visit(
         && container_depth == 0
         && matches!(kind, Kind::AtxHeading | Kind::SetextHeading)
     {
-        let heading = heading(source, node.range())?;
+        let heading = heading(source, kind, node.range())?;
         if heading.level <= 2 {
             out.headings.push(heading);
         } else {
@@ -201,7 +201,7 @@ fn visit(
                 SyntaxElement::Node(child)
                     if matches!(child.kind(), Kind::AtxHeading | Kind::SetextHeading) =>
                 {
-                    Some(heading(source, child.range()))
+                    Some(heading(source, child.kind(), child.range()))
                 }
                 _ => None,
             })
@@ -235,14 +235,40 @@ fn visit(
     Ok(())
 }
 
-fn heading(source: &str, heading_range: TextRange) -> Result<ConfirmedHeading, ParseError> {
+/// The single place a heading node's level and text span are read back off the
+/// source. Which rule applies depends on the node kind, not on what the first
+/// line happens to start with: an ATX heading is `#` * (1..=6) followed by a
+/// space or end of line, while a setext heading takes its level from the
+/// underline (`=` is 1, `-` is 2) and its whole first line is content.
+///
+/// Counting a leading `#` run without asking the kind first gets a setext
+/// heading wrong in both directions. `####### x\n-` is a paragraph plus a `-`
+/// underline — a level-2 setext heading whose text is `####### x` — because
+/// seven or more `#` is not an ATX opener at all; reading the run would call it
+/// level 7. And `Title\n===` would fall to the "no hashes" branch and report
+/// level 2 when CommonMark says 1.
+pub(crate) fn heading(
+    source: &str,
+    kind: Kind,
+    heading_range: TextRange,
+) -> Result<ConfirmedHeading, ParseError> {
     let start = heading_range.start().to_usize();
     let end = heading_range.end().to_usize();
     let line_end = line_end(source, start).min(end);
+    if kind == Kind::SetextHeading {
+        return Ok(ConfirmedHeading {
+            level: setext_level(source, start, end),
+            range: heading_range,
+            text_range: range(start, line_end)?,
+        });
+    }
     let line = &source[start..line_end];
     let trimmed = line.trim_start();
     let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    let level = if hashes > 0 { hashes as u8 } else { 2 };
+    // The scanner only opens an ATX heading for a 1..=6 run, so the clamp is a
+    // belt-and-braces cap that keeps a parser slip from reaching consumers as a
+    // level no CommonMark document can express.
+    let level = if hashes > 0 { hashes.min(6) as u8 } else { 2 };
     let text_start = if hashes > 0 {
         start
             + (line.len() - trimmed.len())
@@ -256,6 +282,23 @@ fn heading(source: &str, heading_range: TextRange) -> Result<ConfirmedHeading, P
         range: heading_range,
         text_range: range(text_start, line_end)?,
     })
+}
+
+/// A setext underline is the last non-blank line of the node; `=` means level
+/// 1 and `-` means level 2.
+fn setext_level(source: &str, start: usize, end: usize) -> u8 {
+    let content_end = start + source[start..end].trim_end_matches(['\r', '\n']).len();
+    let underline_start = source[start..content_end]
+        .rfind('\n')
+        .map_or(start, |at| start + at + 1);
+    if source[underline_start..content_end]
+        .trim_start()
+        .starts_with('=')
+    {
+        1
+    } else {
+        2
+    }
 }
 
 pub(crate) fn waml_kind(source: &str, text_range: TextRange) -> Option<WamlSectionKind> {
