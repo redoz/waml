@@ -10,6 +10,12 @@ const MAX_TITLE_BYTES: usize = 48;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceFixture {
     Mini,
+    /// One state-machine document, chosen for its SHAPES rather than its
+    /// content: `Active` carries a self-loop and a long back edge to `Idle`,
+    /// which are the two connectors `90ffcf0f` moved. The rendering gate
+    /// compares this canvas, so the fixture stays small on purpose -- every
+    /// extra node is more ink for a comparison to be noisy about.
+    Behavior,
 }
 
 #[doc(hidden)]
@@ -130,6 +136,16 @@ impl WorkspaceFixture {
                     ready_diagram: DiagramName::ORDERS,
                 },
             },
+            Self::Behavior => FixtureDescriptor {
+                relative_path: "tests/fixtures/behavior",
+                workspace: WorkspaceBinding {
+                    root: WorkspaceRootFingerprint {
+                        title: "Behavior",
+                        value: "/",
+                    },
+                    ready_diagram: DiagramName::LIGHT_CYCLE,
+                },
+            },
         }
     }
 }
@@ -161,6 +177,14 @@ mod tests {
                 ready_diagram: DiagramName::ORDERS,
             }
         );
+    }
+
+    #[test]
+    fn behavior_fixture_binds_the_light_cycle_state_machine() {
+        let descriptor = WorkspaceFixture::Behavior.descriptor();
+
+        assert_eq!(descriptor.relative_path, "tests/fixtures/behavior");
+        assert_eq!(descriptor.workspace.ready_diagram, DiagramName::LIGHT_CYCLE);
     }
 
     #[test]

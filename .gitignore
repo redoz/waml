@@ -4,6 +4,11 @@
 /crates/waml-editor/target
 # ...and the editor it spawns mints this scratch dir beside its manifest
 /crates/waml-editor/.makepad
+# ...and a screenshot query makes the spawned editor dump the raw framebuffer
+# into its own cwd, which is that same manifest dir. 16 MB a shot -- the
+# headless PNG encoder does not deflate. The driver copies the one it wants
+# into the run artifacts; this is the leftover.
+/crates/waml-editor/window_*_frame_*.png
 
 # Node build output and caches
 node_modules/

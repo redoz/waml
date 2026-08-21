@@ -3,8 +3,16 @@ use crate::{DiagramName, ViewKind};
 use makepad_test::{Selector, TestApp, TestError, WidgetSnapshot};
 
 const VIEW_BUTTON_ID: &str = "view_button";
-const CANVAS_ID: &str = "canvas_wrap";
+/// The editor has TWO diagram surfaces -- a class canvas and a behavior
+/// canvas -- and whichever is not showing stays in the widget tree as a
+/// hidden zero-rect view. So "is the Diagram view active" is a question about
+/// exactly one of these being visible, never about one of them by name.
+pub(crate) const DIAGRAM_SURFACE_IDS: [&str; 2] = ["canvas_wrap", "behavior_canvas_wrap"];
 const SOURCE_ID: &str = "markdown_surface";
+/// How long `wait_for_view` keeps pumping before it calls the view change a
+/// failure. Matches the driver's own per-action budget.
+const VIEW_SETTLE: std::time::Duration = std::time::Duration::from_secs(30);
+const VIEW_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub(crate) fn ensure_diagram_open(
     driver: &TestApp,
@@ -281,7 +289,7 @@ impl ObservedViewState {
 }
 
 fn observed_view_state(widgets: &[WidgetSnapshot]) -> Result<ObservedViewState, OperationFailure> {
-    let canvas = surface_visibility(widgets, CANVAS_ID, "Diagram")?;
+    let canvas = diagram_surface_visibility(widgets)?;
     let source = surface_visibility(widgets, SOURCE_ID, "Source")?;
     Ok(match (canvas, source) {
         (true, false) => ObservedViewState::Diagram,
@@ -289,6 +297,31 @@ fn observed_view_state(widgets: &[WidgetSnapshot]) -> Result<ObservedViewState, 
         (true, true) => ObservedViewState::BothVisible,
         (false, false) => ObservedViewState::BothHidden,
     })
+}
+
+/// Whether a diagram is showing: exactly one of the two diagram surfaces is
+/// visible. Both at once is not "the diagram is up", it is two canvases
+/// stacked, so it is rejected rather than reported as true.
+fn diagram_surface_visibility(widgets: &[WidgetSnapshot]) -> Result<bool, OperationFailure> {
+    let present: Vec<_> = widgets
+        .iter()
+        .filter(|widget| DIAGRAM_SURFACE_IDS.contains(&widget.id.as_str()))
+        .collect();
+    if present.is_empty() {
+        return Err(OperationFailure {
+            observed: "invalid document surface state: Diagram surface is missing".to_string(),
+            detail: "expected at least one diagram surface snapshot".to_string(),
+        });
+    }
+    let visible = present.iter().filter(|widget| widget.visible).count();
+    match visible {
+        0 => Ok(false),
+        1 => Ok(true),
+        count => Err(OperationFailure {
+            observed: format!("invalid document surface state: {count} Diagram surfaces exist"),
+            detail: "only one diagram surface may be visible at a time".to_string(),
+        }),
+    }
 }
 
 fn surface_visibility(
@@ -317,20 +350,44 @@ fn surface_visibility(
     }
 }
 
+/// Settle on the requested view by re-reading the snapshot until it reports
+/// that view, or the budget runs out.
+///
+/// This polls rather than waiting on a locator because "the Diagram view" is
+/// not one widget: whichever of the two diagram surfaces the active document
+/// needs is the one that becomes visible, and a locator wait on the other one
+/// would sit there until it timed out. Every snapshot query pumps the UI, so
+/// the poll is also what advances the app.
 fn wait_for_view(driver: &TestApp, requested: ViewKind) -> Result<(), OperationFailure> {
-    let (visible, hidden) = match requested {
-        ViewKind::Diagram => (canvas_selector(), source_selector()),
-        ViewKind::Source => (source_selector(), canvas_selector()),
-    };
-    driver
-        .locator(visible)
-        .try_wait_visible()
-        .map_err(|error| view_driver_failure(driver, &error))?;
-    driver
-        .locator(hidden)
-        .try_wait_hidden()
-        .map_err(|error| view_driver_failure(driver, &error))?;
-    Ok(())
+    let deadline = std::time::Instant::now() + VIEW_SETTLE;
+    loop {
+        let observed = match driver.try_widget_snapshot() {
+            Ok(widgets) => match observed_view_state(&widgets) {
+                Ok(state) => {
+                    if matches!(
+                        (state, requested),
+                        (ObservedViewState::Diagram, ViewKind::Diagram)
+                            | (ObservedViewState::Source, ViewKind::Source)
+                    ) {
+                        return Ok(());
+                    }
+                    state.description()
+                }
+                Err(failure) => failure.observed,
+            },
+            Err(error) => error.message().to_string(),
+        };
+        if std::time::Instant::now() >= deadline {
+            return Err(OperationFailure {
+                observed,
+                detail: format!(
+                    "{} view did not become active within {VIEW_SETTLE:?}",
+                    view_name(requested)
+                ),
+            });
+        }
+        std::thread::sleep(VIEW_POLL);
+    }
 }
 
 fn snapshot(
@@ -381,14 +438,6 @@ fn diagram_row_selector(diagram: DiagramName) -> Selector {
 
 fn view_button_selector() -> Selector {
     Selector::id(VIEW_BUTTON_ID)
-}
-
-fn canvas_selector() -> Selector {
-    Selector::id(CANVAS_ID)
-}
-
-fn source_selector() -> Selector {
-    Selector::id(SOURCE_ID)
 }
 
 fn view_name(view: ViewKind) -> &'static str {
@@ -536,10 +585,25 @@ mod tests {
         );
     }
 
+    /// A HIDDEN second diagram surface is the normal tree, not an error: the
+    /// class canvas and the behavior canvas both exist at all times and the
+    /// inactive one is a zero-rect hidden view.
     #[test]
-    fn duplicate_canvas_surfaces_are_invalid() {
+    fn the_inactive_diagram_surface_is_not_a_duplicate() {
         let mut widgets = surfaces(true, false);
-        widgets.push(snapshot("canvas_wrap", "View", false));
+        widgets.push(snapshot("behavior_canvas_wrap", "View", false));
+
+        let observed = observe_active_view(&widgets, ViewKind::Diagram).unwrap();
+
+        assert_eq!(observed, "Diagram view is active");
+    }
+
+    /// Two VISIBLE diagram surfaces is two canvases stacked, which is not a
+    /// state any assertion should read as "the diagram is up".
+    #[test]
+    fn two_visible_diagram_surfaces_are_invalid() {
+        let mut widgets = surfaces(true, false);
+        widgets.push(snapshot("behavior_canvas_wrap", "View", true));
 
         let error = observe_active_view(&widgets, ViewKind::Diagram).unwrap_err();
 
@@ -547,6 +611,21 @@ mod tests {
             error.observed,
             "invalid document surface state: 2 Diagram surfaces exist"
         );
+    }
+
+    /// A behavior document drives the same assertions through the other
+    /// surface, with the class canvas sitting hidden beside it.
+    #[test]
+    fn a_behavior_document_is_a_diagram_view_too() {
+        let widgets = vec![
+            snapshot("canvas_wrap", "View", false),
+            snapshot("behavior_canvas_wrap", "View", true),
+            snapshot("markdown_surface", "View", false),
+        ];
+
+        let observed = observe_active_view(&widgets, ViewKind::Diagram).unwrap();
+
+        assert_eq!(observed, "Diagram view is active");
     }
 
     #[test]

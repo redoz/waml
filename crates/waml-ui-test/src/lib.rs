@@ -63,26 +63,55 @@
 //! rect), and an empty `Label` draws no quad, so it also stays `0x0`. Gate a
 //! wait on a real laid-out widget; assert on the semantic item.
 //!
-//! # What it cannot decide
+//! # The rendering gate, and how narrow it is
 //!
-//! Pixels. It can capture a screenshot on failure, but it has no baseline to
-//! compare one against, and it should not grow one casually: the editor draws
-//! through SDF shaders whose output is not bit-stable across a GL driver
-//! change, so a naive golden set would be a flake generator. Concretely, this
-//! harness cannot answer:
+//! One operation does look at pixels:
+//! [`WamlApp::expect_canvas_matches_reference`]. It compares the diagram
+//! canvas against a stored reference -- but by INK, not by value. Each pixel
+//! reduces to "is this the background or not", and the comparison is between
+//! those masks. `reference`'s module docs carry the full argument; the short
+//! version is that the SDF antialias ramp, the JIT-compiled shaders' host
+//! toolchain, per-zoom text rasterisation and the pen quantiser all move
+//! pixel VALUES, and none of them moves whether a pixel has ink in it. A
+//! value comparison would be a flake generator. A mask comparison settles
+//! geometry.
 //!
-//! * stroke weight, colour, glyph identity, or anything else about how a
-//!   shape was drawn (visual sign-off ledger V1, V3, V10, V14);
-//! * whether text at a new scale is *legible*, only whether it changed size
-//!   (V2);
-//! * hit-testing against anything that is drawn rather than laid out as a
-//!   widget -- a glyph trash can or a drawn pin has no snapshot entry, which
-//!   is exactly the misalignment those rows are about (V8, V11);
-//! * temporal feel: animation, gesture inertia, drag preview (V9).
+//! So it can now decide: where connectors run, how thick a stroke is once
+//! quantised, where glyphs sit and how big they are. `regression_proof`
+//! demonstrates that on the change it was built for -- `90ffcf0f`'s router
+//! fix moved a back edge 8px and a self-loop 8px, and the gate fails on that
+//! by six times its tolerance.
 //!
-//! CI runs it headless on Linux, which is the verification of record. A
-//! Windows developer can run it too -- see the tests README for the prebuild
-//! the driver needs first.
+//! Two hard limits on it, both structural:
+//!
+//! * **Linux is the platform of record**, because the fork's headless shader
+//!   loader is unix-only. On Windows every shader compiles, none loads, and
+//!   the capture is a flat rectangle -- which is also why a Windows run's
+//!   "failure screenshot" has never been worth opening. The gate detects that
+//!   and says so rather than passing quietly.
+//! * **A reference is per platform.** With none for the current platform the
+//!   gate records one and passes advisory, naming the file to commit.
+//!
+//! # What it still cannot decide
+//!
+//! * colour, and antialias quality -- an ink mask throws exactly those away
+//!   (visual sign-off ledger V1's colour half, and any "does this read as
+//!   crisp" question);
+//! * whether text at a new scale is *legible*, only that its ink moved (V2);
+//! * whether a connector's route is GOOD rather than merely different -- the
+//!   gate notices the change and hands a human the two drawings; the taste
+//!   call is still theirs (V10, V14);
+//! * hit-testing against anything drawn rather than laid out as a widget -- a
+//!   glyph trash can or a drawn pin has no snapshot entry, which is exactly
+//!   the misalignment those rows are about (V8, V11);
+//! * temporal feel: animation, gesture inertia, drag preview (V9);
+//! * anything outside the canvas rect. The comparison is cropped to the
+//!   diagram surface on purpose, so no chrome, tab, tree or panel is gated.
+//!
+//! CI runs the whole suite headless on Linux, which is the verification of
+//! record. A Windows developer can run it too -- see the tests README for the
+//! prebuild the driver needs first -- and gets every scenario except the
+//! rendering gate, which reports itself as not run.
 //!
 //! When a ledger row is *state*, not pixels, it belongs here rather than in a
 //! human's queue. [`WamlApp::expect_project_tree_rows`] exists for exactly
@@ -95,6 +124,8 @@ mod config;
 mod domain;
 mod error;
 mod fixture;
+mod reference;
+mod regression_proof;
 mod run;
 mod trace;
 

@@ -12,6 +12,13 @@ impl DiagramName {
         value: "orders-diagram",
     };
 
+    /// The `Behavior` fixture's one document: a state machine whose `Active`
+    /// node carries both a self-loop and a back edge.
+    pub const LIGHT_CYCLE: Self = Self {
+        display: "Light Cycle",
+        value: "light-cycle",
+    };
+
     pub const fn new(display: &'static str, value: &'static str) -> Self {
         Self { display, value }
     }

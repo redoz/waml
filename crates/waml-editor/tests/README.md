@@ -45,17 +45,65 @@ The scenarios verify, against a real headless editor:
 | `escalating_a_query_groups_results_by_document` | The results tab groups every hit by document, in rank order. |
 | `find_strip_counts_hits_scoped_to_the_active_document` | Ctrl+F narrows the same query to the active tab's own document. |
 | `f3_walks_the_find_hits_and_wraps_at_both_ends` | F3/Shift+F3 walk the find cursor and wrap at both ends. |
+| `the_light_cycle_canvas_is_drawn_the_way_its_reference_was` | **The rendering gate.** The behavior canvas is drawn the way its stored reference was -- see below. |
 
 `waml_ui_test`'s crate docs carry the standing list of what this harness can
 and cannot decide -- read them before adding a scenario for something that is
 really a question about pixels.
 
+## The rendering gate
+
+`the_light_cycle_canvas_is_drawn_the_way_its_reference_was` is the one
+scenario that looks at pixels. It opens a state machine whose `Active` node
+carries both a self-loop and a long back edge -- the two connectors
+`90ffcf0f` moved -- screenshots the headless window, crops to the diagram
+surface's own rect, and compares against
+`crates/waml-editor/tests/references/<name>.<os>-<arch>.ink`.
+
+It compares **ink, not pixel values**: each pixel reduces to "background or
+not", and the stored reference is a run-length-encoded mask in plain text
+rather than a PNG. `waml_ui_test`'s `reference` module carries the argument
+for both choices -- the short version is that antialias ramps, JIT-compiled
+shaders, per-zoom text rasterisation and the pen quantiser all move pixel
+values without moving whether a pixel has ink, and the headless PNG encoder
+does not deflate, so a stored capture would be ~9 MB of undiffable binary.
+
+**Linux is the platform of record, and not by preference.** The fork's
+headless shader loader is `#[cfg(unix)]`; on Windows every shader compiles to
+a `.dll` under `target/makepad-headless-jit/` and none of them loads, so the
+virtual GPU never draws and the capture is a flat rectangle. (That is also
+why a Windows run's preserved `failure-screenshot.png` has never been worth
+opening.) The gate detects a blank capture and reports it rather than passing
+quietly; on Windows, with no reference committed, it reports itself as not
+run and the other scenarios are unaffected.
+
+To accept an intended rendering change, or to record the first reference for
+a platform:
+
+```bash
+WAML_UI_TEST_UPDATE_REFERENCES=1 \
+  cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+```
+
+A blank capture is refused rather than recorded, so this cannot write a
+reference that would pass forever.
+
+In CI the gate runs inside the existing Linux `Semantic editor UI test` step,
+and `Upload rendering gate evidence` carries its output off the runner in
+both directions: on failure the capture, a red/green overlay of what moved
+(red is ink that vanished, green is ink that appeared) and the mask that
+would become the new reference; on success any reference recorded because
+none existed for the platform yet. Downloading that artifact and committing
+`recorded-references/*.ink` is what turns the gate from advisory to enforcing
+on Linux.
+
 **Windows can run this now.** The fork's headless backend stopped being
-macOS-only when the CI headless fix landed, and the whole suite was run
-green on Windows against fork rev `6534634a` (8 passed, ~17 min, one editor
-process spawned per scenario). Prebuild the exact configuration the driver
-spawns first, or the in-test build's swallowed output turns a compile error
-into an unreadable startup timeout:
+macOS-only when the CI headless fix landed, and the whole suite was run green
+on Windows against fork rev `6534634a` (9 passed, ~13 min, one editor process
+spawned per scenario) -- with the rendering gate reporting itself advisory,
+for the reason above. Prebuild the exact configuration the driver spawns
+first, or the in-test build's swallowed output turns a compile error into an
+unreadable startup timeout:
 
 ```powershell
 $env:MAKEPAD='headless'
@@ -169,7 +217,15 @@ constraint/conflict focus, hidden borders, and both font raster levels.
 
 The screenshots are not a substitute for temporal interaction verification.
 
-### Use-case diagram baselines
+### Use-case diagram baselines (manual, native)
+
+**This is not the rendering gate** -- see "The rendering gate" above for the
+automated one. This is the older manual tool, and it is kept for the one thing
+the headless gate structurally cannot do: look at what the REAL D3D11
+renderer draws. It needs a desktop session, launches the app headed, sleeps
+15s per diagram for the GPU scene to settle, and byte-compares whole windows,
+so it can only ever be run by hand on a native Windows desktop. That is why no
+workflow calls it and why none should.
 
 The `screenshots/use-case` directory contains native, HiDPI-correct captures of
 the three shipped use-case views. The check launches each exact diagram with a

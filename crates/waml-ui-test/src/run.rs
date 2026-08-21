@@ -57,11 +57,22 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
     let run_root = identity.run_root.clone();
     let app_test_name = test_name.clone();
     let app_run_root = run_root.clone();
+    // References live beside the scenarios that assert them, in the editor's
+    // own tests tree -- not under `target/`, which is where every other
+    // artifact of a run goes and which is not committed.
+    let references_dir = editor_manifest_dir.join("tests").join("references");
+    // A capture recorded because no reference exists yet must OUTLIVE the run
+    // that took it: a passing run's directory is deleted, and the whole point
+    // of that recording is that somebody downloads it and commits it. So it
+    // goes beside the run roots rather than inside one.
+    let recordings_dir = ownership_root(&workspace_root).join("recorded-references");
     let result = makepad_test::run_with_config(driver_config, move |driver| {
         scenario(WamlApp::new(
             driver,
             app_test_name,
             app_run_root,
+            references_dir,
+            recordings_dir,
             workspace,
             trace,
         ));

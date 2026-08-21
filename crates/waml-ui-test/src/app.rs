@@ -1,4 +1,4 @@
-use crate::adapters::{documents, search, tree, workspace};
+use crate::adapters::{documents, rendering, search, tree, workspace};
 use crate::config::WorkspaceBinding;
 use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
@@ -9,6 +9,8 @@ pub struct WamlApp {
     driver: makepad_test::TestApp,
     test_name: String,
     artifacts_dir: PathBuf,
+    references_dir: PathBuf,
+    recordings_dir: PathBuf,
     workspace: WorkspaceBinding,
     trace: SemanticTrace,
 }
@@ -18,6 +20,8 @@ impl WamlApp {
         driver: makepad_test::TestApp,
         test_name: String,
         artifacts_dir: PathBuf,
+        references_dir: PathBuf,
+        recordings_dir: PathBuf,
         workspace: WorkspaceBinding,
         trace: SemanticTrace,
     ) -> Self {
@@ -25,6 +29,8 @@ impl WamlApp {
             driver,
             test_name,
             artifacts_dir,
+            references_dir,
+            recordings_dir,
             workspace,
             trace,
         }
@@ -214,6 +220,39 @@ impl WamlApp {
             format!("expect find counter \"{text}\""),
             format!("the find counter reads \"{text}\""),
             move |driver| search::expect_find_counter(driver, &text),
+        )
+    }
+
+    /// The rendering gate: hold the diagram canvas to the reference stored for
+    /// this platform.
+    ///
+    /// This is the ONE operation in this crate that is about pixels, and it is
+    /// deliberately narrow. It compares INK -- whether a pixel is background
+    /// or not -- over the canvas rect only, so it settles where connectors
+    /// run, how thick a stroke quantises, and where glyphs sit, and settles
+    /// nothing about colour or antialias quality. `crate::reference` carries
+    /// the argument for that choice; `adapters::rendering` carries the rule
+    /// for when a mismatch fails rather than records.
+    ///
+    /// Re-record an intended change with
+    /// `WAML_UI_TEST_UPDATE_REFERENCES=1` and commit the reference.
+    pub fn expect_canvas_matches_reference(&mut self, name: &str) -> &mut Self {
+        let name = name.to_string();
+        let references_dir = self.references_dir.clone();
+        let recordings_dir = self.recordings_dir.clone();
+        let artifacts_dir = self.artifacts_dir.clone();
+        self.execute(
+            format!("expect canvas matches reference {name}"),
+            format!("the {name} canvas is drawn the way its stored reference was"),
+            move |driver| {
+                rendering::expect_canvas_matches_reference(
+                    driver,
+                    &references_dir,
+                    &recordings_dir,
+                    &artifacts_dir,
+                    &name,
+                )
+            },
         )
     }
 }

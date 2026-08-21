@@ -96,9 +96,38 @@ jobs:
           CARGO_TARGET_DIR: crates/waml-editor/target
         run: cargo build -p waml-editor --release
 
+      # This step carries the RENDERING GATE as well as the semantic
+      # scenarios. Linux is its platform of record and not by preference: the
+      # fork's headless shader loader is unix-only, so on Windows every shader
+      # compiles, none loads, and the virtual GPU produces a flat rectangle.
+      # This is the only place in CI where anything looks at pixels.
       - name: Semantic editor UI test
         if: runner.os == 'Linux'
         run: cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+
+      # Two different jobs for one upload, and both matter.
+      #
+      # On FAILURE it carries the rendering gate's evidence off the runner:
+      # the capture, the red/green overlay of what moved, and the mask that
+      # would make the change the new reference. A gate whose failure output
+      # dies with the runner is a gate nobody can act on.
+      #
+      # On SUCCESS it carries any reference the gate RECORDED because none
+      # existed for this platform yet. That is how the first reference gets
+      # committed: download it from this artifact and add it to
+      # crates/waml-editor/tests/references/. Until one is committed the gate
+      # is advisory here and says so in its trace.
+      - name: Upload rendering gate evidence
+        # `always()` first: a step whose condition does not mention it is
+        # skipped once an earlier step has failed, which is exactly the run
+        # whose evidence is worth keeping.
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rendering-gate-${{ github.run_id }}
+          path: target/waml-ui-test/
+          if-no-files-found: ignore
+          retention-days: 14
 
       # nextest does not run doctests at all -- it would skip them silently, so
       # they get their own step.

@@ -38,6 +38,40 @@ try to judge pixels from PowerShell — look at the image.
 | V15 | Dock chrome extraction (`DockChrome`) | branch `a15-dock-chrome-extraction` | A **pure state move**, not a feature: the eleven dock/caption fields left `App` for `app::dock_chrome`. No widget changed parent and no `script_mod` order changed, and `app/tests/shell.rs` still pins slot/host/body geometry, both splitter drags and the toggle-seat continuity. Three things those tests structurally cannot see. **(a) The narrow-mode dismiss gesture.** The `MouseMove` arm of `route_narrow_dock_pointer` was deleted — it only wrote `pointer_in_narrow_dock`, which nothing read. Shrink the window under 640px, open the tree panel so it floats, and tap the canvas: the panel must still dismiss, and tapping *inside* the panel must not. **(b) The toggle handoff, animated.** Tests seat `DockMotion` at its end states, so no test has ever run the 180ms curve. Drag the window across 640/680 with the tree column open and watch the `[|]` toggle slide out to the column edge and back to the row head — it must stay continuous, with no jump of the button's own 32px width at the handoff. **(c) The chrome seam break.** `sync_chrome_seam`'s change guard moved into `DockChrome::commit_seam_break` unchanged; confirm the hairline under the caption still breaks at the active tab card and follows it when you switch tabs. |
 | V13 | Splash logo pulse variants | `67bd394`, **branch `ui-tweaks-2`, NOT on main** | Not a sign-off — a **choice**. Six variants are built and rendering; the owner picks one and the rest get deleted. `cargo run -p waml-editor --bin logo_pulse_harness` stacks all six, top to bottom modes 1..6. |
 
+## What the rendering gate covers, and what it does not (audit row A05)
+
+There is now one automated gate on pixels:
+`the_light_cycle_canvas_is_drawn_the_way_its_reference_was` in
+`crates/waml-editor/tests/ui.rs`. It drives the headless editor to a state
+machine, crops to the diagram surface, and compares the canvas against a
+stored **ink mask** -- one bit per pixel, background or not. It settles
+geometry: where connectors run, how thick a stroke is once quantised, where
+glyphs sit and how big they are. It settles nothing about colour, antialias
+quality, or whether a route reads *well*.
+
+**It closes no row below, and the honest reason is worth stating.** Every row
+here is an obligation to look at something that already shipped, and a
+reference recorded today records what shipped -- including whatever is wrong
+with it. A gate can stop the NEXT change from going unseen; it cannot see the
+last one. What it changes is which of these rows can regress silently again:
+
+| Row | After the gate |
+|---|---|
+| V1 Diagram pens | **Partly guarded going forward, one canvas only.** A stroke that quantises to a different number of device pixels fails the gate -- which is exactly V1's stated worst case (1.5 flooring to two device pixels at dpi 1). But the gated canvas draws behavior routes and state boxes; class edges, lifeline stems, interaction frames, group hulls and label leaders are not in it. The colour half of V1 is not covered at all: an ink mask throws colour away by construction. Sign-off still owed. |
+| V10 Connector repair phases | **Change-detection going forward.** A repair phase that starts rewriting connectors fails the gate instead of shipping green. The gate hands a human two drawings and a red/green overlay; whether the new one is *better* is still the human's call, which is what V10 is really about. Sign-off still owed. |
+| V14 Connector quality repairs | Same as V10, and this is the change the gate was built against: `regression_proof` in `waml-ui-test` inks `90ffcf0f`'s before and after route sets from the repo's own history and shows the comparator fails on them by six times its tolerance. Sign-off still owed -- nobody has looked at the fixtures. |
+| V2, V3, V4, V5, V6, V7, V8, V9, V11, V12, V13, V15 | **Not covered.** Everything the gate compares is inside one diagram canvas. Tree row icons (V3), the projection menu (V4), navigation across surfaces (V5), book mode (V6), the palette and find strip (V7), popup surfaces (V8), drag preview (V9), start-screen pins (V11), dock flags (V12), the splash variants (V13) and dock chrome (V15) are all outside the crop, or are about temporal feel, or are hit-testing against drawn rather than laid-out things. No mask can reach any of them. |
+
+**One step is outstanding before the gate enforces anywhere.** Linux is its
+platform of record (see the third trap above), and no Linux reference could
+be recorded from a Windows machine, so none shipped in the landing commit.
+Until one is committed the gate records its own capture and passes advisory,
+saying so in its trace. The first Linux CI run uploads that recording as the
+`rendering-gate-<run id>` artifact; download it, commit
+`recorded-references/light-cycle.linux-x86_64.ink` into
+`crates/waml-editor/tests/references/`, and the gate starts enforcing.
+`crates/waml-editor/tests/README.md` has the recipe.
+
 ## Why this keeps happening
 
 The automated plan runner cannot do visual verification, so a plan whose

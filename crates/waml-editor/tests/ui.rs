@@ -18,8 +18,20 @@ const USE_CASE_SCREENSHOTS: [(&str, &str, &str); 3] = [
     ),
 ];
 
+/// Keeps `scripts/check-use-case-diagram-screenshots.ps1`'s manifest wired to
+/// the documents it drives: the three sources still declare the diagram type
+/// and title it launches, and its three baselines are still on disk.
+///
+/// **This proves nothing about pixels**, and it never did -- the audit was
+/// right to call the old name misleading. It cannot: those baselines are
+/// captures of the real D3D11 renderer taken by hand on a desktop, and
+/// nothing in CI can reproduce one. What it does prevent is the manual tool
+/// silently rotting when someone renames a use-case view.
+///
+/// The automated rendering gate is
+/// `the_light_cycle_canvas_is_drawn_the_way_its_reference_was`, below.
 #[test]
-fn use_case_screenshot_manifest() {
+fn use_case_manual_screenshot_tool_still_points_at_the_documents_it_drives() {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (source, title, baseline) in USE_CASE_SCREENSHOTS {
         let source_text = std::fs::read_to_string(workspace.join(source)).unwrap();
@@ -145,4 +157,25 @@ fn find_strip_counts_hits_scoped_to_the_active_document(mut app: WamlApp) {
         .open_find_strip()
         .type_search_query("payment")
         .expect_find_counter("1 of 4");
+}
+
+/// **The rendering gate.** Open the `Light Cycle` state machine and hold the
+/// canvas to the reference recorded for this platform.
+///
+/// This is the only scenario in the suite that looks at pixels, and the
+/// fixture was chosen for the two connectors `90ffcf0f` moved: `Active`'s
+/// self-loop, which went from 16px to 24px of border clearance, and the
+/// `Active -> Idle` back edge, which shifted 8px off its midpoint. Both are
+/// changes every structural assertion in the router was blind to, and every
+/// human was too -- ledger row V14 is still owed on them.
+///
+/// What this settles is GEOMETRY: where connectors run, how thick a stroke
+/// quantises, where glyphs sit. Not colour, not antialias quality. See
+/// `waml_ui_test`'s crate docs for the standing line.
+#[waml_ui_test(workspace = Behavior)]
+fn the_light_cycle_canvas_is_drawn_the_way_its_reference_was(mut app: WamlApp) {
+    app.expect_workspace_open()
+        .ensure_diagram_open(DiagramName::LIGHT_CYCLE)
+        .expect_active_diagram(DiagramName::LIGHT_CYCLE)
+        .expect_canvas_matches_reference("light-cycle");
 }
