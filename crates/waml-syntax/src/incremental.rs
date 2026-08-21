@@ -176,6 +176,10 @@ fn plan_window_reparse(
     )? {
         return Ok(Err(FullReparseReason::UnsafeSynchronization));
     }
+    if crate::markdown::reparse::change_may_flip_a_repeated_definition(old, new_text, changes, map)
+    {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
 
     let windows = shell_windows(previous, old)?;
     let Some(mut window) = select_window(&windows, map) else {

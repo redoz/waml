@@ -28,6 +28,75 @@ pub(crate) fn change_touches_reference_definition(
     })
 }
 
+/// Returns true when a change could flip a reference definition between
+/// opening its label and repeating one already open.
+///
+/// The parser reads a repeated definition differently from the first of its
+/// label, and not only in what it resolves to. The block scanner reports the
+/// span of the first definition of each label and drops the rest, so a repeat
+/// falls through to the line-anchored fallback in
+/// `markdown::block::emit_leaf_gap`, which stops at the end of the line it
+/// started on. `[id]: \nxing` is therefore a definition whose destination is
+/// `xing` on the line below when its label is fresh, and a destination-less
+/// definition trailed by a stray `xing` when the same label was already
+/// defined above it.
+///
+/// That reading depends on every definition standing above it — text a window
+/// reparse never looks at, and text the carried-over subtrees below the window
+/// were parsed against before the edit. So when any label in the document is
+/// defined twice, an edit that adds, removes, or renames a definition must be
+/// reparsed whole.
+///
+/// Gated on [`change_touches_reference_definition`] so an ordinary edit to a
+/// document that happens to repeat a label keeps the incremental path: nothing
+/// can flip without the set of defined labels changing, and that guard already
+/// over-reports every edit which could change it.
+pub(crate) fn change_may_flip_a_repeated_definition(
+    old: &SourceText,
+    new: &SourceText,
+    changes: &[TextChange],
+    map: &ChangeMap,
+) -> bool {
+    change_touches_reference_definition(old, new, changes, map)
+        && (has_repeated_definition_label(old.shared())
+            || has_repeated_definition_label(new.shared()))
+}
+
+/// Whether any label in the document is defined twice, by the loosest reading
+/// of "defined".
+///
+/// A definition's label is the text between a `[` and the `]` that a `:`
+/// follows, and CommonMark forbids an unescaped `[` inside a label, so the
+/// nearest `[` before that `]` is the one that opens it. Nothing else is
+/// checked: a container prefix, an indent, or a whole enclosing code fence all
+/// leave the label where this finds it, and naming a bracket pair that is no
+/// definition at all only costs a full parse, while missing a real repeat
+/// publishes a tree the parser would not have written.
+///
+/// One forward pass, carrying the most recent `[` rather than searching back
+/// from every `]:` — a document of nothing but `]:` would otherwise cost a
+/// backward scan per pair.
+fn has_repeated_definition_label(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut seen = HashSet::new();
+    let mut open: Option<usize> = None;
+    for at in 0..bytes.len() {
+        match bytes[at] {
+            b'[' => open = Some(at),
+            // `[`, `]` and `:` are ASCII, so these are all char boundaries.
+            b']' if bytes.get(at + 1) == Some(&b':') => {
+                if let Some(label) = open.and_then(|open| normalize_label(&source[open + 1..at])) {
+                    if !seen.insert(label) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// The whole blank-line-delimited run of lines the edited lines sit in.
 ///
 /// A reference definition is not a line, it is a run of them: its destination
@@ -1019,6 +1088,23 @@ mod tests {
             source,
             range(8, 9)
         )));
+    }
+
+    #[test]
+    fn repeated_definition_scan_names_a_label_defined_twice() {
+        // The parser reads the second definition of a label differently from
+        // the first, so a document that holds one has to be reparsed whole
+        // whenever the set of defined labels changes.
+        assert!(has_repeated_definition_label("[id]: /a\n\n[id]: /b\n"));
+        // Case and inner whitespace fold, exactly as the parser folds them.
+        assert!(has_repeated_definition_label("[ID]: /a\n\n[id]: /b\n"));
+        assert!(has_repeated_definition_label("[i\nd]: /a\n\n[i d]: /b\n"));
+        // A label spelled across a line break repeats one spelled on a line.
+        assert!(has_repeated_definition_label("[\nid]: /a\n\n[id]: /b\n"));
+        // Distinct labels are no repeat, however many there are.
+        assert!(!has_repeated_definition_label("[a]: /a\n\n[b]: /b\n"));
+        // A `]:` with no `[` in front of it names nothing.
+        assert!(!has_repeated_definition_label("x]: y\n\nz]: w\n"));
     }
 
     #[test]

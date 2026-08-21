@@ -629,6 +629,31 @@ fn a_definition_label_spelled_across_a_line_break_is_still_a_definition() {
 }
 
 #[test]
+fn unmaking_a_repeated_definition_reparses_the_repeat() {
+    // This fails if nothing guards a definition that repeats a label. The
+    // block scanner reports the span of the *first* definition of each label
+    // and drops the rest, so a repeat falls through to a line-anchored
+    // fallback that stops at the end of its own line. `[id]: \nx` is therefore
+    // a definition whose destination is `x` on the line below when its label
+    // is fresh, and a destination-less definition trailed by a stray `x` when
+    // `id` was already defined above -- a difference in token shape, not just
+    // in what resolves.
+    //
+    // The edit renames the first definition from `id` to ` d`, which unmakes
+    // the repeat. The second definition is in another shell window and was
+    // carried over untouched, so the incremental tree kept the empty
+    // destination and the stray `x` a full parse no longer has.
+    assert_matches_full_oracle(
+        "[id]: /a\n\n# M\n\n[id]: \nx\n",
+        "[ d]: /a\n\n# M\n\n[id]: \nx\n",
+        &[TextChange {
+            old_range: range(1, 2),
+            replacement: Arc::from(" "),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";
