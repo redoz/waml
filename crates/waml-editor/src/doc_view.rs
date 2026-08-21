@@ -179,129 +179,85 @@ impl BodyWidgets {
             .set_visible(cx, show);
     }
 
+    /// Every document surface the centre can show, in one place.
+    ///
+    /// The `show_*` family below is "mine on, my siblings off", so each of
+    /// them used to carry its own copy of this list -- and the copies drifted:
+    /// five of them never learned about `behavior_canvas_wrap`, added later,
+    /// so switching from an activity/state-machine/sequence tab left the
+    /// behavior canvas on screen underneath the surface that replaced it.
+    ///
+    /// `diagram_properties_wrap` is deliberately NOT here. It is a companion
+    /// panel of the class-diagram canvas, shown and hidden per mode by
+    /// `ClassDiagramView::sync`, not a sibling that competes for the centre.
+    /// [`Self::hide_document_surfaces`] takes it down explicitly because
+    /// closing the last tab has to clear the panel too.
+    const DOCUMENT_SURFACES: [&'static [LiveId; 1]; 7] = [
+        ids!(canvas_wrap),
+        ids!(behavior_canvas_wrap),
+        ids!(markdown_surface),
+        ids!(markdown_viewer_surface),
+        ids!(folder_view_surface),
+        ids!(search_results_surface),
+        ids!(book_surface),
+    ];
+
+    /// Raise one document surface and take every sibling down.
+    ///
+    /// Adding a surface to [`Self::DOCUMENT_SURFACES`] is all it takes for
+    /// every `show_*` to hide it -- which is the property the hand-copied
+    /// lists could not offer.
+    fn show_only(&self, cx: &mut Cx, keep: &'static [LiveId; 1]) {
+        for surface in Self::DOCUMENT_SURFACES {
+            self.ui.widget(cx, surface).set_visible(cx, surface == keep);
+        }
+    }
+
     pub fn show_canvas(&self, cx: &mut Cx) {
-        self.ui
-            .widget(cx, ids!(markdown_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(markdown_viewer_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(folder_view_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(search_results_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(book_surface))
-            .set_visible(cx, false);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
+        self.show_only(cx, ids!(canvas_wrap));
         self.set_canvas_interaction_enabled(cx, true);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     pub fn show_markdown_editor(&self, cx: &mut Cx) {
-        self.ui
-            .widget(cx, ids!(markdown_surface))
-            .set_visible(cx, true);
-        self.ui
-            .widget(cx, ids!(markdown_viewer_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(folder_view_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(search_results_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(book_surface))
-            .set_visible(cx, false);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.show_only(cx, ids!(markdown_surface));
         self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     /// Show the markdown reading view (`markdown_viewer_surface`), the
     /// sibling of `markdown_surface` (the raw-markdown editor). Mutually
     /// exclusive with both the editor surface and the diagram canvas.
     pub fn show_markdown_viewer(&self, cx: &mut Cx) {
-        self.ui
-            .widget(cx, ids!(markdown_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(markdown_viewer_surface))
-            .set_visible(cx, true);
-        self.ui
-            .widget(cx, ids!(folder_view_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(search_results_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(book_surface))
-            .set_visible(cx, false);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.show_only(cx, ids!(markdown_viewer_surface));
         self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     /// Show the folder-listing surface (`folder_view_surface`), mutually
     /// exclusive with the canvas and both markdown surfaces above.
     pub fn show_folder_view(&self, cx: &mut Cx) {
-        self.ui
-            .widget(cx, ids!(markdown_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(markdown_viewer_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(folder_view_surface))
-            .set_visible(cx, true);
-        self.ui
-            .widget(cx, ids!(search_results_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(book_surface))
-            .set_visible(cx, false);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.show_only(cx, ids!(folder_view_surface));
         self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     /// Show the search-results surface (`search_results_surface`), mutually
     /// exclusive with the canvas, both markdown surfaces, and the folder
     /// view above (`SearchResultsView::sync`, Task 8/9).
     pub fn show_search_results(&self, cx: &mut Cx) {
-        self.ui
-            .widget(cx, ids!(markdown_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(markdown_viewer_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(folder_view_surface))
-            .set_visible(cx, false);
-        self.ui
-            .widget(cx, ids!(search_results_surface))
-            .set_visible(cx, true);
-        self.ui
-            .widget(cx, ids!(book_surface))
-            .set_visible(cx, false);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.show_only(cx, ids!(search_results_surface));
         self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     /// Show the book surface (`book_surface`, the mounted `BookSurface`
     /// widget), mutually exclusive with every sibling above. In a headless
     /// test with no DSL tree, the lookup is an absent-widget no-op.
     pub fn show_book_view(&self, cx: &mut Cx) {
-        for surface in [
-            ids!(markdown_surface),
-            ids!(markdown_viewer_surface),
-            ids!(folder_view_surface),
-            ids!(search_results_surface),
-            ids!(canvas_wrap),
-        ] {
-            self.ui.widget(cx, surface).set_visible(cx, false);
-        }
-        self.ui.widget(cx, ids!(book_surface)).set_visible(cx, true);
+        self.show_only(cx, ids!(book_surface));
         self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     /// Take every document surface down. The counterpart to the `show_*`

@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`██████████░░░░░░░░░░░░░░` **22/53 closed** — 23 open, 1 wip, 22 done, 7 decision
+`██████████░░░░░░░░░░░░░░` **23/53 closed** — 22 open, 1 wip, 23 done, 7 decision
 
 ## Findings
 
@@ -55,7 +55,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A24 | H | Sustainability | `decision` | Bus factor 1 with contribution repelled. Declare a personal tool, or do the contribution minimum and upstream the fork's general patches. |
 | A25 | M | Licensing | `done` | THIRD-PARTY.md added at the repo root and embedded into every assembled site (site.rs THIRD_PARTY_FILE), with a test asserting a site cannot ship without it. cargo-deny's licenses check keeps the allow-list honest. |
 | A26 | M | Serve security | `done` | The serve trust model is stated where the flags are read: the token travels in a query parameter (browser history, proxy logs), there is no TLS, and --bind-all puts token, requests and document bodies on the network in cleartext with the Host check necessarily relaxed. The flag's own help repeats it. |
-| A27 | M | Surfaces | `open` | BodyWidgets show_* = five hand-copied sibling lists drifted from the 8-surface authority; compensated at 3 scattered sites; `set_behavior_canvas_vi… |
+| A27 | M | Surfaces | `done` | The five hand-copied sibling lists are one const: BodyWidgets::DOCUMENT_SURFACES, with show_only() raising one and taking the rest down. The drift was a LIVE bug, not just duplication — five show_* never learned about behavior_canvas_wrap, so leaving an activity/state-machine/sequence tab for the folder view, either markdown surface, search results or the book left the behavior canvas on screen underneath. A test drives all six show_* with the behavior canvas up and was confirmed to fail before the fix. diagram_properties_wrap stays out of the list deliberately: it is a companion panel of the canvas, driven per mode by ClassDiagramView::sync, not a sibling competing for the centre. |
 | A28 | M | ViewOutcome | `open` | Ten-Option command bag; own comments admit each field exists because the channel couldn't express it |
 | A29 | M | Solve pipeline | `open` | Positional 3-list coupling in build_scene; desync admitted in comments, guarded by debug_assert; orchestration lives editor-side |
 | A30 | M | Solve API | `open` | Entry-point accretion: route ×4 tiers, stress ×3 with layout/layout_grouped production-dead; no facade, 15 editor entry points into 8 submodules |

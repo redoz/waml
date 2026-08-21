@@ -744,3 +744,40 @@ fn the_caption_search_button_is_client_area_not_a_window_drag_handle() {
         "the search button must be client area; as Caption its click drags the window"
     );
 }
+
+/// Every `show_*` is "mine on, my siblings off", so each one carries its own
+/// copy of the sibling list -- and the copies drifted. `show_folder_view` and
+/// its four peers never learned about `behavior_canvas_wrap`, which was added
+/// later, so switching from an activity/state-machine/sequence tab to any of
+/// those surfaces left the behavior canvas on screen underneath it.
+#[test]
+fn switching_off_the_behavior_canvas_takes_it_down() {
+    let (mut cx, app) = mounted_production_shell();
+    let body = crate::doc_view::BodyWidgets::new(&mut cx, &app.ui);
+
+    for (name, show) in [
+        (
+            "show_folder_view",
+            &crate::doc_view::BodyWidgets::show_folder_view
+                as &dyn Fn(&crate::doc_view::BodyWidgets, &mut Cx),
+        ),
+        ("show_markdown_editor", &|b, cx| b.show_markdown_editor(cx)),
+        ("show_markdown_viewer", &|b, cx| b.show_markdown_viewer(cx)),
+        ("show_search_results", &|b, cx| b.show_search_results(cx)),
+        ("show_book_view", &|b, cx| b.show_book_view(cx)),
+        ("show_canvas", &|b, cx| b.show_canvas(cx)),
+    ] {
+        body.set_behavior_canvas_visible(&mut cx, true);
+        assert!(
+            app.ui.widget(&cx, ids!(behavior_canvas_wrap)).visible(),
+            "precondition: the behavior canvas is up before {name}"
+        );
+
+        show(&body, &mut cx);
+
+        assert!(
+            !app.ui.widget(&cx, ids!(behavior_canvas_wrap)).visible(),
+            "{name} must take the behavior canvas down with the rest"
+        );
+    }
+}
