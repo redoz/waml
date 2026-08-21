@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use super::scalar::{scan_quoted_scalar, QuotedScalarScan};
 use crate::{
     shell::{ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind},
     GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, OkfMarkdownLanguage,
@@ -431,38 +432,6 @@ struct ValueScan {
     invalid_escape: Option<(usize, usize)>,
 }
 
-/// The offset just past the UTF-8 character that starts at `at`.
-fn char_end(bytes: &[u8], at: usize) -> usize {
-    let mut end = at + 1;
-    while bytes
-        .get(end)
-        .is_some_and(|byte| byte & 0b1100_0000 == 0b1000_0000)
-    {
-        end += 1;
-    }
-    end
-}
-
-/// True if `c` is a double-quote escape this decoder understands:
-/// `\\ \" \n \r \t \0 \uXXXX`. Anything else is a genuine unknown escape.
-fn is_known_double_quote_escape(bytes: &[u8], at: usize, limit: usize) -> Option<usize> {
-    match bytes.get(at) {
-        Some(b'\\' | b'"' | b'n' | b'r' | b't' | b'0') => Some(at + 1),
-        Some(b'u') => {
-            let hex_start = at + 1;
-            let hex_end = (hex_start + 4).min(limit);
-            if hex_end - hex_start == 4
-                && bytes[hex_start..hex_end].iter().all(u8::is_ascii_hexdigit)
-            {
-                Some(hex_end)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
 /// Scans a value position (after `key: ` or after `- `), quote-aware. Bare
 /// scalars stop at a ` #` trailing comment; a bare scalar containing `: `
 /// (colon-space) is flagged malformed per YAML's block-mapping grammar.
@@ -478,44 +447,12 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             invalid_escape: None,
         };
     }
-    let first = bytes[start];
-    if first == b'\'' || first == b'"' {
-        let quote = first;
-        let mut at = start + 1;
-        let mut unterminated = true;
-        let mut invalid_escape = None;
-        while at < limit {
-            if bytes[at] == quote {
-                if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
-                    at += 2;
-                    continue;
-                }
-                at += 1;
-                unterminated = false;
-                break;
-            }
-            if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
-                let escape_start = at;
-                match is_known_double_quote_escape(bytes, at + 1, limit) {
-                    Some(next) => at = next,
-                    None => {
-                        // The escaped character need not be ASCII, so step
-                        // over all of its bytes. A fixed two-byte step lands
-                        // inside a multi-byte sequence, and the diagnostic
-                        // built from it reports a range that no longer falls
-                        // on character boundaries.
-                        let escape_end = char_end(bytes, at + 1).min(limit);
-                        if invalid_escape.is_none() {
-                            invalid_escape = Some((escape_start, escape_end));
-                        }
-                        at = escape_end;
-                    }
-                }
-                continue;
-            }
-            at += 1;
-        }
-        let value_end = at;
+    if let Some(scan) = scan_quoted_scalar(source, start, limit) {
+        let QuotedScalarScan {
+            end: value_end,
+            unterminated,
+            invalid_escape,
+        } = scan;
         if unterminated {
             // Already consumed to `limit` — nothing trails to scan.
             return ValueScan {
@@ -555,10 +492,11 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
     }
     // Bare run, but flow-aware: a `[...]` run is a flow sequence whose items
     // may be quoted, and a ` #` or `: ` INSIDE such a quoted item is content,
-    // not a comment cutoff or a mapping indicator. The quote/bracket
-    // bookkeeping mirrors `split_flow_items` in the model crate, which reads
-    // the token back: a quote only opens a quoted item at an item start
-    // (string start, after a comma, or right after an opening bracket).
+    // not a comment cutoff or a mapping indicator. The item-start rule matches
+    // `split_flow_items` in the model crate, which reads the token back: a
+    // quote only opens a quoted item at an item start (string start, after a
+    // comma, or right after an opening bracket). Where the scalar then ENDS is
+    // `scan_quoted_scalar`'s answer, the same one the model gets.
     let mut at = start;
     let mut comment_start = None;
     let mut malformed = false;
@@ -570,26 +508,12 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             at += 1;
             continue;
         }
-        if depth > 0 && at_item_start && (byte == b'\'' || byte == b'"') {
-            let quote = byte;
-            at += 1;
-            while at < limit {
-                if bytes[at] == quote {
-                    if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
-                        at += 2;
-                        continue;
-                    }
-                    at += 1;
-                    break;
-                }
-                if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
-                    at += 2;
-                    continue;
-                }
-                at += 1;
+        if depth > 0 && at_item_start {
+            if let Some(scan) = scan_quoted_scalar(source, at, limit) {
+                at = scan.end;
+                at_item_start = false;
+                continue;
             }
-            at_item_start = false;
-            continue;
         }
         if depth == 0 && byte == b'#' && at > start && bytes[at - 1] == b' ' {
             comment_start = Some(at);
@@ -655,25 +579,10 @@ fn parse_mapping_key(source: &str, start: usize, limit: usize) -> Option<FmKeyMa
     if start >= limit {
         return None;
     }
-    if bytes[start] == b'\'' || bytes[start] == b'"' {
-        let quote = bytes[start];
-        let mut at = start + 1;
-        while at < limit {
-            if bytes[at] == quote {
-                if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
-                    at += 2;
-                    continue;
-                }
-                at += 1;
-                break;
-            }
-            if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
-                at += 2;
-                continue;
-            }
-            at += 1;
-        }
-        let key_end = at;
+    if let Some(scan) = scan_quoted_scalar(source, start, limit) {
+        // An unterminated key runs to `limit`, so the colon test below fails
+        // and this is not a key — the same verdict the value scanner reaches.
+        let key_end = scan.end;
         if key_end < limit
             && bytes[key_end] == b':'
             && (key_end + 1 == limit || bytes[key_end + 1] == b' ')

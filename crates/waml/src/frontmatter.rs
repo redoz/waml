@@ -311,26 +311,12 @@ fn split_flow_items(s: &str) -> Vec<&str> {
             i += 1;
             continue;
         }
-        if at_item_start && (bytes[i] == b'\'' || bytes[i] == b'"') {
-            let quote = bytes[i];
-            i += 1;
-            while i < bytes.len() {
-                if bytes[i] == quote {
-                    if quote == b'\'' && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                    break;
-                }
-                if quote == b'"' && bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
-                    continue;
-                }
-                i += 1;
+        if at_item_start {
+            if let Some(scan) = waml_syntax::scan_quoted_scalar(s, i, bytes.len()) {
+                i = scan.end;
+                at_item_start = false;
+                continue;
             }
-            at_item_start = false;
-            continue;
         }
         match bytes[i] {
             b'[' | b'{' => {
@@ -405,25 +391,15 @@ fn split_flow_map_field(field: &str) -> Option<(&str, &str)> {
     let mut at = 0usize;
     let mut depth: i32 = 0;
     while at < bytes.len() {
+        // A quote opens a scalar wherever it appears here, not only at an item
+        // start: this runs on ONE field, already cut out by `split_flow_items`
+        // under the item-start rule, so anything quote-shaped left in it is a
+        // delimiter. Skipping the scalar keeps a `:` inside it from splitting.
+        if let Some(scan) = waml_syntax::scan_quoted_scalar(field, at, bytes.len()) {
+            at = scan.end;
+            continue;
+        }
         match bytes[at] {
-            quote @ (b'\'' | b'"') => {
-                at += 1;
-                while at < bytes.len() {
-                    if bytes[at] == quote {
-                        if quote == b'\'' && at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
-                            at += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    if quote == b'"' && bytes[at] == b'\\' && at + 1 < bytes.len() {
-                        at += 2;
-                        continue;
-                    }
-                    at += 1;
-                }
-                at += 1;
-            }
             b'[' | b'{' => {
                 depth += 1;
                 at += 1;
@@ -537,29 +513,11 @@ fn contains_bad_frontmatter_token(node: &SyntaxNode<OkfMarkdownLanguage>) -> boo
     })
 }
 
+/// True when `value` is exactly one closed quoted scalar and nothing else —
+/// the shape the rewrite guard demands before it will touch a flow mapping.
 fn quoted_flow_scalar_is_valid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let Some(&quote @ (b'\'' | b'"')) = bytes.first() else {
-        return false;
-    };
-    let mut at = 1;
-    while at < bytes.len() {
-        if bytes[at] == quote {
-            if quote == b'\'' && at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
-                at += 2;
-                continue;
-            }
-            return at + 1 == bytes.len();
-        }
-        if quote == b'"' && bytes[at] == b'\\' {
-            at += 1;
-            if at == bytes.len() {
-                return false;
-            }
-        }
-        at += 1;
-    }
-    false
+    waml_syntax::scan_quoted_scalar(value, 0, value.len())
+        .is_some_and(|scan| !scan.unterminated && scan.end == value.len())
 }
 
 fn plain_flow_scalar_is_valid(value: &str) -> bool {
@@ -579,32 +537,26 @@ fn flow_map_field_is_valid(field: &str) -> bool {
         return false;
     }
     let bytes = field.as_bytes();
-    let mut quote = None;
     let mut at = 0;
     let mut colon = None;
     while at < bytes.len() {
-        match quote {
-            Some(b'\'') if bytes[at] == b'\'' => {
-                if at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
-                    at += 2;
-                    continue;
-                }
-                quote = None;
+        // Deliberately stricter than the READER: this guard treats a quote
+        // anywhere as a delimiter, where `split_flow_items` only honours one
+        // at an item start. It decides whether a rewrite may proceed, so
+        // erring toward "not a flat mapping" costs a refused edit, while
+        // erring the other way rewrites text we misread.
+        if let Some(scan) = waml_syntax::scan_quoted_scalar(field, at, bytes.len()) {
+            // An unterminated quote swallows the rest of the field, so no
+            // top-level colon can follow it: not a `key: value`.
+            if scan.unterminated {
+                return false;
             }
-            Some(b'"') if bytes[at] == b'\\' => {
-                at += 1;
-                if at == bytes.len() {
-                    return false;
-                }
-            }
-            Some(active) if bytes[at] == active => quote = None,
-            Some(_) => {}
-            None if matches!(bytes[at], b'\'' | b'"') => quote = Some(bytes[at]),
-            None if bytes[at] == b':' => {
-                colon = Some(at);
-                break;
-            }
-            None => {}
+            at = scan.end;
+            continue;
+        }
+        if bytes[at] == b':' {
+            colon = Some(at);
+            break;
         }
         at += 1;
     }
@@ -644,38 +596,28 @@ fn flat_flow_map_is_valid(value: &str) -> bool {
         return false;
     }
     let bytes = inner.as_bytes();
-    let mut quote = None;
     let mut field_start = 0;
     let mut at = 0;
     while at < bytes.len() {
-        match quote {
-            Some(b'\'') if bytes[at] == b'\'' => {
-                if at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
-                    at += 2;
-                    continue;
-                }
-                quote = None;
+        // Same conservative reading as `flow_map_field_is_valid`: a quote
+        // anywhere is a delimiter, and one that never closes disqualifies the
+        // whole mapping rather than being read as ordinary text.
+        if let Some(scan) = waml_syntax::scan_quoted_scalar(inner, at, bytes.len()) {
+            if scan.unterminated {
+                return false;
             }
-            Some(b'"') if bytes[at] == b'\\' => {
-                at += 1;
-                if at == bytes.len() {
-                    return false;
-                }
+            at = scan.end;
+            continue;
+        }
+        if bytes[at] == b',' {
+            if !flow_map_field_is_valid(&inner[field_start..at]) {
+                return false;
             }
-            Some(active) if bytes[at] == active => quote = None,
-            Some(_) => {}
-            None if matches!(bytes[at], b'\'' | b'"') => quote = Some(bytes[at]),
-            None if bytes[at] == b',' => {
-                if !flow_map_field_is_valid(&inner[field_start..at]) {
-                    return false;
-                }
-                field_start = at + 1;
-            }
-            None => {}
+            field_start = at + 1;
         }
         at += 1;
     }
-    quote.is_none() && flow_map_field_is_valid(&inner[field_start..])
+    flow_map_field_is_valid(&inner[field_start..])
 }
 
 fn flow_map_value(line: &str) -> Option<&str> {

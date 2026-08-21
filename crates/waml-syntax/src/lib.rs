@@ -29,7 +29,7 @@ pub use incremental::{
 };
 pub use markdown::scalar::{
     classify_bare_scalar, decode_double_quoted_body, decode_quoted_scalar, normalize_line_endings,
-    FrontmatterScalarKind,
+    scan_quoted_scalar, FrontmatterScalarKind, QuotedScalarScan,
 };
 pub use markdown::{
     has_leading_frontmatter_fence, leading_frontmatter_slice, parse_markdown, reparse_markdown,
