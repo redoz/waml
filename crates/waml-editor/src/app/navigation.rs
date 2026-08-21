@@ -220,7 +220,7 @@ impl App {
     pub(crate) fn open_search_results(&mut self, cx: &mut Cx, query: &str) {
         let rows = self.build_search_rows(query);
         let hits = crate::search_results_view::ordered_hits(rows);
-        self.session_search = Some(SearchSession::new(
+        self.session_search.begin(SearchSession::new(
             query.to_string(),
             hits,
             waml::search::QueryScope::default(),

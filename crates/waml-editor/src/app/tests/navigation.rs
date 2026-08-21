@@ -2874,7 +2874,7 @@ fn open_search_results_starts_a_bundle_wide_session_over_two_documents() {
 
     let session = app
         .session_search
-        .as_ref()
+        .session()
         .expect("open_search_results starts the bundle-wide session");
     assert_eq!(session.query, "details");
     assert_eq!(session.hits.len(), 2);
@@ -2896,10 +2896,10 @@ fn f3_advances_the_live_session_across_document_boundaries_and_wraps() {
     let (mut cx, mut app) = rebuilt_search_app();
     app.open_search_results(&mut cx, "details");
 
-    let first_hit = app.session_search.as_ref().unwrap().hits[0].clone();
+    let first_hit = app.session_search.session().unwrap().hits[0].clone();
     let first_concept = crate::search_results_view::concept_id_for_hit(&first_hit);
     let second_concept = crate::search_results_view::concept_id_for_hit(
-        &app.session_search.as_ref().unwrap().hits[1],
+        &app.session_search.session().unwrap().hits[1],
     );
 
     // Land on the first hit, the way a results-tab row click does.
@@ -2916,7 +2916,7 @@ fn f3_advances_the_live_session_across_document_boundaries_and_wraps() {
         app.documents.active_tab().and_then(|tab| tab.concept_id()),
         Some(first_concept.as_str())
     );
-    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(0));
+    assert_eq!(app.session_search.session().unwrap().cursor, Some(0));
 
     // F3 crosses into the OTHER document.
     app.step_session(&mut cx, true);
@@ -2960,28 +2960,29 @@ fn f3_advances_past_hits_that_share_one_reveal_target() {
         entry,
         score: 1.0,
     };
-    app.session_search = Some(crate::search_session::SearchSession::new(
-        "customer".to_string(),
-        vec![hit(0), hit(1), hit(2)],
-        waml::search::QueryScope::default(),
-    ));
+    app.session_search
+        .begin(crate::search_session::SearchSession::new(
+            "customer".to_string(),
+            vec![hit(0), hit(1), hit(2)],
+            waml::search::QueryScope::default(),
+        ));
 
     app.step_session(&mut cx, true);
-    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(0));
+    assert_eq!(app.session_search.session().unwrap().cursor, Some(0));
 
     app.step_session(&mut cx, true);
     assert_eq!(
-        app.session_search.as_ref().unwrap().cursor,
+        app.session_search.session().unwrap().cursor,
         Some(1),
         "F3 must not fall back to the first hit sharing the target"
     );
 
     app.step_session(&mut cx, true);
-    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(2));
+    assert_eq!(app.session_search.session().unwrap().cursor, Some(2));
 
     // Shift+F3 walks back down the same list.
     app.step_session(&mut cx, false);
-    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(1));
+    assert_eq!(app.session_search.session().unwrap().cursor, Some(1));
 }
 
 /// `mark_session_landing` lights every match the session found in the
@@ -3005,14 +3006,15 @@ fn a_landed_reveal_keeps_the_sessions_other_matches_in_that_document_lit() {
         entry: 0,
         score: 1.0,
     };
-    app.session_search = Some(crate::search_session::SearchSession::new(
-        "details".to_string(),
-        vec![hit(4, 8), hit(20, 24)],
-        waml::search::QueryScope::default(),
-    ));
+    app.session_search
+        .begin(crate::search_session::SearchSession::new(
+            "details".to_string(),
+            vec![hit(4, 8), hit(20, 24)],
+            waml::search::QueryScope::default(),
+        ));
 
     // Land on the first hit, the way a results-tab row click does.
-    let first = app.session_search.as_ref().unwrap().hits[0].clone();
+    let first = app.session_search.session().unwrap().hits[0].clone();
     let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&first);
     app.apply_view_outcome(
         &mut cx,
@@ -3061,7 +3063,7 @@ fn esc_ends_the_live_session_and_further_f3_is_a_no_op() {
         }),
     );
 
-    assert!(app.session_search.is_none());
+    assert!(!app.session_search.is_active());
 
     // A further F3 does nothing: no session left to walk.
     app.step_session(&mut cx, true);

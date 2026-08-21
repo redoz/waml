@@ -177,7 +177,7 @@ impl App {
             // per-view escape below waits for a second press, the same
             // "peel one layer at a time" shape the shortcuts overlay and
             // properties page already follow.
-            if self.session_search.is_some() {
+            if self.session_search.is_active() {
                 self.end_session_search(cx);
                 return;
             }

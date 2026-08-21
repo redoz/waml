@@ -26,7 +26,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 |---|---|---|---|---|---|
 | C1 | **Dock chrome** | 11 | 54 | `shell` (44), `workspace` (7), `actions` (3) | **extracted** → `app::dock_chrome::DockChrome` |
 | C11 | Core shell | 9 | 242 | everywhere | stays on `App` — this *is* the app shell |
-| C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | open |
+| C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | **partly extracted** (`SessionSearch`) |
 | C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
 | C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredAnchorRestore`) |
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | **extracted** → `app::open_project::OpenProject` |
@@ -47,7 +47,7 @@ remember between frames. Now `App::dock: DockChrome`, in
 `crates/waml-editor/src/app/dock_chrome.rs`; the invariants that hold over the
 group are stated in that module's docs.
 
-### C2 — Search sessions (5 fields)
+### C2 — Search sessions (5 fields) — **partly extracted**
 
 `search`, `find`, `session_search`, `stepped_session_index`, `pending_reveal`.
 
@@ -55,6 +55,26 @@ The bundle index plus the two live cursors over it — the Ctrl+F document-scope
 one and the bundle-wide F3 one — and the reveal that is waiting on a tab to
 draw. `stepped_session_index` exists only because the cursor cannot be
 re-derived from a landing; that is the invariant a type would carry.
+
+**The coupled pair is extracted** as `app::session_search::SessionSearch`:
+`step` stamps the index it lands on as part of advancing, and `mark_landing`
+takes the stamp before it looks at whether a session is live. Held apart,
+`end_session_search` cleared the session and left the stamp behind — dead
+today only because the one producer and the one consumer sit inside a single
+synchronous call, which you could only learn by reading the whole chain.
+
+**The other three should NOT be forced together.** They are three different
+kinds of thing that happen to be about searching:
+
+* `search` is the bundle-wide `SearchState` *index* — an engine, like
+  `session` and `documents`. Every search surface reads it. It belongs with
+  C11, not with the cursors over it.
+* `find` is already one well-shaped `Option<SearchSession>` for the Ctrl+F
+  strip, document-scoped and deliberately independent of the bundle-wide one.
+  There is no second field to couple it to.
+* `pending_reveal` is not a search session at all; it is a deferred apply, and
+  its siblings are `pending_fragment` and `anchor_restore`. See "Why C6's
+  remainder is not a type" above for the move those three want.
 
 ### C3 — Command palette (3 fields)
 
@@ -255,9 +275,15 @@ which is an argument for doing the rest.
 Cheap-and-safe first, so the pattern is established before the risky ones; the
 untestable one last.
 
-**Next one to take: C2 Search sessions (5) — item 8 below.** `App` is at 30
-fields (29 `#[rust]` plus `ui`), down from the 54 the audit found. C6's
-remainder is deliberately skipped; see item 5.
+**Next one to take: the deferred-apply trio** — `pending_fragment`,
+`pending_reveal` and the already-extracted `anchor_restore`, which cuts across
+C6 and C2 rather than along either. See "Why C6's remainder is not a type"
+below for the one question to settle first. After that, **C4 (item 9)** is all
+that is left, and it needs a browser.
+
+`App` is at 29 fields (28 `#[rust]` plus `ui`), down from the 54 the audit
+found. C6's remainder and the rest of C2 are deliberately NOT extractions;
+items 5 and 8 say why.
 
 1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
    the wheel accumulator and the target it banks for, because the reset-on-
@@ -285,7 +311,9 @@ remainder is deliberately skipped; see item 5.
    trip; the native disk write itself is still only covered by a type-check, so
    a failing save by hand is worth doing before trusting it further.
 8. **C2 Search sessions (5)** — spread over four files and the most entangled
-   with `documents` and `ui`. Last of the tractable ones.
+   with `documents` and `ui`. Its coupled pair (`session_search` +
+   `stepped_session_index`) is **done**; the remaining three are three
+   different kinds of thing and should stay apart. See the C2 section.
 9. **C4 Web / remote boot (5)** — last, not because it is hard but because
    nothing in `cargo test --workspace` executes it. Move it only in a session
    that can verify a `?bundle=` / `?api=` boot in a real browser.

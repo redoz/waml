@@ -5,6 +5,7 @@ mod menus;
 mod navigation;
 mod open_project;
 mod projection;
+mod session_search;
 mod shell;
 mod workspace;
 
@@ -12,6 +13,7 @@ use self::dock_chrome::DockChrome;
 use self::navigation::{DeferredAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
 use self::open_project::OpenProject;
 use self::projection::Projection;
+use self::session_search::SessionSearch;
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save};
@@ -891,19 +893,11 @@ pub struct App {
     /// `App::mark_session_landing`, the one place `ViewOutcome.reveal` is
     /// consumed). `F3`/`Shift+F3` (`step_session`) keep walking it across
     /// document boundaries. `None` outside a live session; `Esc`
-    /// (`end_session_search`) ends it.
+    /// (`end_session_search`) ends it — together with the cursor index an
+    /// F3/Shift+F3 step stamps for the landing it triggers, because a landing
+    /// cannot re-derive that index from its reveal. See [`session_search`].
     #[rust]
-    session_search: Option<SearchSession>,
-    /// The session index `step_session` (F3/Shift+F3) just moved to, handed
-    /// forward to the landing it triggers. `mark_session_landing` cannot
-    /// re-derive it: hits routinely share a `(concept_id, RevealTarget)`
-    /// pair (every Names/Model/Structure entry of one concept carries the
-    /// same `HitTarget::ModelElement`), so locating one by target alone
-    /// snaps the cursor back to the first of them. Taken by the landing;
-    /// `None` for any other producer of a reveal (a results-tab row click,
-    /// a palette commit), which still locates itself by target.
-    #[rust]
-    stepped_session_index: Option<usize>,
+    session_search: SessionSearch,
     /// The state of the OPEN Ctrl+K palette, or `None` while it is closed.
     ///
     /// Sections, query and hidden-set are set together on open, read together

@@ -787,7 +787,7 @@ impl App {
     /// demand rather than cached, since it is cheap and the query never
     /// changes without `session_search` itself being replaced.
     fn session_search_tab_id(&self) -> Option<LiveId> {
-        let session = self.session_search.as_ref()?;
+        let session = self.session_search.session()?;
         let locator = crate::navigation::DocumentLocator::new(
             waml::view::row::RowTarget::Virtual,
             waml::view::surface::SurfaceId(format!("search:{}", session.query)),
@@ -811,25 +811,10 @@ impl App {
         concept_id: &str,
         target: &crate::doc_view::RevealTarget,
     ) {
-        let stepped = self.stepped_session_index.take();
-        let Some(session) = self.session_search.as_mut() else {
+        if !self.session_search.mark_landing(concept_id, target) {
             return;
-        };
-        // An F3/Shift+F3 step already chose the index; only a landing from
-        // somewhere else (a results-tab row click, a palette commit) has to
-        // locate itself, and it can only do so by target -- which several
-        // hits of one concept share, so it lands on the first of them.
-        let index = stepped
-            .filter(|&index| index < session.hits.len())
-            .or_else(|| {
-                session.hits.iter().position(|hit| {
-                    crate::search_results_view::navigation_for_hit(hit)
-                        .1
-                        .as_ref()
-                        .is_some_and(|(cid, t)| cid == concept_id && t == target)
-                })
-            });
-        session.cursor = index;
+        }
+        let index = self.session_search.cursor();
         if let Some(tab_id) = self.session_search_tab_id() {
             self.documents
                 .mark_search_cursor(cx, &self.ui, tab_id, index);
@@ -875,7 +860,7 @@ impl App {
         &self,
         concept_id: &str,
     ) -> Option<(Vec<TextRange>, std::collections::HashSet<String>)> {
-        let session = self.session_search.as_ref()?;
+        let session = self.session_search.session()?;
         let mut text_ranges = Vec::new();
         let mut model_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
         for hit in &session.hits {
@@ -906,19 +891,12 @@ impl App {
     /// of which `apply_view_outcome`'s `outcome.reveal` handling already
     /// does. A no-op with no live session or no hits.
     pub(super) fn step_session(&mut self, cx: &mut Cx, forward: bool) {
-        let stepped = match self.session_search.as_mut() {
-            Some(session) => session
-                .advance(forward)
-                .cloned()
-                .map(|hit| (session.cursor, hit)),
-            None => None,
-        };
-        let Some((index, hit)) = stepped else {
+        // `step` stamps the index it lands on for the landing this outcome
+        // triggers, which cannot recover it from the reveal (see
+        // [`SessionSearch`]).
+        let Some(hit) = self.session_search.step(forward) else {
             return;
         };
-        // The landing this outcome triggers must keep THIS index; it cannot
-        // recover it from the reveal (see `stepped_session_index`).
-        self.stepped_session_index = index;
         let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&hit);
         let outcome = crate::doc_view::ViewOutcome {
             navigation: Some(navigation),
@@ -940,7 +918,7 @@ impl App {
             self.documents
                 .mark_search_cursor(cx, &self.ui, tab_id, None);
         }
-        self.session_search = None;
+        self.session_search.end();
         self.clear_search_highlights(cx);
         if self.find.is_some() {
             self.close_find_strip(cx);
