@@ -155,6 +155,13 @@ pub struct EditorMarkdownExtensionHost {
     canceled: BTreeSet<(MarkdownExtensionLeaseId, BlockExtensionRequestId)>,
     pending: BTreeMap<(MarkdownExtensionLeaseId, BlockExtensionRequestId), PendingRender>,
     active_leases: BTreeSet<MarkdownExtensionLeaseId>,
+    /// Handed to each native render worker so it can post its result back.
+    ///
+    /// On wasm there are no workers — renders run deferred on the UI thread
+    /// and complete through `deferred` — so nothing reads this there. It is
+    /// still constructed as half of the channel pair, and holding it keeps the
+    /// receiver alive rather than seeing every recv fail as disconnected.
+    #[cfg_attr(all(target_arch = "wasm32", not(test)), allow(dead_code))]
     completion_tx: Sender<Completion>,
     completion_rx: Receiver<Completion>,
     next_lease: u64,
