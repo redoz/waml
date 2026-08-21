@@ -15,7 +15,7 @@ use serde_json::json;
 
 use crate::ops_dto::OpDto;
 use crate::serve::guard::{check, Deny, Guard, ReqFacts};
-use crate::serve::state::{ApplyFailure, DocumentWrite, ServeState};
+use crate::serve::state::{ApplyFailure, ServeState};
 use waml_ops_dto::{ConflictResponse, DocumentsRequest, RevisionResponse};
 
 /// Shared server state: the loaded bundle behind a `std::sync::Mutex` (never
