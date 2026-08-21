@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`███████░░░░░░░░░░░░░░░░░` **15/53 closed** — 31 open, 1 wip, 15 done, 6 decision
+`███████░░░░░░░░░░░░░░░░░` **16/53 closed** — 31 open, 16 done, 6 decision
 
 ## Findings
 
@@ -73,12 +73,12 @@ be wrong later, the row reopens rather than a new row being appended.
 | A42 | M | OKF spec governance | `open` | Spec vendored by wholesale replacement, no upstream SHA or drift check; WAML profile has one implementation |
 | A43 | L | DiagCode | `open` | Kebab-case wire names maintained twice (serde rename + 80-arm as_str) |
 | A44 | L | Solver wire | `open` | Stringly keys; `key: Option<String>` retrofit for duplicate edges |
-| A45 | L | Naming | `open` | waml-syntax "domain-neutral" headline false; 4 modules named "navigation"; NavCategory is a 10-variant identity mirror of RowKind |
+| A45 | L | Naming | `done` | waml-syntax's 'domain-neutral' headline now states the real trade: the core is language-parameterised, the crate exports the WAML island types on purpose because island recognition happens inside the one Markdown parse. The nav.rs/navigation.rs collision and the NavCategory/RowKind mirror ride with the shell refactor (A15). |
 | A46 | L | Dead API | `open` | validate_from_source has zero callers on a diagnostics-swallowing path; uml::lower::referrers kept alive by one test port |
 | A47 | L | List primitives | `open` | Three copy-adapted scrollbar geometries with duplicated tests; list widgets built by lineage copying |
 | A48 | L | Arc-identity rename | `open` | Move ops must preserve text Arcs or Renamed degrades to Removed+Inserted; documented, unenforced |
 | A49 | L | Property spread | `open` | Edit-op layer example-based only; no apply→write→reparse round-trip property |
-| A50 | L | Extension packaging | `done` | waml-editor's description now says what it is — a native GPU editor, not a read-only viewer. |
-| A51 | L | Manifest honesty | `open` | waml-editor's description says "read-only GPU viewer" while shipping two write backends. (The workspace-1.80/editor-1.95 MSRV split is the intended… |
-| A52 | L | classifier_page | `wip` | waml-syntax's 'domain-neutral' headline now states the real trade (island recognition happens inside the one Markdown parse). The nav.rs/navigation.rs naming collision and the NavCategory/RowKind mirror ride with the shell refactor (A15). |
-| A53 | L | Parser fn size | `done` | The 'a CLI subcommand can emit the identical page' claim now says no CLI consumer exists and no parity test pins it. |
+| A50 | L | Extension packaging | `open` | No vsce/ovsx/bundler; the bundled-binary resolution branch is self-documented as dead (serverPath.ts:66). |
+| A51 | L | Manifest honesty | `done` | waml-editor's description now says what it is — a native GPU editor, not a read-only viewer. |
+| A52 | L | classifier_page | `done` | The 'a CLI subcommand can emit the identical page' claim now says no CLI consumer exists and no parity test pins it. |
+| A53 | L | Parser fn size | `open` | Mis-set earlier; reopened. Parser function size is untouched. |
