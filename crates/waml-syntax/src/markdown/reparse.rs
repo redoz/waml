@@ -11,7 +11,7 @@ use crate::{
 
 use super::reference::{normalize_label, MarkdownReferenceDefinition, MarkdownReferenceMap};
 
-/// Returns true when a change touches any reference-definition line.
+/// Returns true when a change touches any reference definition.
 ///
 /// The check is deliberately conservative. A false positive only expands the
 /// incremental work set; a false negative could leave a reference annotation
@@ -23,8 +23,8 @@ pub(crate) fn change_touches_reference_definition(
     map: &ChangeMap,
 ) -> bool {
     changes.iter().zip(map.segments()).any(|(change, segment)| {
-        paragraph_run_lines(old.shared(), change.old_range).any(line_may_define_reference)
-            || paragraph_run_lines(new.shared(), segment.new).any(line_may_define_reference)
+        text_may_define_reference(paragraph_run(old.shared(), change.old_range))
+            || text_may_define_reference(paragraph_run(new.shared(), segment.new))
     })
 }
 
@@ -47,7 +47,13 @@ pub(crate) fn change_touches_reference_definition(
 /// worst the length of one paragraph; over-reporting only costs an oracle
 /// parse, while under-reporting leaves reference uses elsewhere in the
 /// document resolved against a definition that no longer exists.
-fn paragraph_run_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
+///
+/// Returned as one string, not as lines: the label a definition opens with is
+/// no more a line than the definition is. `[\nid]: /x` defines `id` across a
+/// line break, and splitting the run first leaves an unclosed `[` on one line
+/// and a label-less `id]: /x` on the next, so neither line reads as a
+/// definition and the run is waved through.
+fn paragraph_run(source: &str, range: TextRange) -> &str {
     let start = range.start().to_usize().min(source.len());
     let end = range.end().to_usize().min(source.len());
     let mut run_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
@@ -68,7 +74,7 @@ fn paragraph_run_lines(source: &str, range: TextRange) -> impl Iterator<Item = &
         }
         run_end = next;
     }
-    source[run_start..run_end].split_terminator('\n')
+    &source[run_start..run_end]
 }
 
 /// Returns true when an edited line can add, remove, or join a reference use.
@@ -112,6 +118,17 @@ pub(crate) fn change_may_affect_reference_use(
 /// [`reference_use_labels`]: a window reparse decides for itself which of its
 /// lines are definitions, and it decides from in-window bytes alone, so no
 /// line in the window may be assumed to be one.
+///
+/// Scans the window as one string, not line by line. A link label is not a
+/// line: `[\nid]` is a shortcut reference use of `id` spelled across a line
+/// break, and a per-line scan sees only an unclosed `[` above and a stray `]`
+/// below, so it names no label at all and the guard waves the window through.
+/// Feeding [`reference_labels`] the whole span is safe in both directions: a
+/// bracket pair the parser would not accept — one straddling the blank line
+/// that ends a paragraph, say — only names a label that costs a fallback,
+/// while the scan's two `break`s cannot hide a later label, since each fires
+/// only when no `]` remains anywhere in the rest of the span and no complete
+/// bracket pair can follow without one.
 pub(crate) fn window_reparse_may_lose_reference_resolution(
     old: &SourceText,
     old_root: &GreenNode<OkfMarkdownLanguage>,
@@ -129,21 +146,29 @@ pub(crate) fn window_reparse_may_lose_reference_resolution(
                 || definition.source_range.end() > old_window.end()
         })
     };
-    Ok(intersecting_lines(old.shared(), old_window)
-        .chain(intersecting_lines(new.shared(), new_window))
-        .flat_map(reference_labels)
-        .any(|label| defined_outside(&label)))
+    Ok([
+        intersecting_span(old.shared(), old_window),
+        intersecting_span(new.shared(), new_window),
+    ]
+    .into_iter()
+    .flat_map(reference_labels)
+    .any(|label| defined_outside(&label)))
 }
 
 fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
+    intersecting_span(source, range).split_terminator('\n')
+}
+
+/// The whole of every line the range touches, as one string.
+fn intersecting_span(source: &str, range: TextRange) -> &str {
     let start = range.start().to_usize().min(source.len());
     let end = range.end().to_usize().min(source.len());
     let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
     let line_end = source[end..].find('\n').map_or(source.len(), |at| end + at);
-    source[line_start..line_end].split_terminator('\n')
+    &source[line_start..line_end]
 }
 
-/// Returns true when a line could carry a reference definition.
+/// Returns true when a stretch of text could carry a reference definition.
 ///
 /// Deliberately loose, for the guards that must over-report. A definition's
 /// own text does not begin at the raw line start: every block container puts a
@@ -154,14 +179,22 @@ fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &s
 /// removes such a prefix moves a definition in or out of existence without
 /// ever touching its label or destination.
 ///
-/// So the test asks only what a definition needs *somewhere* on the line: a
-/// bracketed label followed by a colon. Matching a paragraph that merely reads
-/// like one costs an extra oracle parse; missing a real one leaves reference
-/// uses elsewhere in the document resolved against a definition set that no
-/// longer exists.
-fn line_may_define_reference(line: &str) -> bool {
-    line.find('[')
-        .is_some_and(|open| line[open..].contains("]:"))
+/// So the test asks only what a definition needs *somewhere* in the text: a
+/// bracket followed later by `]:`. Matching a paragraph that merely reads like
+/// one costs an extra oracle parse; missing a real one leaves reference uses
+/// elsewhere in the document resolved against a definition set that no longer
+/// exists.
+///
+/// The unit is the paragraph run, not the line, and widening it only widens
+/// what this accepts: the first `[` of a run is at or before the first `[` of
+/// any line in it, so every line this would have accepted on its own is still
+/// accepted as part of its run. That is the direction this predicate is
+/// obliged to err in. (It is not the direction
+/// [`line_is_definition`] is obliged to err in, which is why that one is still
+/// handed a line and still asked about a line.)
+fn text_may_define_reference(text: &str) -> bool {
+    text.find('[')
+        .is_some_and(|open| text[open..].contains("]:"))
 }
 
 /// Returns true when a line reads as a reference definition *and nothing else*.
@@ -963,30 +996,41 @@ mod tests {
         // `xing` is this definition's destination, and nothing on that line
         // says so: only the `[id]: ` above it does.
         let source = "para\n\n[id]: \nxing\n\ntail\n";
-        assert_eq!(
-            paragraph_run_lines(source, range(13, 14)).collect::<Vec<_>>(),
-            vec!["[id]: ", "xing"]
-        );
-        assert!(paragraph_run_lines(source, range(13, 14)).any(line_may_define_reference));
+        assert_eq!(paragraph_run(source, range(13, 14)), "[id]: \nxing");
+        assert!(text_may_define_reference(paragraph_run(
+            source,
+            range(13, 14)
+        )));
         // The run stops at the blank lines that bound it, so a neighbouring
         // paragraph's definition is not attributed to this edit.
-        assert_eq!(
-            paragraph_run_lines(source, range(0, 1)).collect::<Vec<_>>(),
-            vec!["para"]
-        );
-        assert!(!paragraph_run_lines(source, range(19, 20)).any(line_may_define_reference));
+        assert_eq!(paragraph_run(source, range(0, 1)), "para");
+        assert!(!text_may_define_reference(paragraph_run(
+            source,
+            range(19, 20)
+        )));
+    }
+
+    #[test]
+    fn definition_scan_sees_a_label_spelled_across_a_line_break() {
+        // `[\nid]: /x` defines `id`. Split into lines it is an unclosed `[`
+        // above a label-less `id]: /x`, and neither reads as a definition.
+        let source = "para\n\n[\nid]: /x\n";
+        assert!(text_may_define_reference(paragraph_run(
+            source,
+            range(8, 9)
+        )));
     }
 
     #[test]
     fn definition_scan_looks_past_a_container_prefix() {
         // A definition inside a block quote or a list item is still a
         // definition; only its container's marker precedes it on the line.
-        assert!(line_may_define_reference("> [id]: /one"));
-        assert!(line_may_define_reference(">>[id]:/one"));
-        assert!(line_may_define_reference("- [id]: /one"));
-        assert!(line_may_define_reference("\t1. [id]: /one"));
-        assert!(!line_may_define_reference("plain prose"));
-        assert!(!line_may_define_reference("a] : not a label"));
+        assert!(text_may_define_reference("> [id]: /one"));
+        assert!(text_may_define_reference(">>[id]:/one"));
+        assert!(text_may_define_reference("- [id]: /one"));
+        assert!(text_may_define_reference("\t1. [id]: /one"));
+        assert!(!text_may_define_reference("plain prose"));
+        assert!(!text_may_define_reference("a] : not a label"));
 
         // The strict test stays strict: its caller drops what it accepts.
         assert!(line_is_definition("  [id]: /one"));

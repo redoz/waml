@@ -592,6 +592,43 @@ fn a_reference_use_opened_by_an_inner_bracket_still_forces_a_reparse() {
 }
 
 #[test]
+fn a_reference_label_spelled_across_a_line_break_still_forces_a_reparse() {
+    // This fails if the window guard scans its window line by line. A link
+    // label is not a line: `[\nid]` is a shortcut reference use of `id`, and
+    // per line it is an unclosed `[` above a stray `id]` below -- so the scan
+    // named no label at all, the guard waved the window through, and the
+    // window reparse resolved `[\nid]` against its own bytes only. The
+    // definition sits in the first section, outside the window, so the
+    // incremental tree published `Text` where a full parse has a `Link`.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\nuse [x\nid]\n",
+        "[id]: /one\n\n# M\n\n[\nid]\n",
+        &[TextChange {
+            old_range: range(17, 23),
+            replacement: Arc::from("["),
+        }],
+    );
+}
+
+#[test]
+fn a_definition_label_spelled_across_a_line_break_is_still_a_definition() {
+    // The same rule on the definition side. The edit turns the paragraph
+    // `[\nid]` into the definition `[\nid]: ]`, whose label spans the line
+    // break, so `[a][id]` in the second section becomes a link to `]`. The
+    // definition guard walked the edited paragraph run line by line, saw an
+    // unclosed `[` above a label-less `id]: ]` below, ran no oracle parse, and
+    // left `[a][id]` plain text.
+    assert_matches_full_oracle(
+        "[\nid]\n\n# M\n\n[a][id]\n",
+        "[\nid]: ]\n\n# M\n\n[a][id]\n",
+        &[TextChange {
+            old_range: range(4, 4),
+            replacement: Arc::from("]: "),
+        }],
+    );
+}
+
+#[test]
 fn renamed_definition_invalidates_old_backlinks() {
     // This fails if fan-out consults only new backlinks after a label disappears.
     let old = "[id]: /one\n\nuse [x][id]\n";
