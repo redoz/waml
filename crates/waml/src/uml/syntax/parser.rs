@@ -1262,15 +1262,16 @@ fn flow_value_line(
     end: usize,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let bullet_end = char_end(source, lead, content_end);
     let mut children = vec![token(
         f,
         text,
         start,
         lead,
-        lead + 1,
+        bullet_end,
         UmlSyntaxKind::BulletToken,
     )];
-    let value_start = skip_ws(source, lead + 1, content_end);
+    let value_start = skip_ws(source, bullet_end, content_end);
     children.push(slot(
         f,
         UmlSyntaxKind::FlowNoteValue,
@@ -1278,7 +1279,7 @@ fn flow_value_line(
             token(
                 f,
                 text,
-                lead + 1,
+                bullet_end,
                 value_start,
                 content_end,
                 UmlSyntaxKind::IdentifierToken,
@@ -1300,22 +1301,22 @@ fn flow_line(
     trace_lines: &[(usize, usize)],
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
-    let (_, content_end, _) = behavior_bounds(source, start, end);
-    let lead = skip_ws(source, start, content_end);
-    let body = skip_ws(source, (lead + 1).min(content_end), content_end);
-    let word_end = scan_word(source, body, content_end);
-    let word = &source[body..word_end];
-    if matches!(word, "entry:" | "do:" | "exit:" | "refines" | "partition:") {
+    if flow_line_is_internal(source, start, end) {
         flow_internal(f, text, source, start, end, diags)
     } else {
         flow_transition(f, text, source, start, end, trace_lines, diags)
     }
 }
 
+/// Answers the one question that splits a flow bullet into its two forms: does
+/// the word after the bullet marker name an internal behavior?
+///
+/// The caller reads the same line again to build the node, so this has to
+/// scan it exactly the way [`flow_internal`] and [`flow_transition`] do --
+/// past the indentation, over the marker character, past the spaces after it.
 fn flow_line_is_internal(source: &str, start: usize, end: usize) -> bool {
-    let (_, content_end, _) = behavior_bounds(source, start, end);
-    let lead = skip_ws(source, start, content_end);
-    let body = skip_ws(source, (lead + 1).min(content_end), content_end);
+    let (lead, content_end, _) = behavior_bounds(source, start, end);
+    let body = skip_ws(source, char_end(source, lead, content_end), content_end);
     let word_end = scan_word(source, body, content_end);
     matches!(
         &source[body..word_end],
@@ -1342,15 +1343,16 @@ fn flow_internal(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let bullet_end = char_end(source, lead, content_end);
     let mut children = vec![token(
         f,
         text,
         start,
         lead,
-        lead + 1,
+        bullet_end,
         UmlSyntaxKind::BulletToken,
     )];
-    let p = skip_ws(source, lead + 1, content_end);
+    let p = skip_ws(source, bullet_end, content_end);
     let word_end = scan_word(source, p, content_end);
     let word = &source[p..word_end];
     let mut at = word_end;
@@ -1365,7 +1367,7 @@ fn flow_internal(
             keyword = token(
                 f,
                 text,
-                lead + 1,
+                bullet_end,
                 p,
                 colon_at,
                 UmlSyntaxKind::InternalKeywordToken,
@@ -1408,7 +1410,7 @@ fn flow_internal(
             keyword = token(
                 f,
                 text,
-                lead + 1,
+                bullet_end,
                 p,
                 word_end,
                 UmlSyntaxKind::InternalKeywordToken,
@@ -1440,7 +1442,7 @@ fn flow_internal(
             keyword = token(
                 f,
                 text,
-                lead + 1,
+                bullet_end,
                 p,
                 colon_at,
                 UmlSyntaxKind::InternalKeywordToken,
@@ -1607,19 +1609,27 @@ fn flow_transition(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let bullet_end = char_end(source, lead, content_end);
     let mut children = vec![token(
         f,
         text,
         start,
         lead,
-        lead + 1,
+        bullet_end,
         UmlSyntaxKind::BulletToken,
     )];
-    let mut owned = lead + 1;
+    let mut owned = bullet_end;
     let mut p = skip_ws(source, owned, content_end);
-    let mut valid = source.get(lead..lead + 1) == Some("-");
+    let mut valid = source.get(lead..bullet_end) == Some("-");
     if keyword_at(source, p, content_end, "on") {
-        let keyword = token(f, text, lead + 1, p, p + 2, UmlSyntaxKind::FlowKeywordToken);
+        let keyword = token(
+            f,
+            text,
+            bullet_end,
+            p,
+            p + 2,
+            UmlSyntaxKind::FlowKeywordToken,
+        );
         let trigger = backtick_clause(
             f,
             text,
@@ -4612,14 +4622,7 @@ fn relationship_link(
             }
         }
     }
-    let q = scan_name(source, p, end).max(
-        (p + source[p..end]
-            .chars()
-            .next()
-            .map(char::len_utf8)
-            .unwrap_or(0))
-        .min(end),
-    );
+    let q = scan_name(source, p, end).max(char_end(source, p, end));
     diags.push(diag(
         UmlSyntaxDiagnosticCode::UnexpectedToken,
         p,
@@ -5309,6 +5312,23 @@ fn floor_boundary(source: &str, mut at: usize) -> usize {
         at -= 1;
     }
     at
+}
+
+/// The offset just past the character that starts at `at`, never past `limit`.
+///
+/// Most of this file's `+ 1` steps are safe because a `starts_with` on an
+/// ASCII literal has already proved the byte they step over: `-`, `[`, `:`,
+/// `"`. The steps that are *not* proved -- a scanner that stopped wherever
+/// [`skip_ws`] ran out of spaces and now wants the next word -- must step over
+/// a character, because the author may have written one that is several bytes
+/// wide. `at + 1` lands inside it and the next slice panics on the boundary.
+/// `limit` is always a boundary here, so a character can never straddle it.
+fn char_end(source: &str, at: usize, limit: usize) -> usize {
+    let mut end = at + 1;
+    while end < limit && !source.is_char_boundary(end) {
+        end += 1;
+    }
+    end.min(limit)
 }
 
 fn slice(text: &SourceText, start: usize, end: usize) -> GreenText {

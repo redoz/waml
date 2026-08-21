@@ -914,3 +914,52 @@ fn required_behavior_accessors_return_indexed_missing_tokens_without_panicking()
     );
     assert!(!operand.keyword_token().flags().is_missing());
 }
+
+/// A flow bullet whose marker position holds a multi-byte character.
+///
+/// The parser stepped one *byte* past the marker to reach the word that
+/// decides whether the line is an internal behavior or a transition. On a
+/// marker several bytes wide that step lands inside the character, and the
+/// slice that follows panics on the boundary -- which is how `uml_islands`
+/// found it. Every line below is nonsense as UML; the contract is only that
+/// the parser survives it and the tree still owns every authored byte.
+#[test]
+fn flow_bullets_step_over_a_multi_byte_marker_character() {
+    let authored = concat!(
+        "---\ntype: uml.StateMachineDiagram\n---\n# Flow\n\n",
+        "## Nodes\n",
+        "### A\n",
+        // flow_transition, with and without a keyword after the marker
+        "\u{616}\u{44b}Ordea0ing\n",
+        "\u{e9} on `go` to B\n",
+        // flow_internal: the word after the marker names an internal
+        "\u{e9}do: `tick`\n",
+        // flow_value_line: `trim_start` sees a Unicode space the byte
+        // scanners do not, so the marker position is that space
+        "#### Notes\n",
+        "\u{a0}- keep\n",
+        "### B\n",
+    );
+    let analysis = analyze([("flow.md", authored)]);
+
+    assert_eq!(written(&analysis, "flow.md"), authored);
+
+    let syntax = root(&analysis, "flow.md");
+    let internals = typed::<uml::FlowInternalSyntax>(syntax.clone());
+    assert_eq!(internals.len(), 1);
+    assert_eq!(
+        internals[0]
+            .keyword_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "do"
+    );
+    let marker = internals[0]
+        .syntax()
+        .child_at(uml::FlowInternalSyntax::BULLET_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .expect("the internal line keeps a marker token");
+    assert_eq!(marker.text().write_to_string(), "\u{e9}");
+    assert_eq!(typed::<uml::FlowTransitionSyntax>(syntax).len(), 2);
+}
