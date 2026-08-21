@@ -1,5 +1,22 @@
 # Prose-solved Diagram Rendering Implementation Plan
 
+## Status — 2026-08-21: SUPERSEDED (never started)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Nothing landed.** No commit implements it; `packages/web/src/canvas/layout.ts`
+  and `flowTypes.ts` were never modified for solved layout, and
+  `runSolveLayout` / `layoutActiveView` / `GroupFrame` appear nowhere in the
+  tree.
+- **The target no longer exists.** The Svelte canvas was deleted by
+  `eae57286 refactor: retire legacy web and WASM stack` (2026-07-28).
+- **Replaced by** `completed/2026-07-17-makepad-diagram-viewer.md`, which
+  renders `## Layout` solver output natively
+  (`crates/waml-editor/src/scene.rs`, `crates/waml/src/solve/`), plus
+  `completed/2026-07-22-orthogonal-edge-router.md` and
+  `completed/2026-08-07-constrained-stress-unification.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Render the `## Layout` solver's output on the real Diagram canvas — nodes at solved positions, titled `frame` hulls, `collapsed` chips, and inline solver diagnostics — as a drop-in for the imperative dagre pass, with drag left as a free override.

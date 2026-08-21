@@ -1,5 +1,25 @@
 # Straighten Edges Within a Shared Border Band — Implementation Plan
 
+## Status — 2026-08-21: ABANDONED (never started)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Nothing landed.** `git log` for this plan shows only the spec (`daad6b76`)
+  and the plan itself (`ed24ec49`); no implementation commit exists, and
+  `straightPort` / `StraightResult` appear nowhere in the tree.
+- **The target no longer exists.** Every file this plan edits
+  (`packages/web/src/components/canvas/RelEdge.svelte`, `AnchorEdge.svelte`,
+  `floating.ts`) was deleted by `eae57286 refactor: retire legacy web and WASM
+  stack` (2026-07-28), which `2026-07-27-first-class-okf-documents.md` called
+  for.
+- **Where the idea lives now.** Edge geometry is solved in Rust
+  (`crates/waml/src/solve/route.rs`, `crates/waml/src/solve/geometry.rs`) and
+  drawn by the native canvas. Reviving straight-band edges means a new plan
+  against those files, not this one.
+
+Kept for the design rationale in its spec, not as outstanding work.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Draw a RelEdge/AnchorEdge as a straight line (not a smooth-step jog) whenever a single straight line can hit both nodes' facing border strips head-on, and snap back to smooth-step when the nodes slide out of that shared band — on both axes.

@@ -1,5 +1,23 @@
 # Diagram Properties Panel v2 Implementation Plan
 
+## Status — 2026-08-21: SUPERSEDED (never started)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Nothing landed.** No commit between this plan (`11e51e5a`, 2026-07-15) and
+  the legacy-web retirement (`eae57286`, 2026-07-28) implements it — the only
+  traffic through `packages/web/src/components/canvas/` in that window is the
+  Atlas restyle series. `95ae92d0 feat(web): per-diagram render settings via
+  Diagram properties panel` predates this plan (2026-07-11) and is the v1 it
+  proposed to replace.
+- **The target no longer exists.** `DiagramPropertiesBody.svelte`,
+  `diagramProps.ts` and `ClassifierBox.svelte` were deleted by `eae57286`.
+- **Replaced by** `completed/2026-07-26-native-diagram-properties.md` — the
+  native authoring surface in `crates/waml-editor/src/diagram_properties.rs`,
+  extended by `completed/2026-07-27-native-diagram-properties-alignment.md`
+  and `completed/2026-07-27-native-diagram-properties-form-layout.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Depends on:** `docs/superpowers/plans/2026-07-15-diagram-field-persistence.md` (Spec A —

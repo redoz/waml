@@ -1,5 +1,42 @@
 # Issue 28 — Guards and lowerers: single authority instead of re-lexing
 
+## Status — 2026-08-21: PARTIAL — tasks B, C and D are still outstanding
+
+Triage verdict from the A39 planning-hygiene pass. This is real, unfinished
+work, not stale paper. `2026-08-04-issue-triage-index.md` already re-scoped it
+("Do not implement issue 28 as written") but nothing has been done since.
+
+**Task A — frontmatter open-fence helper: SUBSUMED.** `frontmatter-yaml-alignment`
+(`completed/2026-08-04-frontmatter-yaml-alignment.md`) extracted the shared
+fence helper; `classify_frontmatter` is now a single definition at
+`crates/waml-syntax/src/markdown/parser.rs:86`. Caveat recorded in the triage
+index: the `markdown/mod.rs` shell-structure scan was outside the YAML plan's
+file list — `crates/waml-syntax/src/markdown/mod.rs:228` still only *documents*
+that it agrees with the parser.
+
+**Task B — record the resolution in `BracketMatch`: NOT DONE.**
+`crates/waml-syntax/src/markdown/inline.rs` still has `struct BracketMatch`
+(line 262) with no `resolution` field, no `BracketResolution` enum, and
+`parse_link` (line 922) still re-derives; the
+`ParseError::StructuralInvariant` constructions the plan deletes are still
+there (lines 384, 689). Drift between the two copies is still promoted to a
+whole-document error.
+
+**Task C — route okf and uml frontmatter reads through `parse_closed_syntax`:
+NOT DONE.** Two independent extractors survive:
+`crates/waml/src/okf/lower.rs:508 fn frontmatter_value` and
+`crates/waml/src/uml/lower.rs:909 fn frontmatter_value`, the latter still
+`split_once(':')`-based with its own `decode_scalar` (line 921).
+
+**Task D — strengthen the debug oracle: NOT DONE.**
+`crates/waml-syntax/src/incremental.rs:334` still compares
+`oracle.structure.islands.len()` — the island *count*, not the tree.
+
+**Before implementing:** re-verify B/C/D line numbers against `main`, as the
+triage index instructs. The ordering constraints it records (this plan vs
+issues 34, 35, 36) no longer bind — those all landed.
+
+
 ## Context
 
 Three independent duplications where a consumer re-derives, from raw text, a fact

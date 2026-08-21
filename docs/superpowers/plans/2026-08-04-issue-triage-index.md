@@ -1,5 +1,22 @@
 # 2026-08-04 issue triage — landing order index
 
+## Status — 2026-08-21: ACTIVE as an index — 15 of 16 findings closed
+
+Triage verdict from the A39 planning-hygiene pass. This file is a landing-order
+index, not an implementation plan; it stays active only because one of its
+plans is unfinished.
+
+- **Closed:** issues 20, 21, 22, 24, 25, 26, 27, 29, 30, 31, 32, 33, 34, 35 and
+  36 all have their plans in `completed/`.
+- **Rejected at triage:** issue 23 (`FieldEdit` serde round-trip). Note that a
+  later audit re-raised `FieldEdit` data loss; if that re-raise is upheld, this
+  file's rejection paragraph is the thing to revisit first.
+- **Still open:** issue 28 — see `2026-08-04-issue-28-guard-single-authority.md`,
+  whose tasks B, C and D have not been implemented.
+
+Archive this index once issue 28 is closed out.
+
+
 Triage of the sixteen findings in the 2026-08-04 five-domain code-smell section
 of `issues.md`. Each was verified against worktree HEAD (`2fdb5ff9`) by an
 independent agent; fifteen were approved and have a plan, one was rejected.

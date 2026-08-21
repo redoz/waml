@@ -1,5 +1,34 @@
 # Root Folder Toggle Implementation Plan
 
+## Status — 2026-08-21: PARTIAL
+
+Triage verdict from the A39 planning-hygiene pass.
+
+**Landed** — the "without resetting navigation or dock state" half. Root
+activation no longer resets scope, query, filter or docks; the two tests this
+plan names for deletion
+(`navigation_root_restores_scope_and_clears_query_and_filter`,
+`navigation_root_uses_narrow_mutual_exclusion_and_preserves_wide_inspector`)
+are gone and
+`crates/waml-editor/src/app/tests/navigation.rs:1525`
+`navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks`
+stands in their place. `ProjectTree::toggle_directory` remains the single
+folder-state owner (`crates/waml-editor/src/tree_panel.rs:1243`).
+
+**Did not land, and the goal moved** — "activating `/` always toggles its
+folder state". Activating the root now *opens the root folder view* instead,
+because `2026-08-05-folder-view-middleware.md`
+(`completed/2026-08-05-folder-view-middleware.md`) made a directory a
+first-class document surface. The plan's Task 1 regression test
+(`navigation_root_toggles_without_resetting_navigation_or_docks`) does not
+exist.
+
+**Decide before implementing:** whether root should toggle *or* open the
+folder view is now a product question, not a bug. If open-the-view is the
+intended behaviour, close this plan out; if both are wanted, this plan needs
+rewriting against the folder-view surface.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the project-tree root directory toggle open and closed without resetting application navigation or dock state.

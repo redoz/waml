@@ -1,5 +1,21 @@
 # Model Navigator Switcher Redesign Implementation Plan
 
+## Status — 2026-08-21: ABANDONED (never started)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Nothing landed.** Only the spec (`a9ba2c42`) and plan (`748a8942`) exist.
+  None of `TopBar`, `NavigatorPanel`, `NavigatorBody`, `InspectorPanel`,
+  `switcherOpen` or `navPinned` is present in the tree.
+- **The target no longer exists.** All of those Svelte components were deleted
+  by `eae57286 refactor: retire legacy web and WASM stack` (2026-07-28).
+- **Where the idea lives now.** The native editor solved the same problems
+  differently: `crates/waml-editor/src/diagram_switcher.rs` for the light
+  switcher, `crates/waml-editor/src/tree_panel.rs` +
+  `completed/2026-07-22-tree-panel-header-scope.md` for scope/pin chrome, and
+  `completed/2026-07-24-docked-collapsible-panels.md` for dock/canvas overlap.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the "click the TopBar title → heavy model editor" flow with a light read-only diagram-switcher dropdown as the default click target, keep two explicit escape hatches into the full editor (Dock / Edit), unify the pin semantics so `pinned = solid` on both the navigator and inspector, and stop the docked navigator rail from overlapping the canvas tool Dock.

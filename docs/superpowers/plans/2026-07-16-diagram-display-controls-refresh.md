@@ -1,5 +1,24 @@
 # Diagram Display Controls Refresh Implementation Plan
 
+## Status — 2026-08-21: SUPERSEDED (goal met elsewhere)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Not implemented as written.** No commit implements this plan; only the
+  spec (`fa9c9fc5`) and the plan (`20695271`) exist.
+- **Its model-level goal did land, later and natively.** The
+  `attributeDetail` enum is gone from the tree and `DiagramDisplay` carries a
+  real `show_type: bool` (`crates/waml-editor/src/diagram_display.rs:6`,
+  consumed at `crates/waml-editor/src/scene.rs:183`) — delivered by
+  `completed/2026-07-26-native-diagram-properties.md`. Attribute and
+  relationship cardinality are separate rows in the native panel
+  (`crates/waml-editor/src/diagram_properties.rs:167,215`).
+- **Its UI half is dead.** The Svelte panel and its dividers went with
+  `eae57286 refactor: retire legacy web and WASM stack`.
+
+Nothing outstanding here; kept only so the enum-to-boolean rationale stays findable.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the diagram-properties `attributeDetail` enum into a real `showType` boolean, relabel the attribute multiplicity toggle to "Show cardinality", and add hairline dividers between the panel's titled sections.

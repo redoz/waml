@@ -1,5 +1,41 @@
 # Collaborative Editing over atproto — Implementation Plan
 
+## Status — 2026-08-21: HORIZON — unstarted, MVP-scale cost
+
+Triage verdict from the A39 planning-hygiene pass. This plan is **wanted but
+not in flight**; nothing in it has been started.
+
+**Evidence it is unstarted:** `crates/waml-collab/` does not exist, `automerge`
+is not a workspace dependency in the root `Cargo.toml`, and none of
+`SpaceDoc`, `EditorSession::replace_external`, `splice_text`,
+`save_incremental` or `__getrandom_v03_custom` appears in the tree. The only
+commit touching it is `54ffc464 docs(spec,plan): collaborative editing over
+atproto`.
+
+**Cost, stated plainly so it is not mistaken for a small item:**
+
+- 13 tasks, including a **new crate** (`waml-collab`), an atproto lexicon,
+  an XRPC transport, a flush scheduler with a rate-limit budget, a Jetstream
+  subscription with CID verification, snapshotting/compaction, inbound and
+  outbound editor wiring, share/join UI and presence.
+- **~1.1 MB added to the wasm artifact** for automerge, on a boot path the
+  team has already spent two plans shrinking
+  (`completed/2026-08-02-web-batched-shader-link.md`).
+- A wasm buildability guard is mandatory (Task 3): automerge on wasm needs
+  `--cfg getrandom_backend="custom"` plus a Rust-supplied
+  `__getrandom_v03_custom`.
+- **OAuth is explicitly excluded** and is estimated by the plan itself at
+  "roughly 40% of the total work". Shipping on app passwords only is a
+  deliberate, revisitable choice.
+- Further deliberate follow-ups: per-op splices, a placement CRDT for
+  `place.set`, semantic conflict diagnostics, private spaces (blocked upstream).
+
+**CRDT choice is sound.** The plan builds on automerge, which is the only
+wasm-viable CRDT for this codebase — makepad's wasm target is not
+wasm-bindgen based, so JS-backed CRDT libraries are not an option. Nothing in
+the plan contradicts that constraint.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Two or more people edit the same waml workspace in near-real-time with no waml-operated server. Each collaborator's changes live in their own atproto repository. A shared workspace gets a permanent `at://` URI that anyone can open read-only.

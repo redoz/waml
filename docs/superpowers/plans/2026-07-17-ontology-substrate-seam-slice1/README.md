@@ -1,5 +1,26 @@
 # Ontology Substrate + Seam (Slice 1) — Plan Index
 
+## Status — 2026-08-21: ABANDONED (started, then reverted)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Not on `main`.** No implementation commit for this slice survives in the
+  history; only the spec (`a922c5db`) and this plan (`bb7fc9fe`). The work that
+  was attempted is preserved **only** as the tag
+  `archive/ontology-substrate-seam-slice1` — check that tag out to read the
+  `wire.rs` projection it introduced.
+- **Half its premise is gone.** The plan's "Rust owns the wire projection, so
+  TypeScript is a thin render skin" architecture depends on `crates/waml-wasm`,
+  the `packages/` TypeScript monorepo, tsify codegen and the Svelte frontend —
+  all deleted by `eae57286 refactor: retire legacy web and WASM stack`
+  (2026-07-28). With one native frontend there is no wire to project across.
+- **The object-model half is still an open idea.** Splitting
+  `model::{Node,Edge,Diagram}` into skeleton + `NodeKind::Uml(..)` is
+  independent of the wire question and was never done. If it is still wanted,
+  it needs a fresh plan scoped to `crates/waml` alone.
+
+Kept for the substrate design; do not execute the task files as written.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Each task lives in its own file (`task-N-*.md`). Load **this README + the one task file you are executing** — nothing else. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Introduce the ontology-agnostic substrate (`Node { key, label, kind }`, `Edge { source, target, kind }`, `Diagram { key, label, kind }`) with the `NodeKind`/`EdgeKind`/`DiagramKind` seam (`Uml(uml::…) | Unknown(String)`), moving all UML vocabulary — plus the OKF `Concept` off the node — behind the `Uml(..)` arm in a new `uml` module, and have **Rust own the wire projection** so TypeScript is a thin render skin.

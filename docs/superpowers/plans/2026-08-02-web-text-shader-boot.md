@@ -1,5 +1,27 @@
 # Web Text-Shader Boot Fix Implementation Plan
 
+## Status — 2026-08-21: PARTIAL (work lives in the makepad fork)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+**Not verifiable from this repo.** Every file this plan edits
+(`platform/src/os/web/web_gl.rs`, `web_gl.js`, `draw/src/shader/draw_text.rs`,
+`draw/src/text/fonts.rs`) belongs to the makepad fork, not to `waml`. Nothing
+named `DrawTextSlug`, `webgl_compile_shaders` or
+`default_slug_min_dpxs_per_em` appears anywhere in this tree.
+
+**The boot-time goal was largely met by adjacent work.**
+`completed/2026-08-02-web-batched-shader-link.md` shipped the batched
+WebGL link and records cold first-visit dropping from ~9000 ms to ~1730 ms;
+the preceding fork change cut the original 31–38 s freeze to ~9 s. So the
+number this plan exists to fix has already moved.
+
+**Still open:** whether web should actually be moved onto the shared
+`DrawTextSlug` path (this plan's stated mechanism, distinct from the batching
+that shipped). Re-verify against the pinned fork revision in the root
+`Cargo.toml` before scheduling; the remaining win may be small.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cut the web build's cold first-visit freeze from 31–38 s to a small number by moving web onto the shared `DrawTextSlug` helper path that linux and windows already use.

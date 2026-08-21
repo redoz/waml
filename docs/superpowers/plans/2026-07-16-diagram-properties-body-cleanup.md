@@ -1,5 +1,19 @@
 # DiagramPropertiesBody Cleanup Implementation Plan
 
+## Status — 2026-08-21: ABANDONED (never started)
+
+Triage verdict from the A39 planning-hygiene pass.
+
+- **Nothing landed.** The only commit naming this work is the plan itself
+  (`6bfd011e`). `6eecaa12 style(web): apply Atlas theme to
+  DiagramPropertiesBody` is the Atlas restyle, not this cleanup.
+- **The target no longer exists.** `DiagramPropertiesBody.svelte` and
+  `packages/web/src/components/inspector/field-styles.ts` were deleted by
+  `eae57286 refactor: retire legacy web and WASM stack` (2026-07-28).
+- **Replaced by** `completed/2026-07-26-native-diagram-properties.md` and its
+  two follow-ups, which build the grouped/shared-field layout natively.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the diagram-properties dialog (`DiagramPropertiesBody.svelte`) match its peer inspectors — grouped sections, shared field styling, deduped disable logic — with zero behavior change.
