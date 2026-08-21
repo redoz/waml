@@ -23,7 +23,7 @@ be wrong later, the row reopens rather than a new row being appended.
 
 <!-- progress -->
 
-`██████░░░░░░░░░░░░░░░░░░` **14/53 closed** — 32 open, 1 wip, 14 done, 6 decision
+`███████░░░░░░░░░░░░░░░░░` **15/53 closed** — 31 open, 1 wip, 15 done, 6 decision
 
 ## Findings
 
@@ -46,7 +46,7 @@ be wrong later, the row reopens rather than a new row being appended.
 | A15 | H | App shell | `open` | 54-field App god object, impl across 7 files/~7,800 lines, linear per-feature accretion |
 | A16 | H | Fork seam | `done` | All four makepad fork deps hoisted into [workspace.dependencies] (lockfile byte-identical), and pages.yml now READS the rev out of Cargo.toml instead of carrying its own copy — it had drifted 10 days behind (62f515dc vs 6534634a). A CI equality check would have caught the drift; deriving it means there is nothing to drift. |
 | A17 | H | Fork inventory | `done` | docs/makepad-fork.md inventories all 44 fork commits against upstream/dev, classified upstream-worthy (27) / product (9) / dead (8), with the regeneration command and the both-directions drift check. The wip: DComp commit and seven other dead carries are named as removable on the next rebase. |
-| A18 | H | Wire contract | `open` | HTTP envelope + responses defined twice as unlinked serde types; only DocumentWrite shared |
+| A18 | H | Wire contract | `done` | DocumentsRequest, RevisionResponse and ConflictResponse now live in waml-ops-dto beside DocumentWrite, so the editor's encoder and the CLI's decoder share one definition instead of two structurally-unlinked copies. A test pins the exact wire spelling of every field, because a round-trip through one side alone would not catch drift. |
 | A19 | H | Solver depth | `open` | Solver internals ~10% tested; invariant-preserving quality regressions escape — proven by fd8f305f |
 | A20 | H | LSP | `open` | Half-built LSP corrupts state: no didSave/watched files; close restores stale startup disk bytes |
 | A21 | H | Verification debt | `open` | 10+ landed features owe visual sign-off, ledger exists only in agent session memory |

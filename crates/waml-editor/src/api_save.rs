@@ -5,22 +5,14 @@
 //! bodies the route answers with, are both host-testable; only the
 //! `cx.http_request` call that sends the built body is wasm-only.
 
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use waml_ops_dto::DocumentWrite;
+use waml_ops_dto::{ConflictResponse, DocumentWrite, DocumentsRequest, RevisionResponse};
 
 use crate::editor_session::SaveTicket;
 
 // Everything below is consumed only by `app/workspace.rs`'s wasm-only API
 // save backend; it is headless-testable and pinned in-file, but a native
 // build never calls it above the wasm `cfg` seam.
-
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-#[derive(Debug, Serialize)]
-struct DocumentsRequestWire {
-    revision: u64,
-    writes: Vec<DocumentWrite>,
-}
 
 /// Build the `POST /api/documents` request body for `ticket` at `revision`,
 /// diffing its persisted source against its live source the same way
@@ -49,18 +41,14 @@ pub(crate) fn documents_request(ticket: &SaveTicket, revision: u64) -> Result<St
             desired: desired.to_string(),
         });
     }
-    serde_json::to_string(&DocumentsRequestWire { revision, writes })
+    serde_json::to_string(&DocumentsRequest { revision, writes })
         .map_err(|error| format!("failed to encode the documents request: {error}"))
 }
 
 /// Parse the `{ "revision": u64 }` body of a successful `POST /api/documents`.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn parse_save_response(body: &[u8]) -> Result<u64, String> {
-    #[derive(Deserialize)]
-    struct Response {
-        revision: u64,
-    }
-    let parsed: Response = serde_json::from_slice(body)
+    let parsed: RevisionResponse = serde_json::from_slice(body)
         .map_err(|error| format!("could not read the save response: {error}"))?;
     Ok(parsed.revision)
 }
@@ -68,11 +56,7 @@ pub(crate) fn parse_save_response(body: &[u8]) -> Result<u64, String> {
 /// Parse the `{ "error": ..., "current": u64 }` body of a 409 conflict.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn parse_conflict(body: &[u8]) -> Result<u64, String> {
-    #[derive(Deserialize)]
-    struct Conflict {
-        current: u64,
-    }
-    let parsed: Conflict = serde_json::from_slice(body)
+    let parsed: ConflictResponse = serde_json::from_slice(body)
         .map_err(|error| format!("could not read the conflict response: {error}"))?;
     Ok(parsed.current)
 }

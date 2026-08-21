@@ -16,6 +16,7 @@ use serde_json::json;
 use crate::ops_dto::OpDto;
 use crate::serve::guard::{check, Deny, Guard, ReqFacts};
 use crate::serve::state::{ApplyFailure, DocumentWrite, ServeState};
+use waml_ops_dto::{ConflictResponse, DocumentsRequest, RevisionResponse};
 
 /// Shared server state: the loaded bundle behind a `std::sync::Mutex` (never
 /// held across an `.await` — every handler does its CPU work synchronously
@@ -216,17 +217,6 @@ async fn post_ops(
     }
 }
 
-#[derive(Deserialize)]
-struct DocumentsRequest {
-    revision: u64,
-    writes: Vec<DocumentWrite>,
-}
-
-#[derive(Serialize)]
-struct DocumentsResponse {
-    revision: u64,
-}
-
 async fn post_documents(
     State(app): State<App>,
     Query(token_q): Query<TokenQuery>,
@@ -242,7 +232,7 @@ async fn post_documents(
     };
     let mut state = lock_state(&app);
     match state.apply_documents(body.revision, &body.writes) {
-        Ok(()) => Json(DocumentsResponse {
+        Ok(()) => Json(RevisionResponse {
             revision: state.revision(),
         })
         .into_response(),
@@ -254,7 +244,10 @@ fn apply_failure_response(failure: ApplyFailure) -> Response {
     match failure {
         ApplyFailure::Stale { current } => (
             StatusCode::CONFLICT,
-            Json(json!({"error": "stale revision", "current": current})),
+            Json(ConflictResponse {
+                error: "stale revision".to_string(),
+                current,
+            }),
         )
             .into_response(),
         ApplyFailure::Edit(message) => (

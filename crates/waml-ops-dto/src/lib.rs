@@ -33,6 +33,34 @@ pub struct DocumentWrite {
     pub desired: String,
 }
 
+/// The `POST /api/documents` request envelope.
+///
+/// The envelope lives here beside [`DocumentWrite`] because it is the contract
+/// between two crates that never see each other's types: the editor encodes it,
+/// the CLI's serve routes decode it. Defining it twice — which is how this
+/// started — means a renamed field compiles green on both sides and fails at
+/// runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsRequest {
+    pub revision: u64,
+    pub writes: Vec<DocumentWrite>,
+}
+
+/// The success body of `POST /api/documents` and `POST /api/ops`: the revision
+/// the server is at after applying the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevisionResponse {
+    pub revision: u64,
+}
+
+/// The 409 body when the caller's revision is stale. `current` is what the
+/// server is actually at, so a client can rebase and retry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictResponse {
+    pub error: String,
+    pub current: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum OpDto {
@@ -1817,6 +1845,39 @@ mod tests {
         assert!(
             err.to_string().contains("skip_serializing_if"),
             "the error should name the fix, got: {err}"
+        );
+    }
+
+    /// The envelope exists to stop the editor and the server drifting. A test
+    /// that only round-trips it through itself would not catch that, so this
+    /// pins the actual wire spelling of every field both sides depend on.
+    #[test]
+    fn the_documents_envelope_wire_shape_is_pinned() {
+        let request = DocumentsRequest {
+            revision: 7,
+            writes: vec![DocumentWrite {
+                path: "a.md".to_string(),
+                baseline: None,
+                desired: "hello".to_string(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"revision":7,"writes":[{"path":"a.md","baseline":null,"desired":"hello"}]}"#
+        );
+
+        assert_eq!(
+            serde_json::to_string(&RevisionResponse { revision: 9 }).unwrap(),
+            r#"{"revision":9}"#
+        );
+
+        assert_eq!(
+            serde_json::to_string(&ConflictResponse {
+                error: "stale revision".to_string(),
+                current: 4,
+            })
+            .unwrap(),
+            r#"{"error":"stale revision","current":4}"#
         );
     }
 }
