@@ -1,8 +1,37 @@
-use waml::solve::stress::{self, GroupSpec, StressConfig};
+use waml::solve::stress::{self, GroupSpec, SepSpecs, StressConfig};
 use waml::solve::{BoxId, Rect, Size};
 
 fn node(k: &str) -> BoxId {
     BoxId::Node(k.into())
+}
+
+/// `stress::layout_constrained` with no authored seps. The solver has ONE entry
+/// point; the defaults these goldens want are spelled here rather than in a
+/// public wrapper that only tests would call.
+fn layout_grouped(
+    ids: &[BoxId],
+    sizes: &[Size],
+    edges: &[(usize, usize)],
+    groups: &[GroupSpec],
+    cfg: &StressConfig,
+) -> (Vec<Rect>, Vec<Rect>) {
+    let (rects, hulls, dropped) =
+        stress::layout_constrained(ids, sizes, edges, groups, &SepSpecs::default(), cfg);
+    assert!(
+        dropped.0.is_empty() && dropped.1.is_empty(),
+        "no authored seps means nothing can be dropped"
+    );
+    (rects, hulls)
+}
+
+/// `layout_grouped` with no groups either.
+fn layout(
+    ids: &[BoxId],
+    sizes: &[Size],
+    edges: &[(usize, usize)],
+    cfg: &StressConfig,
+) -> Vec<Rect> {
+    layout_grouped(ids, sizes, edges, &[], cfg).0
 }
 
 fn rects_overlap(a: &Rect, b: &Rect) -> bool {
@@ -40,7 +69,7 @@ fn stress_layout_pins_to_expected_pixels() {
     ];
     let edges = [(0, 1), (1, 2), (2, 3), (1, 4)];
 
-    let rects = stress::layout(&ids, &sizes, &edges, &StressConfig::default());
+    let rects = layout(&ids, &sizes, &edges, &StressConfig::default());
     assert_eq!(
         stress::pretty(&ids, &rects),
         "node a @ 522,323 200x90\n\
@@ -75,8 +104,7 @@ fn grouped_layout_clusters_members_with_disjoint_hulls() {
             depth: 0,
         },
     ];
-    let (rects, hulls) =
-        stress::layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
+    let (rects, hulls) = layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
     assert_eq!(hulls.len(), 2);
     assert!(
         !rects_overlap(&hulls[0], &hulls[1]),
@@ -108,8 +136,7 @@ fn grouped_layout_lets_a_strong_outside_edge_pull_a_member_out() {
         members: vec![0, 1, 2],
         depth: 0,
     }];
-    let (rects, _hulls) =
-        stress::layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
+    let (rects, _hulls) = layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
     let outside = center(&rects[3]);
     let d_a3 = dist(center(&rects[2]), outside);
     let d_a1 = dist(center(&rects[0]), outside);
@@ -137,8 +164,7 @@ fn grouped_layout_nests_hulls_by_depth() {
             depth: 1,
         },
     ];
-    let (_rects, hulls) =
-        stress::layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
+    let (_rects, hulls) = layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
     assert!(
         rect_inside(&hulls[1], &hulls[0]),
         "inner hull {:?} not inside outer hull {:?}",
@@ -165,8 +191,8 @@ fn grouped_layout_is_deterministic() {
         },
     ];
     let cfg = StressConfig::default();
-    let one = stress::layout_grouped(&ids, &sizes, &edges, &groups, &cfg);
-    let two = stress::layout_grouped(&ids, &sizes, &edges, &groups, &cfg);
+    let one = layout_grouped(&ids, &sizes, &edges, &groups, &cfg);
+    let two = layout_grouped(&ids, &sizes, &edges, &groups, &cfg);
     assert_eq!(one, two);
 }
 
@@ -209,8 +235,7 @@ fn grouped_layout_survives_shared_membership() {
         },
     ];
 
-    let (rects, hulls) =
-        stress::layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
+    let (rects, hulls) = layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
     assert_eq!(hulls.len(), groups.len());
     for i in 0..rects.len() {
         for j in i + 1..rects.len() {

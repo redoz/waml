@@ -1,7 +1,8 @@
 //! Eyeball harness for the standalone stress-majorization layout.
 //!
 //! Builds a synthetic ER-ish graph (~12 nodes, varied sizes, a couple of
-//! disconnected nodes plus one isolated pair), runs `stress::layout`, prints the
+//! disconnected nodes plus one isolated pair), runs `stress::layout_constrained`,
+//! prints the
 //! resulting positions, and writes a plain SVG (rects + edge lines) so geometry
 //! can be judged without the makepad editor.
 //!
@@ -11,7 +12,7 @@
 //! directory does not exist in this checkout), so only the synthetic graph is
 //! exercised. Wire up a Model adapter here once that model is available.
 
-use waml::solve::stress::{self, StressConfig};
+use waml::solve::stress::{self, SepSpecs, StressConfig};
 use waml::solve::{BoxId, Rect, Size};
 
 const SVG_PATH: &str = "C:\\Users\\redoz\\AppData\\Local\\Temp\\claude\\C--dev-waml--claude-worktrees-icons\\107d8d46-de11-4c4e-8ccb-2f028be4408a\\scratchpad\\stress_out.svg";
@@ -117,7 +118,8 @@ fn write_svg(
 fn main() {
     let (ids, sizes, edges) = synthetic();
     let cfg = StressConfig::default();
-    let rects = stress::layout(&ids, &sizes, &edges, &cfg);
+    let (rects, _hulls, _dropped) =
+        stress::layout_constrained(&ids, &sizes, &edges, &[], &SepSpecs::default(), &cfg);
 
     println!(
         "stress layout of {} synthetic nodes, {} edges:\n",

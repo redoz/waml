@@ -292,7 +292,7 @@ pub fn project_scene_node_with_display(
 /// The model's drawable edges, in `model.edges` order, with self-loops dropped
 /// (`source != target`, Node endpoints only). This is the single load-bearing
 /// definition tying the router's ordered `Solved.routes` stream to the scene:
-/// both layout paths feed `route::route` the pairs derived from here, so it
+/// both layout paths feed `route::route` the edges derived from here, so it
 /// emits one `Route` per surviving edge IN THIS ORDER, and `build_scene`
 /// consumes that stream by walking this same list. Every site that touches the
 /// drawable-edge order MUST route through this helper or the route-to-edge match
@@ -632,14 +632,7 @@ fn route_with_groups(
         .iter()
         .map(|(source, target)| (source.clone(), target.clone(), None, None))
         .collect::<Vec<_>>();
-    let routes = route::route_keyed_with_policy(
-        &boxes,
-        &rect_map,
-        &keyed,
-        &SolveConfig::default(),
-        policy.cost,
-        policy.route,
-    );
+    let routes = route::route(&boxes, &rect_map, &keyed, policy.cost, policy.route);
     (routes, rect_map, boxes)
 }
 
@@ -1152,12 +1145,12 @@ pub fn build_scene(
         .map(|node| (node.key.clone(), port_geometry(node)))
         .collect::<BTreeMap<_, _>>();
 
-    // Walk the same `drawable_edges` list route::route was fed, so the ordered
+    // Walk the same `drawable_edges` list `route::route` was fed, so the ordered
     // route stream and this consumption stay locked together by construction.
     // Only edges whose endpoints both appear in the solved layout are drawable;
     // match each to its Route by consuming solved.routes IN ORDER (key-only
     // lookup is ambiguous for parallel edges). On a key mismatch (e.g. an edge
-    // route::route presence-filtered out, desyncing the stream) fall back to a
+    // `route::route` presence-filtered out, desyncing the stream) fall back to a
     // straight center-to-center polyline WITHOUT advancing the cursor, so later
     // edges stay aligned.
     let mut drawable: Vec<DrawableEdge> = Vec::new();
@@ -1209,9 +1202,9 @@ pub fn build_scene(
         policy,
     );
     let mut routes: Vec<Vec<(f64, f64)>> = drawable.iter().map(|d| d.edge.points.clone()).collect();
-    let _reroute_unresolved = waml::solve::place_labels_with_reroute_policy(
+    let _reroute_unresolved = waml::solve::place_labels_with_reroute(
         &mut solved,
-        &routing.context(&SolveConfig::default()),
+        &routing.context(),
         &mut routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),

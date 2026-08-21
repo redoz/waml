@@ -4,9 +4,7 @@
 
 use super::route;
 use super::sizing::{self, Font};
-use super::{
-    Box, BoxId, BoxKind, FlagSet, Rect, Route, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
-};
+use super::{Box, BoxId, BoxKind, FlagSet, Rect, Route, Size, SizeMap, Solved, SolvedGroup};
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::layout::{Margin, Shape};
 use crate::model::{ActivityNode, FlowDoc, FlowEdge, FlowFlavor, FlowNodeKind};
@@ -1098,7 +1096,9 @@ fn route_edges(
     cfg: &FlowConfig,
 ) -> Vec<Route> {
     let mut routes = Vec::new();
-    let mut normal_pairs: Vec<(BoxId, BoxId, Option<String>)> = Vec::new();
+    // Router-shaped from the start: endpoints, the authored edge key the Route
+    // is tagged with, and no label band (flow labels are placed by the frontend).
+    let mut normal_pairs: Vec<route::KeyedEdge> = Vec::new();
     let mut left_back_edges = 0usize;
     let mut right_back_edges = 0usize;
 
@@ -1139,6 +1139,7 @@ fn route_edges(
             BoxId::Node(e.from.clone()),
             BoxId::Node(e.to.clone()),
             Some(e.key.clone()),
+            None,
         ));
     }
 
@@ -1161,8 +1162,13 @@ fn route_edges(
             .iter()
             .map(|(k, r)| (BoxId::Node(k.clone()), *r))
             .collect();
-        let normal_routes =
-            route::route_keyed(&boxes, &rects, &normal_pairs, &SolveConfig::default());
+        let normal_routes = route::route(
+            &boxes,
+            &rects,
+            &normal_pairs,
+            &route::RouteCost::default(),
+            &route::RoutePolicy::default(),
+        );
         routes.extend(normal_routes);
     }
 

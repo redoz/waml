@@ -1,7 +1,7 @@
 //! Orthogonal (Manhattan) edge router: OVG -> A* (bend penalty) -> nudge.
 //! See docs/superpowers/specs/2026-07-22-orthogonal-edge-router-design.md.
 
-use super::{Box, BoxId, Rect, Route, SolveConfig};
+use super::{Box, BoxId, Rect, Route};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,9 +157,11 @@ fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
     (a.0 - b.0).hypot(a.1 - b.1)
 }
 
-/// One edge as `route_keyed_with` takes it: endpoints, the authored key the
-/// produced `Route` is tagged with, and the `(width, height)` of the label band
-/// the router should try to keep clear beside it (`None` when unlabelled).
+/// One edge as [`route`] takes it: endpoints, the authored key the produced
+/// `Route` is tagged with (callers with two edges between the same pair of
+/// boxes need it to map routes back to edges), and the `(width, height)` of the
+/// label band the router should try to keep clear beside it (`None` when
+/// unlabelled).
 pub type KeyedEdge = (BoxId, BoxId, Option<String>, Option<(f64, f64)>);
 
 fn key_of(id: &BoxId) -> Option<String> {
@@ -173,36 +175,6 @@ fn fallback_l(src: Rect, tgt: Rect) -> Vec<P> {
     let s = (src.x + src.w / 2.0, src.y + src.h / 2.0);
     let t = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
     simplify(vec![s, (t.0, s.1), t])
-}
-
-/// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
-pub fn route(
-    boxes: &[Box],
-    rects: &BTreeMap<BoxId, Rect>,
-    edges: &[(BoxId, BoxId)],
-    cfg: &SolveConfig,
-) -> Vec<Route> {
-    let keyed: Vec<(BoxId, BoxId, Option<String>)> = edges
-        .iter()
-        .map(|(s, t)| (s.clone(), t.clone(), None))
-        .collect();
-    route_keyed(boxes, rects, &keyed, cfg)
-}
-
-/// `route`, but each edge carries the authored key the produced `Route` should
-/// be tagged with (`Route::key`). Callers with two edges between the same pair
-/// of boxes need this to map routes back to edges.
-pub fn route_keyed(
-    boxes: &[Box],
-    rects: &BTreeMap<BoxId, Rect>,
-    edges: &[(BoxId, BoxId, Option<String>)],
-    cfg: &SolveConfig,
-) -> Vec<Route> {
-    let keyed: Vec<KeyedEdge> = edges
-        .iter()
-        .map(|(s, t, key)| (s.clone(), t.clone(), key.clone(), None))
-        .collect();
-    route_keyed_with(boxes, rects, &keyed, cfg, &RouteCost::default())
 }
 
 /// Weights for the router's A* cost function.
@@ -249,8 +221,8 @@ impl Default for RouteCost {
     }
 }
 
-/// The routing inputs an edge yields, or `None` when `route_keyed_with` emits
-/// no `Route` for it at all: a self-edge, a group-as-endpoint, or an endpoint
+/// The routing inputs an edge yields, or `None` when [`route`] emits no
+/// `Route` for it at all: a self-edge, a group-as-endpoint, or an endpoint
 /// missing from this diagram's rects. THE one place that skip rule lives, so
 /// `routable_edge_indices` can never drift out of step with the router.
 fn routable(
@@ -266,8 +238,8 @@ fn routable(
     Some((source, target, src, tgt))
 }
 
-/// Indices into `edges` that `route_keyed_with` actually emits a `Route` for,
-/// in order: the route at position `i` came from `edges[indices[i]]`.
+/// Indices into `edges` that [`route`] actually emits a `Route` for, in order:
+/// the route at position `i` came from `edges[indices[i]]`.
 ///
 /// Callers that map a ROUTE position back to the edge it was built from need
 /// this: the router silently skips edges, so a route position is not an edge
@@ -284,31 +256,23 @@ pub fn routable_edge_indices(
         .collect()
 }
 
-/// `route_keyed`, but with an explicit `RouteCost` rather than the legacy
-/// defaults. The seam `label_pressure` and future layout tuning hang off.
+/// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
+///
+/// THE router's one entry point. Behaviour is parameterised rather than
+/// tiered: `RouteCost::default()` reproduces the legacy A* weights exactly and
+/// `RoutePolicy::default()` the legacy deterministic behaviour, so a caller
+/// that wants neither passes both defaults and gets byte-identical geometry to
+/// what the old default-spelling wrappers produced.
 ///
 /// Each edge's fourth field is the size of the label band the router should try
 /// to keep clear beside it (`None` for an unlabelled edge). It is a full
 /// `(width, height)`: a label needs its HEIGHT of clearance beside a horizontal
 /// run but its WIDTH beside a vertical one.
 #[inline(never)]
-pub fn route_keyed_with(
+pub fn route(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[KeyedEdge],
-    _cfg: &SolveConfig,
-    cost: &RouteCost,
-) -> Vec<Route> {
-    route_keyed_with_policy(boxes, rects, edges, _cfg, cost, &RoutePolicy::default())
-}
-
-/// `route_keyed_with` with explicit non-cost routing behavior.
-#[inline(never)]
-pub fn route_keyed_with_policy(
-    boxes: &[Box],
-    rects: &BTreeMap<BoxId, Rect>,
-    edges: &[KeyedEdge],
-    _cfg: &SolveConfig,
     cost: &RouteCost,
     policy: &RoutePolicy,
 ) -> Vec<Route> {
@@ -654,7 +618,7 @@ fn build_membership(boxes: &[Box]) -> Membership {
 /// Group rects that block THIS edge: a group is an obstacle only when neither
 /// endpoint is one of its (transitive) members. (Production now applies this
 /// rule as a mask over the per-solve `all_obstacles` list — see
-/// `route_keyed_with`; kept as the executable spec the tests assert against.)
+/// [`route`]; kept as the executable spec the tests assert against.)
 #[cfg(test)]
 fn group_obstacles(
     rects: &BTreeMap<BoxId, Rect>,
@@ -834,7 +798,7 @@ impl SlabIndex {
 }
 
 /// (Production now applies this rule as a mask over the per-solve
-/// `all_obstacles` list — see `route_keyed_with`; kept as the executable spec
+/// `all_obstacles` list — see [`route`]; kept as the executable spec
 /// the tests assert against.)
 #[cfg(test)]
 fn leaf_obstacles(rects: &BTreeMap<BoxId, Rect>, exclude: &[BoxId]) -> Vec<Obstacle> {
@@ -2515,10 +2479,45 @@ mod tests {
     }
 
     use crate::layout::{Axis, Margin, Shape};
-    use crate::solve::{BoxKind, FlagSet, SolveConfig};
+    use crate::solve::{BoxKind, FlagSet};
 
     fn nrect(x: f64, y: f64, w: f64, h: f64) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    /// `route` over plain endpoint pairs with the default cost and policy.
+    ///
+    /// Test-only on purpose: production has ONE routing entry point, and the
+    /// pair-shaped, defaults-spelling convenience these tests want was three
+    /// public wrappers over it until nothing outside the tests called them.
+    /// Keeping it here means a default can never quietly diverge from what
+    /// production passes.
+    fn route_pairs(
+        boxes: &[Box],
+        rects: &BTreeMap<BoxId, Rect>,
+        edges: &[(BoxId, BoxId)],
+    ) -> Vec<Route> {
+        let keyed: Vec<KeyedEdge> = edges
+            .iter()
+            .map(|(s, t)| (s.clone(), t.clone(), None, None))
+            .collect();
+        route(
+            boxes,
+            rects,
+            &keyed,
+            &RouteCost::default(),
+            &RoutePolicy::default(),
+        )
+    }
+
+    /// `route` with an explicit cost and the default policy.
+    fn route_with_cost(
+        boxes: &[Box],
+        rects: &BTreeMap<BoxId, Rect>,
+        edges: &[KeyedEdge],
+        cost: &RouteCost,
+    ) -> Vec<Route> {
+        route(boxes, rects, edges, cost, &RoutePolicy::default())
     }
 
     /// Barrier lists for a hand-built route set with no scene behind it: the
@@ -2549,7 +2548,7 @@ mod tests {
         rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
         rects.insert(BoxId::Node("b".into()), nrect(300.0, 0.0, 100.0, 60.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source, "a");
         assert_eq!(out[0].target, "b");
@@ -2569,7 +2568,7 @@ mod tests {
         rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
         rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         assert!(out[0].points.len() >= 4, "detour: {:?}", out[0].points);
         let inf = inflate(nrect(150.0, -30.0, 80.0, 120.0), ROUTE_MARGIN);
@@ -2595,15 +2594,14 @@ mod tests {
     #[test]
     fn route_cost_default_reproduces_the_legacy_router() {
         let (boxes, rects, edges) = three_box_bent_case();
-        let legacy = route(&boxes, &rects, &edges, &SolveConfig::default());
-        let via_cost = route_keyed_with(
+        let legacy = route_pairs(&boxes, &rects, &edges);
+        let via_cost = route_with_cost(
             &boxes,
             &rects,
             &edges
                 .iter()
                 .map(|(s, t)| (s.clone(), t.clone(), None, None))
                 .collect::<Vec<_>>(),
-            &SolveConfig::default(),
             &RouteCost::default(),
         );
         assert_eq!(
@@ -2692,11 +2690,10 @@ mod tests {
     #[test]
     fn label_pressure_steers_a_route_toward_room_for_its_label() {
         let (boxes, rects, edges) = corridor_with_tight_and_roomy_paths();
-        let roomy = route_keyed_with(
+        let roomy = route_with_cost(
             &boxes,
             &rects,
             &labelled(&edges, 40.0),
-            &SolveConfig::default(),
             &RouteCost {
                 label_pressure: 50.0,
                 ..RouteCost::default()
@@ -2717,18 +2714,11 @@ mod tests {
             .iter()
             .map(|(s, t)| (s.clone(), t.clone(), None, None))
             .collect();
-        let baseline = route_keyed_with(
+        let baseline = route_with_cost(&boxes, &rects, &keyed, &RouteCost::default());
+        let pressured = route_with_cost(
             &boxes,
             &rects,
             &keyed,
-            &SolveConfig::default(),
-            &RouteCost::default(),
-        );
-        let pressured = route_keyed_with(
-            &boxes,
-            &rects,
-            &keyed,
-            &SolveConfig::default(),
             &RouteCost {
                 label_pressure: 50.0,
                 ..RouteCost::default()
@@ -2746,7 +2736,7 @@ mod tests {
             (BoxId::Node("a".into()), BoxId::Node("a".into())), // self
             (BoxId::Node("a".into()), BoxId::Node("ghost".into())), // unknown target
         ];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert!(
             out.is_empty(),
             "self + unknown edges produce no routes: {out:?}"
@@ -2764,8 +2754,8 @@ mod tests {
             (BoxId::Node("a".into()), BoxId::Node("b".into())),
             (BoxId::Node("a".into()), BoxId::Node("b".into())), // parallel
         ];
-        let a = route(&boxes, &rects, &edges, &SolveConfig::default());
-        let b = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let a = route_pairs(&boxes, &rects, &edges);
+        let b = route_pairs(&boxes, &rects, &edges);
         assert_eq!(a, b, "identical input => identical routes");
         assert_ne!(a[0].points, a[1].points, "parallels separated");
         // silence unused import warning in this fixture-heavy module:
@@ -2812,7 +2802,7 @@ mod tests {
         rects.insert(BoxId::Group(0), nrect(0.0, 0.0, 140.0, 100.0));
         rects.insert(BoxId::Node("b".into()), nrect(300.0, 20.0, 100.0, 60.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         assert_eq!(
             out[0].points.len(),
@@ -2836,7 +2826,7 @@ mod tests {
         rects.insert(BoxId::Node("x".into()), nrect(200.0, -10.0, 80.0, 40.0));
         rects.insert(BoxId::Group(0), nrect(180.0, -40.0, 120.0, 140.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         assert!(
             out[0].points.len() >= 4,
@@ -2878,7 +2868,7 @@ mod tests {
             .iter()
             .map(|t| (BoxId::Node("h".into()), BoxId::Node((*t).into())))
             .collect();
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         for r in &out {
             for w in r.points.windows(2) {
                 assert!(
@@ -2991,8 +2981,6 @@ mod tests {
 
     #[test]
     fn every_route_leaves_and_enters_perpendicular() {
-        let cfg = SolveConfig::default();
-
         // 1. Clear line of sight.
         {
             let boxes = vec![leafbox("a"), leafbox("b")];
@@ -3000,7 +2988,7 @@ mod tests {
             rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
             rects.insert(BoxId::Node("b".into()), nrect(300.0, 0.0, 100.0, 60.0));
             let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-            let out = route(&boxes, &rects, &edges, &cfg);
+            let out = route_pairs(&boxes, &rects, &edges);
             assert_perp_ends(&out, &rects);
         }
 
@@ -3012,7 +3000,7 @@ mod tests {
             rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
             rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
             let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-            let out = route(&boxes, &rects, &edges, &cfg);
+            let out = route_pairs(&boxes, &rects, &edges);
             assert_perp_ends(&out, &rects);
         }
 
@@ -3037,7 +3025,7 @@ mod tests {
                 .iter()
                 .map(|t| (BoxId::Node("h".into()), BoxId::Node((*t).into())))
                 .collect();
-            let out = route(&boxes, &rects, &edges, &cfg);
+            let out = route_pairs(&boxes, &rects, &edges);
             assert_perp_ends(&out, &rects);
         }
     }
@@ -3047,13 +3035,12 @@ mod tests {
         // Diagonally offset nodes tempt the router to attach at the corner
         // nearest the other box. Corner attachments look wrong, so every
         // endpoint must sit a clear margin in from both corners of its side.
-        let cfg = SolveConfig::default();
         let boxes = vec![leafbox("a"), leafbox("b")];
         let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
         rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
         rects.insert(BoxId::Node("b".into()), nrect(260.0, 220.0, 100.0, 60.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &cfg);
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         let rt = &out[0];
         let n = rt.points.len();
@@ -3084,7 +3071,6 @@ mod tests {
         // Every endpoint must STILL leave its border perpendicular for a full
         // ROUTE_MARGIN and sit at least CORNER_INSET in from both corners of its
         // side -- those are the two structural connector rules.
-        let cfg = SolveConfig::default();
         let mut boxes = Vec::new();
         let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
         let mut keys = Vec::new();
@@ -3105,7 +3091,7 @@ mod tests {
                 edges.push((BoxId::Node(from.clone()), BoxId::Node(to.clone())));
             }
         }
-        let out = route(&boxes, &rects, &edges, &cfg);
+        let out = route_pairs(&boxes, &rects, &edges);
         assert!(
             out.len() > 10,
             "expected a dense route set, got {}",
@@ -3121,7 +3107,6 @@ mod tests {
         // divides the side into m+1 equal steps, so the outermost endpoints
         // march toward the corners as the fan-in grows; they must stop at
         // CORNER_INSET instead.
-        let cfg = SolveConfig::default();
         let mut boxes = vec![leafbox("hub")];
         let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
         rects.insert(BoxId::Node("hub".into()), nrect(600.0, 300.0, 140.0, 90.0));
@@ -3135,7 +3120,7 @@ mod tests {
             );
             edges.push((BoxId::Node(k), BoxId::Node("hub".into())));
         }
-        let out = route(&boxes, &rects, &edges, &cfg);
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_perp_ends(&out, &rects);
         assert_off_corner(&out, &rects);
     }
@@ -3180,7 +3165,7 @@ mod tests {
         rects.insert(BoxId::Node("k".into()), nrect(105.0, -40.0, 40.0, 140.0));
         rects.insert(BoxId::Node("b".into()), nrect(0.0, 220.0, 100.0, 60.0));
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let out = route_pairs(&boxes, &rects, &edges);
         assert_eq!(out.len(), 1);
         let rt = &out[0];
         assert!(rt.points.len() >= 2, "no route: {:?}", rt.points);
@@ -3417,10 +3402,10 @@ mod tests {
         (Ovg { verts, adj }, srcv, tgtv)
     }
 
-    /// Verbatim copy of the pre-P-3 `route_keyed_with` edge loop: per-edge
+    /// Verbatim copy of the pre-P-3 `route` edge loop: per-edge
     /// obstacle rebuild + reference OVG build, feeding the SAME `astar`,
     /// `hub_spread` and `nudge`.
-    fn route_keyed_with_reference(
+    fn route_reference(
         boxes: &[Box],
         rects: &BTreeMap<BoxId, Rect>,
         edges: &[KeyedEdge],
@@ -3607,15 +3592,14 @@ mod tests {
 
     #[test]
     fn p3_optimized_routes_are_identical_to_reference_on_random_multi_edge_scenes() {
-        let cfg = SolveConfig::default();
         for seed in 0..12u64 {
             let (boxes, rects, edges) = random_scene(seed * 7 + 3, 10, 16);
             let cost = RouteCost {
                 label_pressure: if seed % 2 == 0 { 0.0 } else { 50.0 },
                 ..RouteCost::default()
             };
-            let fast = route_keyed_with(&boxes, &rects, &edges, &cfg, &cost);
-            let refr = route_keyed_with_reference(&boxes, &rects, &edges, &cost);
+            let fast = route_with_cost(&boxes, &rects, &edges, &cost);
+            let refr = route_reference(&boxes, &rects, &edges, &cost);
             assert_eq!(fast, refr, "routes diverged from reference (seed {seed})");
         }
     }
@@ -3626,13 +3610,7 @@ mod tests {
     #[test]
     fn p3_multi_edge_fixture_keeps_endpoint_and_orthogonality_invariants() {
         let (boxes, rects, edges) = grid_scene(12, 20);
-        let out = route_keyed_with(
-            &boxes,
-            &rects,
-            &edges,
-            &SolveConfig::default(),
-            &RouteCost::default(),
-        );
+        let out = route_with_cost(&boxes, &rects, &edges, &RouteCost::default());
         assert!(!out.is_empty());
         for rt in &out {
             for w in rt.points.windows(2) {
@@ -3672,16 +3650,15 @@ mod tests {
     #[ignore = "perf measurement, run manually"]
     fn p3_router_scales_on_large_diagrams() {
         use std::time::Instant;
-        let cfg = SolveConfig::default();
         let cost = RouteCost::default();
 
         for (n, m) in [(60, 120), (200, 400)] {
             let (boxes, rects, edges) = grid_scene(n, m);
             let t0 = Instant::now();
-            let fast = route_keyed_with(&boxes, &rects, &edges, &cfg, &cost);
+            let fast = route_with_cost(&boxes, &rects, &edges, &cost);
             let fast_ms = t0.elapsed().as_secs_f64() * 1e3;
             let t1 = Instant::now();
-            let refr = route_keyed_with_reference(&boxes, &rects, &edges, &cost);
+            let refr = route_reference(&boxes, &rects, &edges, &cost);
             let ref_ms = t1.elapsed().as_secs_f64() * 1e3;
             assert_eq!(fast, refr);
             println!(

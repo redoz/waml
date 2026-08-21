@@ -102,43 +102,22 @@ fn half_extent(s: &Size) -> f64 {
     (s.w + s.h) / 4.0
 }
 
-/// Lay out `ids` (with matching `sizes`) under undirected `edges` (index pairs
-/// into `ids`/`sizes`). Returns one `Rect` per input id, in input order, with
-/// the min corner translated to the origin (matching `assemble`'s convention).
-pub fn layout(
-    ids: &[BoxId],
-    sizes: &[Size],
-    edges: &[(usize, usize)],
-    cfg: &StressConfig,
-) -> Vec<Rect> {
-    layout_grouped(ids, sizes, edges, &[], cfg).0
-}
-
-/// Lay out `ids` under undirected `edges` plus a soft cohesion force from
-/// `groups`: co-members are pulled toward a shorter target distance and
-/// weighted more heavily in the SMACOF solve, without hard-constraining them —
-/// a strong outside edge can still pull a member away. Returns `(node rects,
-/// one hull rect per group in `groups` order)`. With `groups` empty this is
-/// exactly `layout`'s behavior (the regression guard for "groups change
-/// nothing when there are none").
-pub fn layout_grouped(
-    ids: &[BoxId],
-    sizes: &[Size],
-    edges: &[(usize, usize)],
-    groups: &[GroupSpec],
-    cfg: &StressConfig,
-) -> (Vec<Rect>, Vec<Rect>) {
-    let (rects, hulls, _) =
-        layout_grouped_inner(ids, sizes, edges, groups, &SepSpecs::default(), cfg);
-    (rects, hulls)
-}
-
-/// `layout_grouped` + hard constraints: stress-solve, pack components, then
-/// project `seps` and re-run overlap removal with the authored seps folded
-/// in so it cannot un-satisfy them. Returns `(node rects, hull rects,
-/// (dropped x-sep indices, dropped y-sep indices))`. With `seps` empty this
-/// is byte-identical to `layout_grouped` (see
-/// `layout_constrained_empty_seps_matches_layout_grouped`).
+/// THE stress solver's entry point. Lay out `ids` (with matching `sizes`) under
+/// undirected `edges` (index pairs into `ids`/`sizes`), a soft cohesion force
+/// from `groups`, and hard `seps`: stress-solve, pack components, then project
+/// `seps` and re-run overlap removal with the authored seps folded in so it
+/// cannot un-satisfy them.
+///
+/// Returns one `Rect` per input id in input order with the min corner
+/// translated to the origin (matching `assemble`'s convention), one hull rect
+/// per entry of `groups` in `groups` order, and the authored-sep drop report
+/// `(dropped x-sep indices, dropped y-sep indices)`.
+///
+/// Both optional inputs are genuinely optional rather than a separate tier.
+/// Empty `groups` runs the plain stress solve — co-members are otherwise pulled
+/// toward a shorter target distance and weighted more heavily in the SMACOF
+/// solve, without hard-constraining them, so a strong outside edge can still
+/// pull a member away. Empty `seps` skips the projection.
 #[allow(clippy::type_complexity)]
 pub fn layout_constrained(
     ids: &[BoxId],
@@ -1678,18 +1657,37 @@ mod tests {
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
     }
 
-    #[test]
-    fn layout_constrained_empty_seps_matches_layout_grouped() {
-        let ids = ids(&["a", "b", "c"]);
-        let sz = sizes(3, 100.0, 50.0);
-        let edges = vec![(0usize, 1usize), (1, 2)];
-        let cfg = StressConfig::default();
-        let (r1, h1) = layout_grouped(&ids, &sz, &edges, &[], &cfg);
-        let (r2, h2, dropped) =
-            layout_constrained(&ids, &sz, &edges, &[], &SepSpecs::default(), &cfg);
-        assert_eq!(r1, r2);
-        assert_eq!(h1, h2);
-        assert!(dropped.0.is_empty() && dropped.1.is_empty());
+    /// `layout_constrained` with no authored seps, dropping the (necessarily
+    /// empty) drop report.
+    ///
+    /// Test-only on purpose: this and `layout` below were public wrappers over
+    /// `layout_constrained` until nothing outside the tests called them, and a
+    /// public wrapper whose only job is to spell a default is untested surface
+    /// the next reader would assume production exercises.
+    fn layout_grouped(
+        ids: &[BoxId],
+        sizes: &[Size],
+        edges: &[(usize, usize)],
+        groups: &[GroupSpec],
+        cfg: &StressConfig,
+    ) -> (Vec<Rect>, Vec<Rect>) {
+        let (rects, hulls, dropped) =
+            layout_constrained(ids, sizes, edges, groups, &SepSpecs::default(), cfg);
+        assert!(
+            dropped.0.is_empty() && dropped.1.is_empty(),
+            "no authored seps means nothing can be dropped"
+        );
+        (rects, hulls)
+    }
+
+    /// `layout_constrained` with neither groups nor seps.
+    fn layout(
+        ids: &[BoxId],
+        sizes: &[Size],
+        edges: &[(usize, usize)],
+        cfg: &StressConfig,
+    ) -> Vec<Rect> {
+        layout_grouped(ids, sizes, edges, &[], cfg).0
     }
 
     #[test]
@@ -1865,9 +1863,9 @@ mod tests {
     #[test]
     fn layout_constrained_with_seps_skips_reduce_crossings_but_grouped_default_keeps_it() {
         // Contract pin: authored seps disable the crossing post-pass (its moves
-        // are sep-blind). Empty seps must keep byte-identical behavior to
-        // layout_grouped — that equivalence is already asserted above; here we
-        // only pin that a sep-carrying solve still returns overlap-free rects.
+        // are sep-blind). Empty seps keep byte-identical behavior to the same
+        // call with no seps at all; here we only pin that a sep-carrying solve
+        // still returns overlap-free rects.
         use crate::solve::vpsc::Sep;
         let ids = ids(&["a", "b", "c", "d"]);
         let sz = sizes(4, 100.0, 50.0);
@@ -2326,22 +2324,6 @@ mod tests {
             disjoint,
             "component bounding boxes overlap: a=({ax0},{ay0},{ax1},{ay1}) b=({bx0},{by0},{bx1},{by1})"
         );
-    }
-
-    /// The equivalence is structural, not incidental: `layout` is literally
-    /// `layout_grouped(.., &[], ..).0`, so every pass -- `reduce_crossings`
-    /// included -- runs identically on both paths by construction. This guards
-    /// against that delegation being replaced by a divergent copy.
-    #[test]
-    fn layout_grouped_with_no_groups_matches_layout() {
-        let cfg = StressConfig::default();
-        let g = ids(&["a", "b", "c", "d", "e"]);
-        let szs = sizes(5, 160.0, 80.0);
-        let edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)];
-        let plain = layout(&g, &szs, &edges, &cfg);
-        let (grouped, hulls) = layout_grouped(&g, &szs, &edges, &[], &cfg);
-        assert_eq!(plain, grouped);
-        assert!(hulls.is_empty());
     }
 
     #[test]
@@ -2987,7 +2969,7 @@ mod tests {
     }
 
     /// Determinism: identical input run through `reduce_crossings` twice
-    /// yields byte-identical rects, matching the golden `layout_grouped`
+    /// yields byte-identical rects, matching the golden grouped-layout
     /// determinism guard above.
     #[test]
     fn reduce_crossings_is_deterministic() {

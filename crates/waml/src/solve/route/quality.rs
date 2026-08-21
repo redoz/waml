@@ -39,7 +39,7 @@
 
 use super::*;
 use crate::layout::{Margin, Shape};
-use crate::solve::{BoxKind, FlagSet, SolveConfig, Solved};
+use crate::solve::{BoxKind, FlagSet, Solved};
 
 /// One quality-rule breach, with enough context to reproduce it.
 #[derive(Debug, Clone)]
@@ -349,13 +349,19 @@ fn solve_scene(rects: &BTreeMap<String, Rect>, edges: &[(String, String)]) -> Sc
         .iter()
         .map(|(k, r)| (BoxId::Node(k.clone()), *r))
         .collect();
-    let pairs: Vec<(BoxId, BoxId)> = edges
+    let keyed: Vec<KeyedEdge> = edges
         .iter()
-        .map(|(s, t)| (BoxId::Node(s.clone()), BoxId::Node(t.clone())))
+        .map(|(s, t)| (BoxId::Node(s.clone()), BoxId::Node(t.clone()), None, None))
         .collect();
     Scene {
         rects: rects.clone(),
-        routes: route(&boxes, &by_id, &pairs, &SolveConfig::default()),
+        routes: route(
+            &boxes,
+            &by_id,
+            &keyed,
+            &RouteCost::default(),
+            &RoutePolicy::default(),
+        ),
     }
 }
 

@@ -1,5 +1,30 @@
 //! Diagram layout solver: resolve a `model::Diagram` into absolute pixel rects.
 //! See docs/superpowers/specs/2026-07-12-diagram-layout-solver-design.md.
+//!
+//! # The entry points
+//!
+//! Three diagram families, each with ONE solve entry point, plus the shared
+//! stages a structural diagram runs through. They are listed here because the
+//! surface is what a reader needs to see first, and because listing it is what
+//! keeps a fourth "…_with_x" wrapper from being added without anyone noticing:
+//!
+//! | Family | Entry point |
+//! |---|---|
+//! | Class / ER / use case | [`resolve::resolve`] (or [`use_case::resolve_use_case`]) -> [`constrain::compile`] -> [`stress::layout_constrained`] -> [`route::route`] |
+//! | Activity / state machine | [`flow::solve_flow`] |
+//! | Sequence | [`interaction::solve_interaction`] |
+//!
+//! Edge labels are placed on top of a solved structural scene by
+//! [`place_labels_with_reroute`] (which may replay the router) and then, after
+//! the frontend has clipped endpoints, by [`place_labels_final`].
+//!
+//! Every one of those takes its variation as PARAMETERS — `RouteCost`,
+//! `RoutePolicy`, `SepSpecs`, `GroupSpec`, `LabelRoutingPolicy` — whose
+//! `Default` reproduces the legacy behaviour exactly. There is deliberately no
+//! wrapper that exists only to spell a default: such a wrapper is a second
+//! entry point with its own defaults, untested the moment production stops
+//! calling it, and the reader has no way to tell which one the shipped diagram
+//! goes through.
 
 use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
@@ -277,12 +302,11 @@ pub struct SolvedRouting {
 }
 
 impl SolvedRouting {
-    pub fn context<'a>(&'a self, cfg: &'a SolveConfig) -> RoutingContext<'a> {
+    pub fn context(&self) -> RoutingContext<'_> {
         RoutingContext {
             boxes: &self.boxes,
             rects: &self.rects,
             edges: &self.edges,
-            cfg,
         }
     }
 }
@@ -354,7 +378,7 @@ fn label_obstacles_with(solved: &Solved, projected_headings: Option<&[Rect]>) ->
 pub const MAX_REROUTE_ROUNDS: usize = 2;
 
 /// `label_pressure` weight used only for a reroute attempt. The first routing
-/// pass (`route::route`/`route::route_keyed`) always uses
+/// pass (`route::route`) always uses
 /// `RouteCost::default()` (weight 0), so nothing moves until a label has
 /// actually failed to place.
 const REROUTE_LABEL_PRESSURE: f64 = 50.0;
@@ -366,7 +390,6 @@ pub struct RoutingContext<'a> {
     pub boxes: &'a [Box],
     pub rects: &'a BTreeMap<BoxId, Rect>,
     pub edges: &'a [(BoxId, BoxId, Option<String>)],
-    pub cfg: &'a SolveConfig,
 }
 
 /// Route behavior and frontend-projected obstacles reused by label rerouting.
@@ -433,50 +456,13 @@ fn placement_score(placement: &label::Placement) -> (usize, usize) {
 ///
 /// Sets `solved.label_reroutes` to the number of edges whose polyline actually
 /// changed.
+///
+/// `policy` carries the routing behaviour a replay must reuse. It is a
+/// parameter and not a tier: `LabelRoutingPolicy` with a default cost, a
+/// default `RoutePolicy` and no projected headings reproduces the legacy
+/// geometry exactly, which is all the two wrappers that used to spell those
+/// defaults ever did.
 pub fn place_labels_with_reroute(
-    solved: &mut Solved,
-    routing: &RoutingContext,
-    routes: &mut [Vec<(f64, f64)>],
-    requests: &[label::LabelRequest],
-    cfg: &label::LabelConfig,
-) -> Vec<label::LabelRequest> {
-    place_labels_with_reroute_cost(
-        solved,
-        routing,
-        routes,
-        requests,
-        cfg,
-        route::RouteCost::default(),
-    )
-}
-
-/// `place_labels_with_reroute` with an explicit base route cost. Callers that
-/// opt into crossing-aware routing use the same policy when a label requests a
-/// replay; all existing callers keep byte-identical default geometry.
-pub fn place_labels_with_reroute_cost(
-    solved: &mut Solved,
-    routing: &RoutingContext,
-    routes: &mut [Vec<(f64, f64)>],
-    requests: &[label::LabelRequest],
-    cfg: &label::LabelConfig,
-    base_cost: route::RouteCost,
-) -> Vec<label::LabelRequest> {
-    place_labels_with_reroute_policy(
-        solved,
-        routing,
-        routes,
-        requests,
-        cfg,
-        &LabelRoutingPolicy {
-            cost: base_cost,
-            route: &route::RoutePolicy::default(),
-            projected_headings: None,
-        },
-    )
-}
-
-/// Label placement and bounded rerouting with an explicit route policy.
-pub fn place_labels_with_reroute_policy(
     solved: &mut Solved,
     routing: &RoutingContext,
     routes: &mut [Vec<(f64, f64)>],
@@ -553,14 +539,7 @@ pub fn place_labels_with_reroute_policy(
             keyed[edge_idx].3 = label_sizes.get(&pos).copied();
         }
 
-        let replayed = route::route_keyed_with_policy(
-            routing.boxes,
-            routing.rects,
-            &keyed,
-            routing.cfg,
-            &cost,
-            policy.route,
-        );
+        let replayed = route::route(routing.boxes, routing.rects, &keyed, &cost, policy.route);
         if replayed.len() != routes.len() {
             break; // the router disagrees with `order`: leave the routes alone
         }
@@ -622,6 +601,53 @@ pub fn place_labels_final(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `place_labels_with_reroute` with an explicit base route cost, the default
+    /// `RoutePolicy` and no projected headings.
+    ///
+    /// Test-only on purpose: this and `reroute_with_defaults` below were public
+    /// wrappers whose whole job was to spell those defaults, and nothing outside
+    /// these tests called either. Keeping them here means a default cannot
+    /// quietly diverge from what production passes.
+    fn reroute_with_cost(
+        solved: &mut Solved,
+        routing: &RoutingContext,
+        routes: &mut [Vec<(f64, f64)>],
+        requests: &[label::LabelRequest],
+        cfg: &label::LabelConfig,
+        base_cost: route::RouteCost,
+    ) -> Vec<label::LabelRequest> {
+        place_labels_with_reroute(
+            solved,
+            routing,
+            routes,
+            requests,
+            cfg,
+            &LabelRoutingPolicy {
+                cost: base_cost,
+                route: &route::RoutePolicy::default(),
+                projected_headings: None,
+            },
+        )
+    }
+
+    /// `reroute_with_cost` at the default cost.
+    fn reroute_with_defaults(
+        solved: &mut Solved,
+        routing: &RoutingContext,
+        routes: &mut [Vec<(f64, f64)>],
+        requests: &[label::LabelRequest],
+        cfg: &label::LabelConfig,
+    ) -> Vec<label::LabelRequest> {
+        reroute_with_cost(
+            solved,
+            routing,
+            routes,
+            requests,
+            cfg,
+            route::RouteCost::default(),
+        )
+    }
 
     #[test]
     fn final_label_placement_uses_the_clipped_terminal_segment() {
@@ -774,7 +800,17 @@ mod tests {
             BoxId::Node("squeeze".into()),
             nrect(180.0, 120.0, 40.0, 100.0),
         );
-        let routes = route::route_keyed(&boxes, &rects, &edges, &SolveConfig::default());
+        let keyed: Vec<route::KeyedEdge> = edges
+            .iter()
+            .map(|(s, t, key)| (s.clone(), t.clone(), key.clone(), None))
+            .collect();
+        let routes = route::route(
+            &boxes,
+            &rects,
+            &keyed,
+            &route::RouteCost::default(),
+            &route::RoutePolicy::default(),
+        );
         let nodes: BTreeMap<String, Rect> = rects
             .iter()
             .map(|(id, r)| {
@@ -827,13 +863,12 @@ mod tests {
         let before = c.solved.routes.clone();
         let requests = crowded_label_requests();
 
-        let unresolved = place_labels_with_reroute(
+        let unresolved = reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -857,13 +892,12 @@ mod tests {
         let solve = || {
             let mut c = crowded_scene_where_one_label_cannot_fit();
             let requests = crowded_label_requests();
-            let unresolved = place_labels_with_reroute_cost(
+            let unresolved = reroute_with_cost(
                 &mut c.solved,
                 &RoutingContext {
                     boxes: &c.boxes,
                     rects: &c.rects,
                     edges: &c.edges,
-                    cfg: &SolveConfig::default(),
                 },
                 &mut c.routes,
                 &requests,
@@ -894,13 +928,12 @@ mod tests {
             .insert("lid".to_string(), nrect(20.0, -160.0, 400.0, 80.0));
         let requests = crowded_label_requests();
 
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -928,13 +961,12 @@ mod tests {
         let substituted = c.routes.clone();
         let requests = crowded_label_requests();
 
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -954,13 +986,12 @@ mod tests {
         // and inflated the very instrumentation the reroute stage is judged by.
         let mut c = crowded_scene_where_one_label_cannot_fit();
         let requests = crowded_label_requests();
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -986,13 +1017,12 @@ mod tests {
         let before = c.solved.routes.clone();
         let requests = crowded_label_requests();
 
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -1036,13 +1066,12 @@ mod tests {
             },
         ];
 
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
@@ -1309,13 +1338,12 @@ mod tests {
     fn the_pretty_dump_reports_label_placement_effort() {
         let mut c = crowded_scene_where_one_label_cannot_fit();
         let requests = crowded_label_requests();
-        place_labels_with_reroute(
+        reroute_with_defaults(
             &mut c.solved,
             &RoutingContext {
                 boxes: &c.boxes,
                 rects: &c.rects,
                 edges: &c.edges,
-                cfg: &SolveConfig::default(),
             },
             &mut c.routes,
             &requests,
