@@ -21,7 +21,6 @@ pub const ROW_HEIGHT: f64 = 27.0;
 /// that reads them (`thumb_rect`/`scroll_for_thumb_y`); `tree_panel` draws and
 /// hit-tests the bar through those, so the numbers live in one place.
 pub const SCROLLBAR_W: f64 = 6.0;
-pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 
 /// Left margin of the fold chevron box within its row.
 pub const CHEVRON_LEFT_MARGIN: f64 = 4.0;
@@ -218,40 +217,27 @@ impl TreeLayout {
     /// draw path paints and the one `handle_event` hit-tests, so a press always
     /// lands on exactly what the user sees.
     pub fn thumb_rect(&self) -> Option<Rect> {
-        let content = self.content_height();
-        if content <= self.size.y || self.size.y <= 0.0 {
-            return None;
+        self.scrollbar().thumb_rect()
+    }
+
+    /// This panel's track, handed to the shared geometry.
+    fn scrollbar(&self) -> crate::scrollbar::ScrollbarGeometry {
+        crate::scrollbar::ScrollbarGeometry {
+            track_top: self.origin.y,
+            track_right: self.origin.x + self.size.x,
+            track_h: self.size.y,
+            content_h: self.content_height(),
+            scroll: self.scroll,
+            inset: 0.0,
+            width: SCROLLBAR_W,
         }
-        let visible = (self.size.y / content).clamp(0.0, 1.0);
-        let thumb_h = (self.size.y * visible).max(SCROLLBAR_MIN_THUMB);
-        let travel = self.size.y - thumb_h;
-        let progress = if self.max_scroll() > 0.0 {
-            self.scroll / self.max_scroll()
-        } else {
-            0.0
-        };
-        Some(Rect {
-            pos: dvec2(
-                self.origin.x + self.size.x - SCROLLBAR_W,
-                self.origin.y + travel * progress,
-            ),
-            size: dvec2(SCROLLBAR_W, thumb_h),
-        })
     }
 
     /// Invert `thumb_rect`: the (clamped) scroll offset that places the thumb's
     /// top at absolute `thumb_y`. A drag maps the pointer to a scroll this way,
     /// so dragging past either end simply pins at that end.
     pub fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
-        let content = self.content_height();
-        if content <= self.size.y {
-            return 0.0;
-        }
-        let visible = (self.size.y / content).clamp(0.0, 1.0);
-        let thumb_h = (self.size.y * visible).max(SCROLLBAR_MIN_THUMB);
-        let travel = (self.size.y - thumb_h).max(1.0);
-        let progress = ((thumb_y - self.origin.y) / travel).clamp(0.0, 1.0);
-        progress * self.max_scroll()
+        self.scrollbar().scroll_for_thumb_y(thumb_y)
     }
 
     /// Absolute rect of row `index`, already shifted by the scroll offset. Rows
@@ -683,7 +669,7 @@ mod tests {
         );
         assert!(thumb.size.x - SCROLLBAR_W < 1e-6);
         // The thumb never shrinks below the floor.
-        assert!(thumb.size.y >= SCROLLBAR_MIN_THUMB);
+        assert!(thumb.size.y >= crate::scrollbar::SCROLLBAR_MIN_THUMB);
         // Inverting the thumb's top recovers the scroll offset that produced it.
         assert!(
             (layout.scroll_for_thumb_y(thumb.pos.y) - layout.scroll()).abs() < 0.5,

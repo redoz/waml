@@ -56,9 +56,6 @@ fn row_is_marked(
         None => open_marking == Some(item_id),
     }
 }
-/// Shortest the thumb ever gets so it stays grabbable on a very long list (lpx).
-pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
-
 /// Pure card geometry (main-window coords). The surface sets `anchor` + `rows`
 /// at open, and `width` each draw from makepad's measured widest label. When a
 /// `max_height` is set (the select flyout on a long list) the panel clamps to
@@ -171,30 +168,30 @@ impl LinearGeom {
     }
     /// The scrollbar thumb rect (window coords), or `None` when nothing scrolls.
     pub fn thumb_rect(&self) -> Option<Rect> {
-        let max = self.max_scroll();
-        if max <= 0.0 {
-            return None;
+        self.scrollbar().thumb_rect()
+    }
+
+    /// This popup's track, handed to the shared geometry.
+    fn scrollbar(&self) -> crate::scrollbar::ScrollbarGeometry {
+        crate::scrollbar::ScrollbarGeometry {
+            track_top: self.anchor.y + PAD_V,
+            track_right: self.anchor.x + self.width,
+            track_h: self.viewport_height(),
+            // The shared geometry compares content against the TRACK, so both
+            // must be in the same space: viewport_height() excludes the
+            // vertical pad, so the content must too. The old local copy mixed
+            // them -- it measured content with the pad and the track without,
+            // which is why an unscrollable menu still computed a thumb.
+            content_h: (self.content_height() - PAD_V * 2.0).max(0.0),
+            scroll: self.scroll,
+            inset: SCROLLBAR_INSET,
+            width: SCROLLBAR_W,
         }
-        let track_h = self.viewport_height();
-        let track_top = self.anchor.y + PAD_V;
-        let thumb_h = (track_h * track_h / self.content_height()).max(SCROLLBAR_MIN_THUMB);
-        let t = self.scroll / max;
-        let thumb_y = track_top + t * (track_h - thumb_h);
-        let x = self.anchor.x + self.width - SCROLLBAR_W - SCROLLBAR_INSET;
-        Some(Rect {
-            pos: dvec2(x, thumb_y),
-            size: dvec2(SCROLLBAR_W, thumb_h),
-        })
     }
     /// Invert `thumb_rect`: the scroll offset that puts the thumb top at `y`.
     /// Drives thumb dragging (clamped by `set_scroll`).
     pub fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
-        let track_h = self.viewport_height();
-        let track_top = self.anchor.y + PAD_V;
-        let thumb_h = (track_h * track_h / self.content_height()).max(SCROLLBAR_MIN_THUMB);
-        let span = (track_h - thumb_h).max(1.0);
-        let t = ((thumb_y - track_top) / span).clamp(0.0, 1.0);
-        t * self.max_scroll()
+        self.scrollbar().scroll_for_thumb_y(thumb_y)
     }
 }
 

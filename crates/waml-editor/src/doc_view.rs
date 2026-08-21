@@ -376,7 +376,6 @@ impl BodyWidgets {
 pub struct ViewOutcome {
     pub edit: Option<EditIntent>,
     pub source_edit: Option<crate::editor_session::ProposedSourceEdit>,
-    /// Ask the shell to open an element preview by key (spec §5). Unused this
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,
     /// Ask the shell to promote (pin) the tab that was active when this

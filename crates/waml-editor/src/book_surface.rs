@@ -693,46 +693,30 @@ impl BookSurface {
     }
 
     /// Absolute rect of the scroll-bar thumb for the cached viewport rect
-    /// and current offset, or `None` when the whole book fits. Mirrors
-    /// `TreeLayout::thumb_rect` -- the same rect is painted and hit-tested.
+    /// and current offset, or `None` when the whole book fits. The same rect
+    /// is painted and hit-tested.
     fn thumb_rect(&self) -> Option<Rect> {
-        let rect = self.viewport_rect;
-        let content: f64 = self.heights.iter().sum();
-        if content <= rect.size.y || rect.size.y <= 0.0 {
-            return None;
-        }
-        let visible = (rect.size.y / content).clamp(0.0, 1.0);
-        let thumb_h = (rect.size.y * visible).max(crate::tree_layout::SCROLLBAR_MIN_THUMB);
-        let travel = rect.size.y - thumb_h;
-        let max_scroll = self.max_scroll();
-        let progress = if max_scroll > 0.0 {
-            self.scroll / max_scroll
-        } else {
-            0.0
-        };
-        Some(Rect {
-            pos: dvec2(
-                rect.pos.x + rect.size.x - crate::tree_layout::SCROLLBAR_W,
-                rect.pos.y + travel * progress,
-            ),
-            size: dvec2(crate::tree_layout::SCROLLBAR_W, thumb_h),
-        })
+        self.scrollbar().thumb_rect()
     }
 
-    /// Invert `thumb_rect`: the (unclamped) scroll offset that places the
-    /// thumb's top at absolute `thumb_y`. Mirrors
-    /// `TreeLayout::scroll_for_thumb_y`.
-    fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
+    /// This surface's track, handed to the shared geometry.
+    fn scrollbar(&self) -> crate::scrollbar::ScrollbarGeometry {
         let rect = self.viewport_rect;
-        let content: f64 = self.heights.iter().sum();
-        if content <= rect.size.y {
-            return 0.0;
+        crate::scrollbar::ScrollbarGeometry {
+            track_top: rect.pos.y,
+            track_right: rect.pos.x + rect.size.x,
+            track_h: rect.size.y,
+            content_h: self.heights.iter().sum(),
+            scroll: self.scroll,
+            inset: 0.0,
+            width: crate::tree_layout::SCROLLBAR_W,
         }
-        let visible = (rect.size.y / content).clamp(0.0, 1.0);
-        let thumb_h = (rect.size.y * visible).max(crate::tree_layout::SCROLLBAR_MIN_THUMB);
-        let travel = (rect.size.y - thumb_h).max(1.0);
-        let progress = ((thumb_y - rect.pos.y) / travel).clamp(0.0, 1.0);
-        progress * self.max_scroll()
+    }
+
+    /// Invert `thumb_rect`: the scroll offset that places the thumb's top at
+    /// absolute `thumb_y`.
+    fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
+        self.scrollbar().scroll_for_thumb_y(thumb_y)
     }
 
     fn draw_heading_row(&mut self, cx: &mut Cx2d, section: &BookSection, rect: Rect) {

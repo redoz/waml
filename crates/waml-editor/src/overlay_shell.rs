@@ -50,7 +50,6 @@ pub const SCROLLBAR_W: f64 = 4.0;
 /// Inset of the thumb from the panel's right edge (lpx).
 pub const SCROLLBAR_INSET: f64 = 3.0;
 /// Shortest the thumb ever gets so it stays grabbable (lpx).
-pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 /// Height of the source-bright top edge hairline (lpx).
 pub const EDGE_H: f64 = 1.5;
 
@@ -138,29 +137,25 @@ impl PanelGeom {
     }
     /// The scrollbar thumb rect, or `None` when nothing scrolls.
     pub fn thumb_rect(&self) -> Option<Rect> {
-        let max = self.max_scroll();
-        if max <= 0.0 {
-            return None;
-        }
-        let track_h = self.viewport_height();
+        self.scrollbar().thumb_rect()
+    }
+
+    /// This panel's track, handed to the shared geometry.
+    fn scrollbar(&self) -> crate::scrollbar::ScrollbarGeometry {
         let p = self.panel_rect();
-        let track_top = p.pos.y + PANEL_PAD_V;
-        let thumb_h = (track_h * track_h / self.content_h.max(1.0)).max(SCROLLBAR_MIN_THUMB);
-        let t = self.scroll / max;
-        let x = p.pos.x + self.panel_w - SCROLLBAR_W - SCROLLBAR_INSET;
-        Some(Rect {
-            pos: dvec2(x, track_top + t * (track_h - thumb_h)),
-            size: dvec2(SCROLLBAR_W, thumb_h),
-        })
+        crate::scrollbar::ScrollbarGeometry {
+            track_top: p.pos.y + PANEL_PAD_V,
+            track_right: p.pos.x + self.panel_w,
+            track_h: self.viewport_height(),
+            content_h: self.content_h,
+            scroll: self.scroll,
+            inset: SCROLLBAR_INSET,
+            width: SCROLLBAR_W,
+        }
     }
     /// Invert `thumb_rect`: the scroll offset that puts the thumb top at `y`.
     pub fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
-        let track_h = self.viewport_height();
-        let track_top = self.panel_rect().pos.y + PANEL_PAD_V;
-        let thumb_h = (track_h * track_h / self.content_h.max(1.0)).max(SCROLLBAR_MIN_THUMB);
-        let span = (track_h - thumb_h).max(1.0);
-        let t = ((thumb_y - track_top) / span).clamp(0.0, 1.0);
-        t * self.max_scroll()
+        self.scrollbar().scroll_for_thumb_y(thumb_y)
     }
 }
 

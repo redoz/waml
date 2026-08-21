@@ -107,6 +107,7 @@ mod reading_view;
 mod recent_row;
 mod ref_card;
 mod scene;
+mod scrollbar;
 mod search_results_view;
 mod search_session;
 mod search_state;
