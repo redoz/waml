@@ -140,9 +140,14 @@ fn semantic_fingerprint(
         .queries()
         .links()
         .map(|link| {
+            // `destination_range` is part of the fingerprint, not an extra: it
+            // is the one link value read from bytes that may sit outside the
+            // link -- a reference use reads it from its definition -- so it is
+            // the one a reparse that reuses the use's green can get wrong
+            // while every other value still agrees.
             format!(
-                "{:?}:{:?}:{:?}:{:?}",
-                link.kind, link.source_range, link.destination, link.title
+                "{:?}:{:?}:{:?}:{:?}:{:?}",
+                link.kind, link.source_range, link.destination, link.destination_range, link.title
             )
         })
         .collect();
@@ -629,6 +634,73 @@ fn an_edit_to_a_definitions_next_line_destination_refreshes_its_uses() {
             replacement: Arc::from(""),
         }],
     );
+}
+
+#[test]
+fn escaping_a_definition_destination_moves_the_span_its_uses_cached() {
+    // This fails if the definition guard decides "same definition" from the
+    // *decoded* destination. `[id]: /one` and `[id]:\/one` both decode to
+    // `/one`, so a guard comparing decoded values calls them equal and skips
+    // the fan-out -- while the authored span the uses cached moved from `6..10`
+    // to `5..10`. Every use of `id` then reported a destination span starting
+    // one byte inside the escape.
+    let old = "[id]: /one\n\nuse [x][id]\n";
+    let new = "[id]:\\/one\n\nuse [x][id]\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(5, 6),
+            replacement: Arc::from("\\"),
+        }],
+    )
+    .unwrap();
+
+    let link = update.snapshot.queries().links().next().unwrap();
+    assert_eq!(link.destination.as_ref(), "/one");
+    assert_eq!(
+        link.destination_range,
+        Some(range(5, 10)),
+        "the cached span must cover the authored `\\/one`, escape included"
+    );
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+
+    // And back the other way: unescaping shortens the authored span without
+    // touching the decoded destination.
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(new),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(old),
+        &[TextChange {
+            old_range: range(5, 6),
+            replacement: Arc::from(" "),
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        update
+            .snapshot
+            .queries()
+            .links()
+            .next()
+            .unwrap()
+            .destination_range,
+        Some(range(6, 10))
+    );
+    assert_snapshot_matches_full_oracle(&update.snapshot, old);
 }
 
 #[test]

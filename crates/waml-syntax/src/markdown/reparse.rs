@@ -347,13 +347,37 @@ pub(crate) fn changed_definition_ranges(
         .collect())
 }
 
+/// Whether a reference *use* may keep the annotations it cached from this
+/// definition.
+///
+/// The question is not "does the definition read the same", it is "is every
+/// value a use copied off it still true". A use copies three: the decoded
+/// destination, the decoded title, and `destination_range` -- the *authored*
+/// span the destination was read from, in absolute document coordinates.
+///
+/// So the span has to be compared too, and the decoded destination does not
+/// stand in for it. Escaping is exactly the case where the two part company:
+/// `[id]: /one` and `[id]:\/one` both decode to `/one`, so comparing only the
+/// decoded value calls them the same definition, while the authored span moved
+/// from `6..10` to `5..10`. Every use of the label then keeps a span that
+/// starts one byte *inside* the escape -- a link destination that reads
+/// `/one` out of `\/one`, and that a consumer rewriting the span would
+/// corrupt to `\<new>`.
+///
+/// Comparing absolute spans over-reports when a definition merely moves,
+/// which is the direction to err in: an absolute span that moved is stale
+/// whatever else stayed the same, and the cost of saying so is one splice of
+/// the label's use sites.
 fn same_definition(
     old: Option<&MarkdownReferenceDefinition>,
     new: Option<&MarkdownReferenceDefinition>,
 ) -> bool {
     match (old, new) {
         (Some(old), Some(new)) => {
-            old.label == new.label && old.destination == new.destination && old.title == new.title
+            old.label == new.label
+                && old.destination == new.destination
+                && old.title == new.title
+                && old.destination_range == new.destination_range
         }
         (None, None) => true,
         (Some(_), None) | (None, Some(_)) => false,
