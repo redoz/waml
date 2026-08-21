@@ -12,9 +12,8 @@ use waml_syntax::{
     SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
 };
 
-use crate::analysis::{
-    DocumentId, DocumentRevision, MarkdownSyntaxSet, WamlCodeRole, WamlCodeSpan,
-};
+use crate::analysis::{DocumentRevision, MarkdownSyntaxSet, WamlCodeRole, WamlCodeSpan};
+use crate::source::DocumentId;
 
 pub(crate) struct WamlCodeSyntaxSnapshot {
     pub(crate) document: DocumentId,

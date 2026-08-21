@@ -952,7 +952,7 @@ fn chained_promoted_updates_never_parse_or_reparse() {
 
 fn assert_invalid_promoted_update(
     result: Result<PreparedCandidate, AnalysisError>,
-    document: waml::analysis::DocumentId,
+    document: waml::source::DocumentId,
     expected: InvalidPromotedMarkdownUpdateReason,
 ) {
     let error = match result {
@@ -973,7 +973,7 @@ fn assert_invalid_promoted_update(
 
 fn promotion_fixture() -> (
     PreparedCandidate,
-    waml::analysis::DocumentId,
+    waml::source::DocumentId,
     Arc<[TextChange]>,
     SourceText,
     MarkdownSyntaxUpdate,
@@ -1223,7 +1223,7 @@ fn promoted_markdown_update_rejects_invalid_affected_range() {
     );
 }
 
-fn document_id(candidate: &PreparedCandidate, path: &str) -> waml::analysis::DocumentId {
+fn document_id(candidate: &PreparedCandidate, path: &str) -> waml::source::DocumentId {
     candidate
         .okf()
         .catalog

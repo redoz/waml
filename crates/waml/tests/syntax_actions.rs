@@ -5,9 +5,9 @@ use waml::{
         ActionBasis, ActionError, CodeAction, SyntaxChangeBatch, TextEdit, VersionedDocumentChange,
         VersionedSyntaxLocator,
     },
-    analysis::{analyze_okf, DocumentId, DocumentRevision, DomainAnalysisContext},
+    analysis::{analyze_okf, DocumentRevision, DomainAnalysisContext},
     edit::{EditBatch, EditContext},
-    source::{BundlePath, SourceBundle},
+    source::{BundlePath, DocumentId, SourceBundle},
     uml,
 };
 use waml_syntax::{RewriteError, TextRange, TextSize};

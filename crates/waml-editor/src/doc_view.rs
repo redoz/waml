@@ -483,7 +483,7 @@ pub struct PreparedAction {
 
 #[cfg(test)]
 impl ViewData<'_> {
-    fn document_id(&self, concept_id: &str) -> Option<waml::analysis::DocumentId> {
+    fn document_id(&self, concept_id: &str) -> Option<waml::source::DocumentId> {
         let path = self.source.document_by_concept_id(concept_id)?.path();
         self.okf_analysis.catalog.id_for_path(path)
     }

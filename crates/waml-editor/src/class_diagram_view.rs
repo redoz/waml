@@ -108,7 +108,7 @@ fn group_contains(group: &waml::model::DiagramGroup, key: &str) -> bool {
 
 fn document_freshness(
     analysis: &waml::uml::Analysis,
-    document: waml::analysis::DocumentId,
+    document: waml::source::DocumentId,
 ) -> ProjectionFreshness {
     let failed_revision = analysis
         .affected()

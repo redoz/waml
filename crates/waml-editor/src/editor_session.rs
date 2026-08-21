@@ -1,13 +1,13 @@
 use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
 
 use waml::analysis::{
-    prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError, DocumentId,
-    OkfAnalysis, PreparedCandidate, PreviousAnalyses, PromotedMarkdownUpdate,
+    prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError, OkfAnalysis,
+    PreparedCandidate, PreviousAnalyses, PromotedMarkdownUpdate,
 };
 use waml::edit::{
     apply_exact_source_edit, EditBatch, EditContext, EditError, ExactSourceEditError, PendingEdit,
 };
-use waml::source::{BundlePath, SourceBundle};
+use waml::source::{BundlePath, DocumentId, SourceBundle};
 use waml_markdown_editor::{
     edit::ProposedMarkdownEdit,
     syntax::{

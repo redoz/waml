@@ -62,7 +62,7 @@ fn install_prepared_for_test(session: &mut EditorSession, prepared: PreparedCand
     session.set_dirty_revision(dirty);
 }
 
-fn document_id(snapshot: &EditorSessionSnapshot, path: &str) -> waml::analysis::DocumentId {
+fn document_id(snapshot: &EditorSessionSnapshot, path: &str) -> waml::source::DocumentId {
     snapshot
         .okf_analysis
         .catalog

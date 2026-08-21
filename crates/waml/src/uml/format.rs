@@ -4,8 +4,9 @@ use waml_syntax::{MarkdownStructureMap, TextRange, TextSize};
 
 use crate::{
     action::{ActionBasis, ActionError, CodeAction, TextEdit, VersionedDocumentChange},
-    analysis::{DocumentId, OkfAnalysis, PreparedCandidate},
+    analysis::{OkfAnalysis, PreparedCandidate},
     edit::EditError,
+    source::DocumentId,
     uml,
 };
 

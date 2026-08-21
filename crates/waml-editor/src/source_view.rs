@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use makepad_widgets::*;
-use waml::analysis::DocumentId;
+use waml::source::DocumentId;
 use waml_markdown_editor::{
     completion::{CompletionCandidate, CompletionSession},
     document::MarkdownDocumentSnapshot,

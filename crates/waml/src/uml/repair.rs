@@ -4,7 +4,7 @@ use waml_syntax::{AstNode, TextRange, TextSize};
 
 use crate::{
     action::{ActionBasis, ActionError, CodeAction, TextEdit, VersionedDocumentChange},
-    analysis::DocumentId,
+    source::DocumentId,
     uml::{ActionContext, DeclaredField, ExpectedSyntax},
 };
 use waml_syntax::DocumentRevision;

@@ -5,9 +5,9 @@ use std::{
 
 use tower_lsp_server::ls_types as lsp;
 use waml::{
-    analysis::{DocumentId, DocumentVersion, MarkdownTokenRole, TextSize, WamlCodeRole},
+    analysis::{DocumentVersion, MarkdownTokenRole, TextSize, WamlCodeRole},
     okf,
-    source::BundlePath,
+    source::{BundlePath, DocumentId},
     uml::{completions, ActionContext, CompletionKind},
 };
 

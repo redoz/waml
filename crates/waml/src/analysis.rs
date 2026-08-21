@@ -14,18 +14,9 @@ pub use waml_syntax::{DocumentRevision, TextRange, TextSize};
 use crate::{
     diagnostic::{DiagCode, Diagnostic},
     okf,
-    source::{BundlePath, SourceBundle, SourceDocument},
+    source::{BundlePath, DocumentId, SourceBundle, SourceDocument},
     uml::highlight::WamlCodeSyntaxSnapshot,
 };
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DocumentId(u64);
-
-impl fmt::Display for DocumentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", self.0)
-    }
-}
 
 #[derive(Debug)]
 pub struct DocumentVersion {
@@ -1287,7 +1278,7 @@ fn analyze_okf_inner(
                 }
             }
             None => {
-                let id = DocumentId(next_id);
+                let id = DocumentId::new(next_id);
                 next_id += 1;
                 match version(
                     id,
@@ -1731,7 +1722,7 @@ mod tests {
                 reason: "path missing from catalog".into(),
             },
             AnalysisError::InvalidPromotedMarkdownUpdate {
-                document: DocumentId(7),
+                document: DocumentId::new(7),
                 reason: InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
             },
             AnalysisError::Specialization {
@@ -1845,14 +1836,18 @@ mod tests {
 
             let retried = analyze_okf(&candidate_source, Some(&committed), 2).unwrap();
             assert_eq!(
-                retried.catalog.document(DocumentId(0)).unwrap().revision(),
+                retried
+                    .catalog
+                    .document(DocumentId::new(0))
+                    .unwrap()
+                    .revision(),
                 DocumentRevision::new(2)
             );
             assert_eq!(
                 retried
                     .catalog
                     .id_for_path(&BundlePath::parse("two.md").unwrap()),
-                Some(DocumentId(1))
+                Some(DocumentId::new(1))
             );
         }
     }
@@ -1871,7 +1866,7 @@ mod tests {
         )
         .unwrap();
         let analysis = candidate.okf();
-        let document = DocumentId(0);
+        let document = DocumentId::new(0);
         let markdown = analysis.markdown_snapshot(document).unwrap();
         let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).unwrap();
         let fence_owner = markdown

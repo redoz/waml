@@ -1,7 +1,7 @@
 pub use crate::view_history::DocumentLocator;
 use url::Url;
-use waml::analysis::DocumentId;
 use waml::okf::DirectoryAddress;
+use waml::source::DocumentId;
 use waml_markdown_editor::syntax::{DocumentRevision, TextRange};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

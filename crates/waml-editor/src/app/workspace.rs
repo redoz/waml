@@ -256,7 +256,7 @@ impl App {
     fn replace_external_document(
         &mut self,
         cx: &mut Cx,
-        document: waml::analysis::DocumentId,
+        document: waml::source::DocumentId,
         base_revision: waml_markdown_editor::syntax::DocumentRevision,
         text: String,
         flush_on_conflict: bool,

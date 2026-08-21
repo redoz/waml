@@ -321,7 +321,7 @@ impl App {
     pub(super) fn navigate_to_source_range(
         &mut self,
         cx: &mut Cx,
-        document: waml::analysis::DocumentId,
+        document: waml::source::DocumentId,
         revision: waml_markdown_editor::syntax::DocumentRevision,
         range: waml_markdown_editor::syntax::TextRange,
     ) -> bool {

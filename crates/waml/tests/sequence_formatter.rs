@@ -1,8 +1,8 @@
 use waml::{
     action::SyntaxChangeBatch,
-    analysis::{prepare_candidate, DocumentId, PreparedCandidate},
+    analysis::{prepare_candidate, PreparedCandidate},
     edit::{EditBatch, EditContext},
-    source::{BundlePath, SourceBundle},
+    source::{BundlePath, DocumentId, SourceBundle},
     uml::{ActionContext, DeclaredField, Formatter},
 };
 use waml_syntax::{AstNode, SyntaxElement, SyntaxNode};

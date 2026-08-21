@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, ops::Deref, sync::Arc};
 use waml::{
     analysis::{
         prepare_candidate, validate_disjoint_claims, AnalysisError, ClaimSet, DocumentCatalog,
-        DocumentId, DocumentVersion, DomainAnalysisContext, PreparedCandidate, PreviousAnalyses,
+        DocumentVersion, DomainAnalysisContext, PreparedCandidate, PreviousAnalyses,
     },
-    source::{BundlePath, SourceBundle},
+    source::{BundlePath, DocumentId, SourceBundle},
 };
 use waml_syntax::{
     GreenElement, GreenFactory, GreenText, MarkdownDialect, SyntaxLanguage, SyntaxTree,

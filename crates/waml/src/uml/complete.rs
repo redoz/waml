@@ -13,7 +13,7 @@ use waml_syntax::{
 };
 
 use crate::action::ActionError;
-use crate::analysis::DocumentId;
+use crate::source::DocumentId;
 use crate::uml::{vocabulary, ActionContext};
 
 use super::syntax::{expected_layout_role, LayoutRole, UmlLanguage, UmlSyntaxKind};

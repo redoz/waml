@@ -1,4 +1,4 @@
-use crate::analysis::DocumentId;
+use crate::source::DocumentId;
 use waml_syntax::DocumentRevision;
 use waml_syntax::TextRange;
 

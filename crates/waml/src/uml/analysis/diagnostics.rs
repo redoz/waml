@@ -4,8 +4,9 @@
 use super::syntax_util::items;
 use crate::uml::syntax::{self, UmlLanguage};
 use crate::{
-    analysis::{AnalysisError, DocumentId, DomainAnalysisContext},
+    analysis::{AnalysisError, DomainAnalysisContext},
     diagnostic::Diagnostic,
+    source::DocumentId,
 };
 use waml_syntax::{SyntaxElement, SyntaxNode, SyntaxTree, TextRange};
 

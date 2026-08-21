@@ -3,10 +3,10 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use waml::analysis::{
     prepare_candidate, prepare_candidate_with_markdown_recovery,
     prepare_candidate_with_markdown_updates, semantic_source_with_promoted_document,
-    AffectedAnalysis, AnalysisError, DocumentId, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
+    AffectedAnalysis, AnalysisError, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
     PromotedMarkdownUpdate,
 };
-use waml::source::SourceBundle;
+use waml::source::{DocumentId, SourceBundle};
 
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 

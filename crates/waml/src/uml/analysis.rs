@@ -29,10 +29,11 @@ use super::{
 use crate::{
     analysis::{
         single_text_change, AffectedAnalysis, AnalysisError, ClaimSet, DiagnosticSource,
-        DocumentId, DomainAnalysisContext, ProjectionFreshness, RevisionedDiagnostic, SyntaxSet,
+        DomainAnalysisContext, ProjectionFreshness, RevisionedDiagnostic, SyntaxSet,
         SyntaxSnapshot,
     },
     diagnostic::Diagnostic,
+    source::DocumentId,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -168,7 +169,7 @@ pub mod test_support {
 
     pub fn island_syntax_with_replaced_tree(
         analysis: &Analysis,
-        document: crate::analysis::DocumentId,
+        document: crate::source::DocumentId,
         owner: SyntaxIdentity,
         syntax: Arc<waml_syntax::SyntaxTree<UmlLanguage>>,
     ) -> Result<UmlIslandSyntaxSet, AnalysisError> {

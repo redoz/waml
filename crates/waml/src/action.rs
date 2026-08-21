@@ -6,9 +6,9 @@ use waml_syntax::{
 };
 
 use crate::{
-    analysis::{DocumentCatalog, DocumentId},
+    analysis::DocumentCatalog,
     edit::{EditBatch, EditContext, EditError},
-    source::SourceBundle,
+    source::{DocumentId, SourceBundle},
 };
 use waml_syntax::DocumentRevision;
 

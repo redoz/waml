@@ -147,7 +147,7 @@ pub trait EditBatch: sealed::Sealed {
 
 #[derive(Clone)]
 pub struct ExactSourceEdit {
-    pub document: crate::analysis::DocumentId,
+    pub document: crate::source::DocumentId,
     pub base_revision: DocumentRevision,
     pub changes: Arc<[TextChange]>,
     pub expected_text: SourceText,

@@ -1,5 +1,5 @@
-use waml::analysis::{prepare_candidate, DocumentId, PreparedCandidate, TextSize};
-use waml::source::{BundlePath, SourceBundle};
+use waml::analysis::{prepare_candidate, PreparedCandidate, TextSize};
+use waml::source::{BundlePath, DocumentId, SourceBundle};
 use waml::uml::{completions, ActionContext, CompletionKind};
 
 const SUPPORT: [(&str, &str); 2] = [

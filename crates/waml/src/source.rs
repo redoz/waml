@@ -28,6 +28,34 @@ impl fmt::Display for SourceError {
 
 impl std::error::Error for SourceError {}
 
+/// The numeric identity of one document within a session.
+///
+/// A document has two names: its [`BundlePath`], which the author writes and
+/// which survives across sessions, and this id, which the document catalog
+/// mints once per session and which stays stable while the path is renamed.
+/// Both are ways of naming the same thing, so both live here rather than in
+/// the analysis tier that happens to mint one of them — otherwise every module
+/// that merely *refers* to a document (diagnostics, edit operations, the UML
+/// projection) would have to depend on the analysis pipeline to say which
+/// document it means.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DocumentId(u64);
+
+impl DocumentId {
+    /// Minting ids is the document catalog's job; nothing outside the crate
+    /// may invent one, because an id that no catalog issued resolves to no
+    /// document.
+    pub(crate) fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+}
+
+impl fmt::Display for DocumentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BundlePath(String);
 

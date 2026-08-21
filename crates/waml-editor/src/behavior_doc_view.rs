@@ -54,7 +54,7 @@ fn behavior_document(
     snapshot: &EditorSessionSnapshot,
     change: &SessionChange,
     key: &str,
-) -> Option<waml::analysis::DocumentId> {
+) -> Option<waml::source::DocumentId> {
     change.affected_documents.iter().copied().find(|document| {
         snapshot
             .okf_analysis
@@ -66,7 +66,7 @@ fn behavior_document(
 
 fn behavior_freshness(
     snapshot: &EditorSessionSnapshot,
-    document: waml::analysis::DocumentId,
+    document: waml::source::DocumentId,
 ) -> ProjectionFreshness {
     snapshot
         .uml_analysis
