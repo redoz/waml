@@ -1,4 +1,4 @@
-use waml_ui_test::{waml_ui_test, DiagramName, ViewKind, WamlApp};
+use waml_ui_test::{waml_ui_test, DiagramName, DocumentSurface, ViewKind, WamlApp};
 
 const USE_CASE_SCREENSHOTS: [(&str, &str, &str); 3] = [
     (
@@ -132,12 +132,18 @@ fn palette_blends_a_query_into_titled_sections(mut app: WamlApp) {
 /// Escalating the same query to the full results tab groups every hit by
 /// its document (spec §Results tab), in the order each document's first hit
 /// appears in the ranked list.
+///
+/// The surface check is the other half: the results tab is a document
+/// surface like any other, and taking the centre means taking it from the
+/// canvas the query was escalated over. A results tab drawn on top of a
+/// still-visible canvas would group its hits perfectly well.
 #[waml_ui_test(workspace = Mini)]
 fn escalating_a_query_groups_results_by_document(mut app: WamlApp) {
     app.expect_workspace_open()
         .open_search_palette()
         .type_search_query("payment")
         .escalate_to_results_tab()
+        .expect_active_surface(DocumentSurface::Results)
         .expect_results_grouped_by_document(&[
             ("payment-gateway.md", 2),
             ("order.md", 2),
@@ -159,11 +165,108 @@ fn find_strip_counts_hits_scoped_to_the_active_document(mut app: WamlApp) {
         .expect_find_counter("1 of 4");
 }
 
+/// A route that crosses a surface boundary three times, in both directions,
+/// with the centre checked at every stop (visual sign-off ledger V5).
+///
+/// The claim is not "the folder view appeared" but "the folder view is the
+/// ONLY thing showing", which is the half of surface routing that fails
+/// quietly: `DocView`'s `show_*` family is "mine on, my siblings off", and
+/// the siblings half has already been wrong in shipped code -- each `show_*`
+/// carried a hand-copied surface list, five of those copies never learned
+/// about `behavior_canvas_wrap`, so leaving an activity/state-machine/
+/// sequence tab left its canvas drawing underneath its replacement. Nothing failed and nothing looked wrong: the
+/// stale surface is BEHIND the live one, so it is invisible to a screenshot
+/// as well as to a human.
+///
+/// Two things this deliberately does NOT do, both because it cannot.
+///
+/// * **It does not press back or forward.** V5's stated forcing case ends in
+///   a history traversal, and view history has exactly two triggers: the
+///   caption's arrow pair, and the mouse's fourth/fifth buttons
+///   (`App::handle_global_shortcuts`). The driver cannot send a thumb
+///   button, and the caption band does not lay out at all under the headless
+///   backend -- `caption_col`, `title_row`, `doc_tabs`, the burger, the
+///   search button and both history arrows all report `visible: true` with a
+///   0x0 rect, and a locator will not click a widget with no rect. So the
+///   traversal half of V5 stays a human's job, and not for want of trying.
+/// * **It does not name the active TAB.** `DocTabs` draws its tabs into its
+///   own rects rather than mounting child widgets and exposes no semantic
+///   items, so two tabs of the same kind are indistinguishable here. Hence
+///   the deliberately cross-KIND route.
+#[waml_ui_test(workspace = Mini)]
+fn a_route_across_surfaces_leaves_exactly_one_of_them_showing(mut app: WamlApp) {
+    app.expect_workspace_open()
+        .ensure_diagram_open(DiagramName::ORDERS)
+        .expect_active_surface(DocumentSurface::Canvas)
+        .open_folder_tab("Mini")
+        .expect_active_surface(DocumentSurface::Folder)
+        .ensure_diagram_open(DiagramName::ORDERS)
+        .expect_active_surface(DocumentSurface::Canvas)
+        .switch_active_document_to(ViewKind::Source)
+        .expect_active_surface(DocumentSurface::Source)
+        .open_folder_tab("Mini")
+        .expect_active_surface(DocumentSurface::Folder);
+}
+
+/// Committing a hit lands on the hit's own document, on that document's own
+/// surface, with its row selected in the tree (visual sign-off ledger V7:
+/// "did the selection land where the navigation said it would" is state).
+///
+/// `"settled"` is chosen because it appears in exactly one document in the
+/// `Mini` bundle -- `order.md`'s prose sentence -- so the landing can be
+/// named. Nothing in the snapshot reports the active tab's title, so a query
+/// with one hit is how a scenario says where it went.
+///
+/// This settles the NAVIGATION half of `DocView::reveal`: the right
+/// document, the right surface for its kind (`Order` is a `uml.Class`, so
+/// the classifier preview takes the centre), and the tree agreeing. The
+/// SCROLL half -- whether the landed document is scrolled to put the hit in
+/// view -- is still not settled here, and not for a subtle reason: `Mini`'s
+/// documents all fit on one screen, so there is nothing a reveal could
+/// scroll. Covering it means a fixture with a document taller than the
+/// viewport, not another assertion.
+#[waml_ui_test(workspace = Mini)]
+fn committing_a_hit_opens_its_document_and_selects_its_tree_row(mut app: WamlApp) {
+    app.expect_workspace_open()
+        .open_search_palette()
+        .type_search_query("settled")
+        .expect_palette_sections(&[("TEXT", 1)])
+        .commit_the_armed_palette_row()
+        .expect_active_surface(DocumentSurface::Reading)
+        .expect_selected_row("Order");
+}
+
+/// **The rendering gate, second canvas.** The `Mini` bundle's `Orders` class
+/// diagram, held to its own reference.
+///
+/// The gate's first scenario compares a BEHAVIOR canvas, which draws
+/// transition routes and state boxes. This one compares the class canvas,
+/// which draws none of those: what it does draw is a class association edge
+/// (`Order` associates `Customer`), three class cards with their compartment
+/// rules, an abstract title and a stereotype. Diagram pens (ledger V1) moved
+/// class edges 3.0 -> 2.0 deliberately, and an ink mask is exactly the
+/// instrument for a stroke that quantises to a different number of device
+/// pixels.
+///
+/// It still covers only what is in THIS crop. Lifeline stems and interaction
+/// frames -- V1's most likely regression, where 1.2 -> 1.5 doubles at dpi 1
+/// -- are on a sequence canvas that no scenario opens, and colour is thrown
+/// away by construction. See `waml_ui_test`'s crate docs.
+#[waml_ui_test(workspace = Mini)]
+fn the_orders_canvas_is_drawn_the_way_its_reference_was(mut app: WamlApp) {
+    app.expect_workspace_open()
+        .ensure_diagram_open(DiagramName::ORDERS)
+        .expect_active_surface(DocumentSurface::Canvas)
+        .expect_canvas_matches_reference("orders");
+}
+
 /// **The rendering gate.** Open the `Light Cycle` state machine and hold the
 /// canvas to the reference recorded for this platform.
 ///
-/// This is the only scenario in the suite that looks at pixels, and the
-/// fixture was chosen for the two connectors `90ffcf0f` moved: `Active`'s
+/// This is one of the suite's two scenarios that look at pixels -- the
+/// behavior half; `the_orders_canvas_is_drawn_the_way_its_reference_was`
+/// above is the class half. The fixture was chosen for the two connectors
+/// `90ffcf0f` moved: `Active`'s
 /// self-loop, which went from 16px to 24px of border clearance, and the
 /// `Active -> Idle` back edge, which shifted 8px off its midpoint. Both are
 /// changes every structural assertion in the router was blind to, and every

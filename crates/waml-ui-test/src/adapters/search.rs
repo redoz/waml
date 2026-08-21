@@ -1,3 +1,13 @@
+//! Search observations: the palette, the results tab and the find strip.
+//!
+//! One thing worth knowing before adding an operation here, because it is
+//! the obvious next idea and it does not work: the results tab's hit rows
+//! ARE real `SearchResultRow` widgets rather than semantic items, and they
+//! are still unreachable. `FlatList` pools them, and a pooled item reaches
+//! the widget snapshot with an empty `window_id` and a `0x0` rect, which a
+//! locator refuses. The way into a hit is the palette's keyboard path --
+//! see [`commit_the_armed_palette_row`].
+
 use crate::error::OperationFailure;
 use makepad_test::{KeyCode, KeyModifiers, Selector, TestApp, TestError, WidgetSnapshot};
 
@@ -94,6 +104,40 @@ pub(crate) fn expect_results_grouped_by_document(
 ) -> Result<String, OperationFailure> {
     let widgets = snapshot(driver, "search results state could not be observed")?;
     observe_results_grouped_by_document(&widgets, expected)
+}
+
+/// Commit the palette's armed row -- the top hit for the current query --
+/// navigating to whatever it points at.
+///
+/// The palette arms row 0 as soon as it has rows (`PalettePopup`'s initial
+/// `armed = Some(0)`), so a bare `Enter` commits the top hit. That keyboard
+/// path is the ONLY way into a hit from this harness: the results tab's rows
+/// are real `SearchResultRow` widgets, but they live in a `FlatList`, and
+/// its pooled items reach the widget snapshot with an empty `window_id` and
+/// a `0x0` rect. A locator will not click a widget with no rect, so the
+/// tab's rows are readable and unclickable (see the module docs).
+///
+/// A scenario that needs to name WHERE it landed gets that by choosing a
+/// query that hits exactly one document: `DocTabs` draws its tabs rather
+/// than mounting them, so no assertion can read the active tab's title.
+pub(crate) fn commit_the_armed_palette_row(driver: &TestApp) -> Result<String, OperationFailure> {
+    let widgets = snapshot(driver, "the search palette could not be observed")?;
+    if !widgets
+        .iter()
+        .any(|widget| widget.visible && widget.widget_type == PALETTE_SECTION_TYPE)
+    {
+        return Err(OperationFailure {
+            observed: "the search palette is not open".to_string(),
+            detail: "the armed row can only be committed from an open palette".to_string(),
+        });
+    }
+    driver
+        .try_press_key(KeyCode::ReturnKey)
+        .map_err(|error| OperationFailure {
+            observed: "the armed palette row could not be committed".to_string(),
+            detail: error.message().to_string(),
+        })?;
+    Ok("the palette's armed row was committed".to_string())
 }
 
 /// Ctrl+F (Cmd+F on macOS): open the find-in-document strip. Waits for its

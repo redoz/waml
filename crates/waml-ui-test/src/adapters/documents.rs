@@ -172,25 +172,28 @@ enum DiagramOpenDecision {
     ClickRow,
 }
 
+/// The decision is made from the DIAGRAM's own state, never from what the
+/// centre happens to be showing.
+///
+/// This used to refuse any centre that was neither the canvas nor the raw
+/// source, on the grounds that anything else was an invalid surface state.
+/// It is not: the centre grew five more surfaces, and a folder listing, a
+/// book, or a results tab is a perfectly ordinary place to open a diagram
+/// FROM -- refusing them made a cross-surface route unwritable. The
+/// postcondition in [`ensure_diagram_open`] is what actually guarantees the
+/// canvas came up alone, and it runs either way, so nothing was lost by
+/// dropping the precondition; see `super::surfaces` for the assertion that
+/// holds the whole centre to one surface.
 fn decide_diagram_open(
     widgets: &[WidgetSnapshot],
     diagram: DiagramName,
 ) -> Result<DiagramOpenDecision, OperationFailure> {
     resolve_diagram_row(widgets, diagram)?;
-    let state = observed_view_state(widgets)?;
-    match state {
-        ObservedViewState::Diagram if observe_active_diagram(widgets, diagram).is_ok() => {
-            Ok(DiagramOpenDecision::AlreadyActive)
-        }
-        ObservedViewState::Diagram | ObservedViewState::Source => Ok(DiagramOpenDecision::ClickRow),
-        state => Err(OperationFailure {
-            observed: state.description(),
-            detail: format!(
-                "cannot ensure {} is open from an invalid document surface state",
-                diagram.display
-            ),
-        }),
-    }
+    Ok(if observe_active_diagram(widgets, diagram).is_ok() {
+        DiagramOpenDecision::AlreadyActive
+    } else {
+        DiagramOpenDecision::ClickRow
+    })
 }
 
 /// `switch_active_document_to` is imperative: it must move the active view,
@@ -509,6 +512,19 @@ mod tests {
         let decision = decide_diagram_open(&widgets, DiagramName::ORDERS).unwrap();
 
         assert_eq!(decision, DiagramOpenDecision::AlreadyActive);
+    }
+
+    /// A folder listing, a book or a results tab holds the centre without
+    /// either of the two surfaces this module knows about being visible.
+    /// That is an ordinary place to open a diagram from, not a broken state.
+    #[test]
+    fn a_diagram_can_be_opened_from_a_centre_neither_surface_owns() {
+        let mut widgets = vec![orders_row(false)];
+        widgets.extend(surfaces(false, false));
+
+        let decision = decide_diagram_open(&widgets, DiagramName::ORDERS).unwrap();
+
+        assert_eq!(decision, DiagramOpenDecision::ClickRow);
     }
 
     #[test]

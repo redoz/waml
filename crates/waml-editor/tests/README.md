@@ -45,7 +45,10 @@ The scenarios verify, against a real headless editor:
 | `escalating_a_query_groups_results_by_document` | The results tab groups every hit by document, in rank order. |
 | `find_strip_counts_hits_scoped_to_the_active_document` | Ctrl+F narrows the same query to the active tab's own document. |
 | `f3_walks_the_find_hits_and_wraps_at_both_ends` | F3/Shift+F3 walk the find cursor and wrap at both ends. |
+| `a_route_across_surfaces_leaves_exactly_one_of_them_showing` | A route crossing the surface boundary three times, with the centre held to **exactly one** surface at every stop. The siblings half of `show_*` has failed silently before. |
+| `committing_a_hit_opens_its_document_and_selects_its_tree_row` | Committing the palette's top hit opens the right document, on the right surface for its kind, with its tree row selected. |
 | `the_light_cycle_canvas_is_drawn_the_way_its_reference_was` | **The rendering gate.** The behavior canvas is drawn the way its stored reference was -- see below. |
+| `the_orders_canvas_is_drawn_the_way_its_reference_was` | **The rendering gate, class canvas.** Class edges, card borders and compartment rules -- the half of ledger row V1 the behavior canvas cannot see. |
 
 `waml_ui_test`'s crate docs carry the standing list of what this harness can
 and cannot decide -- read them before adding a scenario for something that is
@@ -53,11 +56,21 @@ really a question about pixels.
 
 ## The rendering gate
 
-`the_light_cycle_canvas_is_drawn_the_way_its_reference_was` is the one
-scenario that looks at pixels. It opens a state machine whose `Active` node
-carries both a self-loop and a long back edge -- the two connectors
-`90ffcf0f` moved -- screenshots the headless window, crops to the diagram
-surface's own rect, and compares against
+Two scenarios look at pixels, one per canvas kind:
+
+* `the_light_cycle_canvas_is_drawn_the_way_its_reference_was` opens a state
+  machine whose `Active` node carries both a self-loop and a long back edge
+  -- the two connectors `90ffcf0f` moved.
+* `the_orders_canvas_is_drawn_the_way_its_reference_was` opens the `Mini`
+  bundle's class diagram, which draws none of those: what it draws is a
+  class association edge, three class cards with their compartment rules, an
+  abstract title and a stereotype. Diagram pens (visual sign-off ledger V1)
+  moved class edges 3.0 -> 2.0 deliberately, and an ink mask is exactly the
+  instrument for a stroke that quantises to a different number of device
+  pixels.
+
+Each screenshots the headless window, crops to the diagram surface's own
+rect, and compares against
 `crates/waml-editor/tests/references/<name>.<os>-<arch>.ink`.
 
 It compares **ink, not pixel values**: each pixel reduces to "background or
@@ -97,13 +110,27 @@ none existed for the platform yet. Downloading that artifact and committing
 `recorded-references/*.ink` is what turns the gate from advisory to enforcing
 on Linux.
 
+**`orders` is waiting on exactly that.** `light-cycle.linux-x86_64.ink` is
+committed and enforcing; the class canvas was added from a Windows machine,
+which cannot record a Linux reference, so `orders.linux-x86_64.ink` still
+has to be downloaded from the first Linux run's artifact and committed.
+Until it is, that gate records and passes advisory, and says so in its
+trace.
+
 **Windows can run this now.** The fork's headless backend stopped being
-macOS-only when the CI headless fix landed, and the whole suite was run green
-on Windows against fork rev `6534634a` (9 passed, ~13 min, one editor process
-spawned per scenario) -- with the rendering gate reporting itself advisory,
-for the reason above. Prebuild the exact configuration the driver spawns
-first, or the in-test build's swallowed output turns a compile error into an
-unreadable startup timeout:
+macOS-only when the CI headless fix landed, and the whole suite has been run
+green on Windows against fork rev `6534634a` (12 passed, one editor process
+spawned per scenario) -- with both rendering gates reporting themselves
+advisory, for the reason above. Budget generously: a scenario costs about
+2-3 minutes on an idle machine and was measured at 4-5 with other builds
+competing for the box, and the driver's startup budget is 600s with two
+retries, so a genuinely wedged app takes 20 minutes to say so. A scenario
+that has produced no `semantic-trace.txt` after two minutes is usually still
+starting, not stuck.
+
+Prebuild the exact configuration the driver spawns first, or the in-test
+build's swallowed output turns a compile error into an unreadable startup
+timeout:
 
 ```powershell
 $env:MAKEPAD='headless'

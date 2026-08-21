@@ -1,6 +1,6 @@
-use crate::adapters::{documents, rendering, search, tree, workspace};
+use crate::adapters::{documents, navigation, rendering, search, surfaces, tree, workspace};
 use crate::config::WorkspaceBinding;
-use crate::domain::{DiagramName, ViewKind};
+use crate::domain::{DiagramName, DocumentSurface, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
 use crate::trace::SemanticTrace;
 use std::path::{Path, PathBuf};
@@ -128,6 +128,41 @@ impl WamlApp {
         )
     }
 
+    /// Assert which of the editor's seven document surfaces owns the centre
+    /// -- and, the half that matters, that it owns it ALONE.
+    ///
+    /// The `show_*` family is "mine on, my siblings off", and the siblings
+    /// half has already failed silently: each method carried a hand-copied
+    /// surface list, five of the copies never learned about the behavior
+    /// canvas, and it stayed up underneath whatever replaced it. A surface
+    /// leak looks like a working view from
+    /// every angle except the one nobody has -- the occluded surface is
+    /// behind the live one, so even a screenshot cannot show it.
+    ///
+    /// Settles by re-reading until the centre agrees or the budget runs out,
+    /// so it doubles as the postcondition for any operation that routes.
+    pub fn expect_active_surface(&mut self, surface: DocumentSurface) -> &mut Self {
+        self.execute(
+            format!("expect active surface {}", surface.description()),
+            format!(
+                "the {} surface has the centre to itself",
+                surface.description()
+            ),
+            move |driver| surfaces::expect_active_surface(driver, surface),
+        )
+    }
+
+    /// Click the project-tree row named `title`, which must be a directory,
+    /// and settle on that folder's own tab.
+    pub fn open_folder_tab(&mut self, title: &str) -> &mut Self {
+        let title = title.to_string();
+        self.execute(
+            format!("open folder tab {title}"),
+            format!("the {title} folder tab is open on the folder listing"),
+            move |driver| navigation::open_folder_tab(driver, &title),
+        )
+    }
+
     /// Ctrl+K (Cmd+K on macOS): open the search palette.
     pub fn open_search_palette(&mut self) -> &mut Self {
         self.execute(
@@ -181,6 +216,21 @@ impl WamlApp {
             ),
             format!("results are grouped as {}", describe_pairs(&groups)),
             move |driver| search::expect_results_grouped_by_document(driver, &groups),
+        )
+    }
+
+    /// Enter: commit the palette's armed row -- the top hit for the current
+    /// query -- navigating to whatever it points at.
+    ///
+    /// Pair it with a query that hits exactly one document if the scenario
+    /// needs to name where it landed; nothing in the snapshot reports the
+    /// active tab's title. `search`'s module docs carry why this is the only
+    /// route into a hit.
+    pub fn commit_the_armed_palette_row(&mut self) -> &mut Self {
+        self.execute(
+            "commit the armed palette row",
+            "the committed hit's document is open",
+            search::commit_the_armed_palette_row,
         )
     }
 

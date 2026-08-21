@@ -30,6 +30,45 @@ pub enum ViewKind {
     Source,
 }
 
+/// One of the seven mutually-exclusive surfaces that can own the editor's
+/// centre. Named semantically rather than by widget id: a scenario says
+/// "the folder listing has the centre", not `folder_view_surface`.
+///
+/// `ViewKind` above is a coarser question -- "is a diagram or the raw source
+/// showing" -- and it cannot express the other five surfaces at all, which
+/// is why a route that crosses them needs this instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentSurface {
+    /// The class-diagram canvas.
+    Canvas,
+    /// The activity/state-machine/sequence canvas.
+    BehaviorCanvas,
+    /// The raw-markdown editor.
+    Source,
+    /// The rendered reading view.
+    Reading,
+    /// A folder's projected row listing.
+    Folder,
+    /// A query's full results tab.
+    Results,
+    /// A folder read as one continuous scroll.
+    Book,
+}
+
+impl DocumentSurface {
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::Canvas => "diagram canvas",
+            Self::BehaviorCanvas => "behavior canvas",
+            Self::Source => "raw source",
+            Self::Reading => "reading",
+            Self::Folder => "folder listing",
+            Self::Results => "search results",
+            Self::Book => "book",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DiagramName;

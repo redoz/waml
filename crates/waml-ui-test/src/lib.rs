@@ -54,7 +54,17 @@
 //! rects. Plus input: clicks, key chords, typed text. So it can settle
 //! questions of *state* and *layout* -- "is the Orders diagram active", "does
 //! this query hit these four sections", "did the tree lose a row", "is a row
-//! drawn on top of another".
+//! drawn on top of another", "is this surface the only one showing".
+//!
+//! That last one is [`WamlApp::expect_active_surface`], and it is worth
+//! calling out because it asserts a SET rather than a widget. The centre is
+//! seven mutually-exclusive surfaces and every `show_*` on it is "mine on,
+//! my siblings off"; the siblings half has already failed silently, when
+//! each `show_*` carried a hand-copied surface list, five of the copies
+//! never learned about the behavior canvas, and it went on drawing
+//! underneath whatever replaced it. An occluded surface is
+//! behind the live one, so that class of bug is invisible to a screenshot as
+//! well as to a human -- but it is trivially visible to a set assertion.
 //!
 //! Hand-drawn rows (`ProjectTree`, `PalettePopup`, `SearchResultsListView`)
 //! reach the snapshot through `semantic_items`. Two traps follow, both
@@ -63,10 +73,38 @@
 //! rect), and an empty `Label` draws no quad, so it also stays `0x0`. Gate a
 //! wait on a real laid-out widget; assert on the semantic item.
 //!
+//! # Four walls, and they are not about pixels
+//!
+//! Reaching a surface this harness has never touched sometimes fails for a
+//! reason that has nothing to do with what a snapshot can express. Four of
+//! those are known, all found by trying:
+//!
+//! * **The caption band does not lay out under the headless backend.**
+//!   `caption_col`, `title_row`, `doc_tabs`, the burger, the search button,
+//!   the `[T]` tree toggle and both history arrows all report
+//!   `visible: true` with a `0x0` rect, and `center_column` starts at
+//!   `y = 0` -- the band has no height at all. A locator refuses a widget
+//!   with no rect, so nothing mounted in the caption can be clicked. View
+//!   history is the casualty: its only two triggers are that arrow pair and
+//!   the mouse's fourth/fifth buttons, which the driver cannot send.
+//! * **`FlatList` pools its items out of the window.** A pooled item reaches
+//!   the snapshot with an empty `window_id` and a `0x0` rect, so the results
+//!   tab's rows are real widgets that still cannot be clicked.
+//! * **Popup surfaces draw their rows and offer no keyboard path.**
+//!   `MenuPopup` and the conflict list mount no children and expose no
+//!   `semantic_items`. `PalettePopup` is the exception, and being
+//!   keyboard-driven is exactly why search is the most automated area here.
+//! * **There is no resize operation**, so narrow mode (under 640px) is
+//!   unreachable.
+//!
+//! `docs/reviews/visual-signoff-ledger.md` records which of its rows sit
+//! behind each of these, so nobody re-discovers them one scenario at a time.
+//!
 //! # The rendering gate, and how narrow it is
 //!
 //! One operation does look at pixels:
-//! [`WamlApp::expect_canvas_matches_reference`]. It compares the diagram
+//! [`WamlApp::expect_canvas_matches_reference`], used by two scenarios --
+//! one behavior canvas and one class canvas. It compares the diagram
 //! canvas against a stored reference -- but by INK, not by value. Each pixel
 //! reduces to "is this the background or not", and the comparison is between
 //! those masks. `reference`'s module docs carry the full argument; the short
@@ -117,6 +155,12 @@
 //! human's queue. [`WamlApp::expect_project_tree_rows`] exists for exactly
 //! that reason: a projection that silently drops rows produces a view that
 //! looks like it is working, which no amount of looking reliably catches.
+//!
+//! One thing a scenario can never do for such a row, though, and the ledger
+//! says it too: every obligation there is "look at whether this shipped
+//! correctly", and a test written today pins whatever shipped. A new
+//! scenario moves a row from "could regress again unseen" to "cannot", never
+//! from owed to signed off.
 
 mod adapters;
 mod app;
@@ -131,7 +175,7 @@ mod trace;
 
 pub use app::WamlApp;
 pub use config::{ScenarioConfig, WorkspaceFixture};
-pub use domain::{DiagramName, ViewKind};
+pub use domain::{DiagramName, DocumentSurface, ViewKind};
 pub use error::WamlUiError;
 pub use waml_ui_test_macros::waml_ui_test;
 
