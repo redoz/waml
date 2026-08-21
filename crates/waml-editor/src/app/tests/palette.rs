@@ -132,7 +132,10 @@ fn the_apps_palette_mirror_is_the_rows_the_card_actually_kept() {
         popup.test_palette_row_titles(&mut cx)
     };
     let mirror_titles: Vec<String> = app
-        .palette_sections
+        .palette
+        .as_ref()
+        .expect("the palette is open")
+        .sections
         .iter()
         .flat_map(|section| section.rows.iter().map(|row| row.title.clone()))
         .collect();

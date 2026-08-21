@@ -35,7 +35,6 @@ use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use crate::zoom::Zoom;
 use makepad_widgets::*;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use waml::view::chain::ChainLimits;
 use waml::view::mask::ProjectionMask;
@@ -941,30 +940,15 @@ pub struct App {
     /// a palette commit), which still locates itself by target.
     #[rust]
     stepped_session_index: Option<usize>,
-    /// The Ctrl+K palette's sections AS THE CARD KEPT THEM (Task 11), read
-    /// back via `PopupRoot::palette_sections` after every push, so a row
-    /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
-    /// can be resolved back to the `PaletteRow` it was built from -- the
-    /// widget itself is `reset()` (rows dropped) before the close action is
-    /// readable.
+    /// The state of the OPEN Ctrl+K palette, or `None` while it is closed.
     ///
-    /// This is deliberately NOT the model we handed the widget: the card
-    /// trims to the window (`trim_sections_to_fit`), which shifts row and
-    /// section indices, and the ids are positional over the trimmed model.
+    /// Sections, query and hidden-set are set together on open, read together
+    /// on a row commit, and mean nothing in between — so they are one value.
+    /// As three bare fields they outlived the palette that filled them, and a
+    /// commit arriving with no palette open would resolve against whatever the
+    /// last one left behind (see `popup::palette::OpenPalette`).
     #[rust]
-    palette_sections: Vec<PaletteSectionModel>,
-    /// The query text `palette_sections` was last built for. Read by the
-    /// `MoreText`/`Escalate` row commit to reach `open_search_results` with
-    /// the SAME query the palette showed -- `MoreText` carries no query of
-    /// its own (`PaletteRowKind::MoreText { omitted }`).
-    #[rust]
-    palette_query: String,
-    /// The projection-hidden document set for the OPEN palette, computed once
-    /// per open. `SearchState::hidden_documents` rebuilds the whole projected
-    /// tree; the tree cannot change while the palette holds the popup, so
-    /// recomputing it per keystroke is pure waste.
-    #[rust]
-    palette_hidden: HashSet<String>,
+    palette: Option<crate::popup::palette::OpenPalette>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
     /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second

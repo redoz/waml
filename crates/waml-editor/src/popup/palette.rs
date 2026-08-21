@@ -992,6 +992,24 @@ impl Popup for PalettePopup {
     }
 }
 
+/// Everything the app remembers about ONE open Ctrl+K palette.
+///
+/// `sections` is deliberately what the card KEPT after trimming, not the model
+/// it was handed: the card trims to the window (`trim_sections_to_fit`), which
+/// shifts row and section indices, and a commit's opaque `p:{section}:{row}`
+/// id is positional over the trimmed model. The widget is `reset()` before the
+/// close action is readable, so this is the only way back to the row.
+pub(crate) struct OpenPalette {
+    pub(crate) sections: Vec<PaletteSectionModel>,
+    /// The query `sections` was built for. A `MoreText` row carries no query
+    /// of its own, so escalating one needs the query the palette showed.
+    pub(crate) query: String,
+    /// The projection-hidden document set, computed once per open:
+    /// `SearchState::hidden_documents` rebuilds the whole projected tree, and
+    /// that tree cannot change while the palette holds the popup.
+    pub(crate) hidden: std::collections::HashSet<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

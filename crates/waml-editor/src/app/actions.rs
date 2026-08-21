@@ -380,12 +380,11 @@ impl App {
     /// RECENT section (spec §Palette).
     pub(super) fn open_palette(&mut self, cx: &mut Cx) {
         let bounds = self.window_bounds(cx);
-        // Once per open, not once per keystroke: see `palette_hidden`.
-        self.palette_hidden = self
+        // Once per open, not once per keystroke: see `OpenPalette::hidden`.
+        let hidden = self
             .search
             .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
-        let sections = self.build_palette_sections("");
-        self.palette_query.clear();
+        let sections = self.build_palette_sections("", &hidden);
         // Fallback only: if the popup is not there to trim, the model we
         // built is what a commit would have to resolve against.
         let mut kept = sections.clone();
@@ -406,14 +405,23 @@ impl App {
                 kept = trimmed;
             }
         }
-        self.palette_sections = kept;
+        self.palette = Some(crate::popup::palette::OpenPalette {
+            sections: kept,
+            query: String::new(),
+            hidden,
+        });
     }
 
     /// A keystroke inside the still-open palette (`PaletteAction::QueryChanged`):
     /// re-run `SearchState` for `query` and push fresh sections back in place.
     fn push_palette_query(&mut self, cx: &mut Cx, query: String) {
-        let sections = self.build_palette_sections(&query);
-        self.palette_query = query;
+        // A keystroke can only arrive from a palette that is open, and the
+        // hidden set belongs to that open: rebuilding it here would undo the
+        // once-per-open saving it exists for.
+        let Some(hidden) = self.palette.as_ref().map(|open| open.hidden.clone()) else {
+            return;
+        };
+        let sections = self.build_palette_sections(&query, &hidden);
         let mut kept = sections.clone();
         if let Some(mut popup) = self
             .ui
@@ -425,13 +433,21 @@ impl App {
                 kept = trimmed;
             }
         }
-        self.palette_sections = kept;
+        self.palette = Some(crate::popup::palette::OpenPalette {
+            sections: kept,
+            query,
+            hidden,
+        });
     }
 
     /// The blended, sectioned palette model for `query` (spec §Palette):
     /// live hits from `SearchState`, the projection's hidden-document set,
     /// and the empty-query RECENT fallback.
-    fn build_palette_sections(&self, query: &str) -> Vec<PaletteSectionModel> {
+    fn build_palette_sections(
+        &self,
+        query: &str,
+        hidden: &std::collections::HashSet<String>,
+    ) -> Vec<PaletteSectionModel> {
         let scope = waml::search::QueryScope::default();
         let hits = self.search.query(query, &scope);
         let recents = self.palette_recents();
@@ -439,7 +455,7 @@ impl App {
             query,
             &hits,
             &|hit| self.search.snippet(hit, 80),
-            &self.palette_hidden,
+            hidden,
             &recents,
             self.search.status(),
         )
@@ -488,7 +504,10 @@ impl App {
     /// close action is readable, so this is the only place left to recover
     /// which row committed.
     fn resolve_palette_commit(&self, id: LiveId) -> Option<crate::popup::palette::PaletteRow> {
-        for (section_index, section) in self.palette_sections.iter().enumerate() {
+        // No open palette means no row to resolve: a commit that arrives
+        // without one used to resolve against whatever the last open left.
+        let open = self.palette.as_ref()?;
+        for (section_index, section) in open.sections.iter().enumerate() {
             for (row_index, row) in section.rows.iter().enumerate() {
                 if LiveId::from_str(&format!("p:{section_index}:{row_index}")) == id {
                     return Some(row.clone());
@@ -542,7 +561,9 @@ impl App {
                 self.open_search_results(cx, query);
             }
             PaletteRowKind::MoreText { .. } => {
-                let query = self.palette_query.clone();
+                let Some(query) = self.palette.as_ref().map(|open| open.query.clone()) else {
+                    return;
+                };
                 self.open_search_results(cx, &query);
             }
             PaletteRowKind::NoResults { .. } | PaletteRowKind::Indexing => {}
