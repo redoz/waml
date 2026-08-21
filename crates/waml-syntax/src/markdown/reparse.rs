@@ -521,6 +521,81 @@ fn collect_reusable(
     Ok(())
 }
 
+/// Whether a pre-edit subtree may stand in for a freshly parsed one.
+///
+/// The reuse key is kind plus span, which spanning byte-identical text does
+/// not make sufficient: a block's shape can depend on context outside its own
+/// span. Collapsing the blank line between two list items makes the list
+/// tight, which drops the `Paragraph` wrapper inside every item without
+/// touching any item's own text — so the second item still keys as unchanged
+/// while a full parse now gives it a different shape. Restoring identity onto
+/// a subtree the parser reshaped would hand callers a tree no full parse
+/// produces, so compare shapes and let a mismatch fall through to the
+/// child-by-child walk.
+fn same_shape(
+    previous: &GreenElement<OkfMarkdownLanguage>,
+    candidate: &GreenElement<OkfMarkdownLanguage>,
+) -> bool {
+    match (previous, candidate) {
+        (GreenElement::Node(previous), GreenElement::Node(candidate)) => {
+            same_shape_node(previous, candidate)
+        }
+        (GreenElement::Token(previous), GreenElement::Token(candidate)) => {
+            same_shape_token(previous, candidate)
+        }
+        _ => false,
+    }
+}
+
+fn same_shape_node(
+    previous: &GreenNode<OkfMarkdownLanguage>,
+    candidate: &GreenNode<OkfMarkdownLanguage>,
+) -> bool {
+    previous.kind() == candidate.kind()
+        && previous.width() == candidate.width()
+        && previous.children().len() == candidate.children().len()
+        && previous
+            .children()
+            .iter()
+            .zip(candidate.children())
+            .all(|(previous, candidate)| same_shape(previous, candidate))
+}
+
+fn same_shape_token(
+    previous: &crate::GreenToken<OkfMarkdownLanguage>,
+    candidate: &crate::GreenToken<OkfMarkdownLanguage>,
+) -> bool {
+    previous.kind() == candidate.kind()
+        && previous.flags() == candidate.flags()
+        && same_shape_text(previous.text(), candidate.text())
+        && same_shape_trivia(previous.leading_trivia(), candidate.leading_trivia())
+        && same_shape_trivia(previous.trailing_trivia(), candidate.trailing_trivia())
+}
+
+fn same_shape_trivia(previous: &[crate::GreenTrivia], candidate: &[crate::GreenTrivia]) -> bool {
+    previous.len() == candidate.len()
+        && previous.iter().zip(candidate).all(|(previous, candidate)| {
+            previous.kind == candidate.kind && same_shape_text(&previous.text, &candidate.text)
+        })
+}
+
+fn same_shape_text(previous: &crate::GreenText, candidate: &crate::GreenText) -> bool {
+    match (previous, candidate) {
+        // Both sides slice the same unchanged span of source, so equal widths
+        // already mean equal bytes; the old slice still addresses the pre-edit
+        // text, so the ranges themselves cannot be compared.
+        (
+            crate::GreenText::SourceSlice {
+                range: previous, ..
+            },
+            crate::GreenText::SourceSlice {
+                range: candidate, ..
+            },
+        ) => previous.len() == candidate.len(),
+        _ => previous.write_to_string() == candidate.write_to_string(),
+    }
+}
+
 fn restore_candidate_node(
     candidate: &GreenNode<OkfMarkdownLanguage>,
     start: TextSize,
@@ -539,7 +614,10 @@ fn restore_candidate_node(
             .map_err(|_| ParseError::WidthOverflow)?,
     )
     .map_err(|_| ParseError::WidthOverflow)?;
-    if let Some(previous) = reusable_nodes.get(&(candidate.kind(), range)) {
+    if let Some(previous) = reusable_nodes
+        .get(&(candidate.kind(), range))
+        .filter(|previous| same_shape_node(previous, candidate))
+    {
         if let Some(rebased) =
             rebase_unchanged_green(&GreenElement::Node(previous.clone()), new_text, map)
                 .map_err(|_| ParseError::WidthOverflow)?
@@ -578,6 +656,7 @@ fn restore_candidate_node(
             GreenElement::Token(token) => reusable_tokens
                 .get(&(token.kind(), child_range))
                 .filter(|old| old.is_source_independent())
+                .filter(|old| same_shape_token(old, token))
                 .map(|old| {
                     changed |= !Arc::ptr_eq(token, old);
                     GreenElement::Token(old.clone())

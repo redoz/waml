@@ -175,6 +175,16 @@ fn plan_window_reparse(
             .checked_sub(1)
             .ok_or(ParseError::WidthOverflow)?;
     }
+    // The splice below swaps out root children `first..=last` and reparses
+    // `window.range` in their place, so the two must describe the same span.
+    // The tail window is anchored at the document end, which is past the start
+    // of an end-of-file token that carries trailing spaces or tabs as leading
+    // trivia — splicing that window in would drop the whitespace from the
+    // tree. Fall back rather than publish a tree that no longer writes back to
+    // its own source.
+    if !window_spans_its_children(previous, &window)? {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
     if previous.diagnostics().iter().any(|diagnostic| {
         diagnostic.range.start() == diagnostic.range.end()
             && (diagnostic.range.start() == window.range.start()
@@ -1151,6 +1161,27 @@ struct Window {
     range: TextRange,
     first: usize,
     last: usize,
+}
+
+/// Whether `window`'s range covers exactly the root children it replaces.
+fn window_spans_its_children(
+    previous: &SyntaxTree<OkfMarkdownLanguage>,
+    window: &Window,
+) -> Result<bool, ParseError> {
+    let children = previous.root_green().children();
+    let Some(covered) = children.get(window.first..=window.last) else {
+        return Ok(false);
+    };
+    let width = covered
+        .iter()
+        .try_fold(TextSize::try_from_usize(0).unwrap(), |sum, child| {
+            sum.checked_add(match child {
+                GreenElement::Node(node) => node.width(),
+                GreenElement::Token(token) => token.width(),
+            })
+        })
+        .map_err(|_| ParseError::WidthOverflow)?;
+    Ok(width == window.range.len())
 }
 
 fn shell_windows(

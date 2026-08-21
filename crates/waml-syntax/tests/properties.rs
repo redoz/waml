@@ -298,6 +298,59 @@ fn heading_edit_leaving_trailing_eof_whitespace_matches_clean_parse() {
 }
 
 #[test]
+fn empty_edit_at_the_end_of_a_document_ending_in_whitespace_keeps_its_source() {
+    // This fails if the tail window is spliced in despite being anchored at the
+    // document end: the end-of-file token it replaces starts one byte earlier,
+    // holding the trailing space as leading trivia, so the spliced tree loses
+    // that byte and no longer writes back to its own source.
+    let candidate = "# Mode ";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(2),
+        source(candidate),
+        &[TextChange {
+            old_range: range(7, 7),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, candidate);
+}
+
+#[test]
+fn filling_a_blank_line_between_list_items_matches_clean_parse() {
+    // This fails if unchanged-subtree restoration reuses the trailing list
+    // item because its own text and span are unchanged: filling the blank line
+    // makes the list tight, and a full parse drops the `Paragraph` wrapper the
+    // reused loose item still carries.
+    let before = "- a\n\n- b\n";
+    let candidate = "- a\nx\n- b\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(before),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(2),
+        source(candidate),
+        &[TextChange {
+            old_range: range(4, 4),
+            replacement: Arc::from("x"),
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, candidate);
+}
+
+#[test]
 fn width_changes_before_reference_definition_update_destination_ranges() {
     // This fails if reused reference annotations retain pre-edit definition offsets.
     let mut candidate = BASE.to_owned();
@@ -670,6 +723,48 @@ proptest! {
             &[TextChange { old_range: range(at, at + 1), replacement }],
         ).unwrap();
         assert_full_oracle(&update.snapshot, &edited);
+    }
+}
+
+// A loose two-item list with a nested sublist. Tightness is a whole-list
+// property: dropping the blank line between two items reshapes every item,
+// including one whose own text the edit never touches. `BASE` carries only a
+// single-item list, so no edit sequence over it can generate that shape.
+const LOOSE_LIST_BASE: &str = "# Model\n\n- item\n\n- next\n\n  - deep\n\n- last\n\ntail\n";
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+    #[test]
+    fn list_tightness_edits_full_and_incremental_agree(
+        edits in prop::collection::vec((any::<u8>(), any::<u8>(), any::<u8>()), 1..=4)
+    ) {
+        let mut candidate = LOOSE_LIST_BASE.to_owned();
+        let mut snapshot = parse_markdown(DocumentRevision::INITIAL, source(&candidate), MarkdownDialect::WAML_DEFAULT).unwrap();
+        let mut revision = DocumentRevision::INITIAL;
+        for (first, second, replacement_kind) in edits {
+            let points = boundaries(&candidate);
+            let left = usize::from(first) % points.len();
+            let right = usize::from(second) % points.len();
+            let (start, end) = if left <= right { (points[left], points[right]) } else { (points[right], points[left]) };
+            // The fragments are chosen to make and break blank lines and list
+            // markers, the two ways a list's tightness changes.
+            let replacement: Arc<str> = match replacement_kind % 4 {
+                0 => Arc::from(""),
+                1 => Arc::from("x"),
+                2 => Arc::from("\n"),
+                _ => Arc::from("- "),
+            };
+            candidate.replace_range(start..end, &replacement);
+            revision = revision.checked_next().unwrap();
+            let update = reparse_markdown(
+                &snapshot,
+                revision,
+                source(&candidate),
+                &[TextChange { old_range: range(start, end), replacement }],
+            ).unwrap();
+            assert_full_oracle(&update.snapshot, &candidate);
+            snapshot = update.snapshot;
+        }
     }
 }
 
