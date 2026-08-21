@@ -245,23 +245,34 @@ fn plan_window_reparse(
     let root = GreenFactory::new()
         .node(OkfMarkdownSyntaxKind::Root, children)
         .map_err(|_| ParseError::WidthOverflow)?;
-    let mut diagnostics: Vec<TreeDiagnostic<_>> = previous
-        .diagnostics()
-        .iter()
-        .filter_map(|diagnostic| {
-            (diagnostic.range.end() <= window.range.start()
-                || diagnostic.range.start() >= window.range.end())
-            .then(|| map.translate_unchanged(diagnostic.range))?
+    // Carry the untouched diagnostics across in their existing order and drop
+    // the window's own in the gap they came from. Sorting the merged list by
+    // position instead would reorder diagnostics a full parse emits together —
+    // a block reports its interior problems before the recovery verdict that
+    // spans the whole block — and the two would no longer be interchangeable.
+    let carry = |diagnostic: &TreeDiagnostic<OkfSyntaxDiagnosticCode>| {
+        map.translate_unchanged(diagnostic.range)
             .map(|range| TreeDiagnostic {
                 code: diagnostic.code,
                 severity: diagnostic.severity,
                 message: diagnostic.message.clone(),
                 range,
             })
-        })
+    };
+    let mut diagnostics: Vec<TreeDiagnostic<_>> = previous
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.range.end() <= window.range.start())
+        .filter_map(carry)
         .collect();
     diagnostics.extend(parsed_window.diagnostics.iter().cloned());
-    diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
+    diagnostics.extend(
+        previous
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.range.start() >= window.range.end())
+            .filter_map(carry),
+    );
     // A malformed block anywhere in the merged diagnostics (the window's own
     // malformed blocks already fell back above, so this catches carried-over
     // ones outside the window) means the shell is not trustworthy enough to

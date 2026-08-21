@@ -684,6 +684,30 @@ fn quoted_and_bare_keys_that_decode_alike_report_a_duplicate() {
         .any(|d| d.code == OkfSyntaxDiagnosticCode::DuplicateFrontmatterKey));
 }
 
+/// An unknown escape whose escaped character is multi-byte must still be
+/// reported on character boundaries; a fixed two-byte span cuts a UTF-8
+/// sequence in half and hands consumers a range they cannot slice with.
+#[test]
+fn an_invalid_escape_of_a_multibyte_character_reports_whole_characters() {
+    let source = "---\ntype: \"a\\\u{10036}\"\n---\n";
+    let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
+
+    assert_eq!(shell.tree.write_to_string(), source);
+    let escape = shell
+        .tree
+        .diagnostics()
+        .iter()
+        .find(|d| d.code == OkfSyntaxDiagnosticCode::InvalidEscapeSequence)
+        .expect("unknown escape is reported");
+    assert!(source.is_char_boundary(escape.range.start().to_usize()));
+    assert!(source.is_char_boundary(escape.range.end().to_usize()));
+    assert_eq!(
+        &source[escape.range.start().to_usize()..escape.range.end().to_usize()],
+        "\\\u{10036}"
+    );
+}
+
 /// The slice scanner must never disagree with the frontmatter classifier: it
 /// answers `Some` only for a canonical fence, and `None` — "parse the whole
 /// document" — for every shape the two rules resolve differently.

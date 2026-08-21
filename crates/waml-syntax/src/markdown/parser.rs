@@ -433,6 +433,18 @@ struct ValueScan {
 
 /// True if `c` is a double-quote escape this decoder understands:
 /// `\\ \" \n \r \t \0 \uXXXX`. Anything else is a genuine unknown escape.
+/// The offset just past the UTF-8 character that starts at `at`.
+fn char_end(bytes: &[u8], at: usize) -> usize {
+    let mut end = at + 1;
+    while bytes
+        .get(end)
+        .is_some_and(|byte| byte & 0b1100_0000 == 0b1000_0000)
+    {
+        end += 1;
+    }
+    end
+}
+
 fn is_known_double_quote_escape(bytes: &[u8], at: usize, limit: usize) -> Option<usize> {
     match bytes.get(at) {
         Some(b'\\' | b'"' | b'n' | b'r' | b't' | b'0') => Some(at + 1),
@@ -487,10 +499,16 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
                 match is_known_double_quote_escape(bytes, at + 1, limit) {
                     Some(next) => at = next,
                     None => {
+                        // The escaped character need not be ASCII, so step
+                        // over all of its bytes. A fixed two-byte step lands
+                        // inside a multi-byte sequence, and the diagnostic
+                        // built from it reports a range that no longer falls
+                        // on character boundaries.
+                        let escape_end = char_end(bytes, at + 1).min(limit);
                         if invalid_escape.is_none() {
-                            invalid_escape = Some((escape_start, (at + 2).min(limit)));
+                            invalid_escape = Some((escape_start, escape_end));
                         }
-                        at += 2;
+                        at = escape_end;
                     }
                 }
                 continue;
