@@ -1,3 +1,31 @@
+//! Incremental-reparse properties.
+//!
+//! **Read this before trusting a green run here.** The randomized property in
+//! this file is a weak detector for the defect family that has actually shipped
+//! bugs — anything whose meaning depends on context outside the unit being
+//! examined (a definition's paragraph run, a label spanning a line break, a
+//! window's end reading as end-of-input).
+//!
+//! Measured on 2026-08-21, against builds known to be broken:
+//!
+//! | probe | trials | divergences found |
+//! |---|---|---|
+//! | this file's random generator | 20,000,000 | **0** |
+//! | exhaustive single-edit over a 3-block reference corpus | 7,718,904 | 1,034 |
+//! | exhaustive single-edit over a container/title/bracket corpus | 15,052,824 | 1,102 |
+//!
+//! The generator explores a wide document space shallowly; these defects need a
+//! *specific small shape* and *a particular edit landing on it*, which random
+//! sampling reaches essentially never. Every one of them was found either by
+//! the fuzzer or by an exhaustive probe, and each is pinned below as explicit
+//! literals and offsets rather than as an RNG seed — a `cc <hex>` seed pins a
+//! generator state, which is worthless for a case the generator cannot reach.
+//!
+//! So: when hunting a suspected divergence, write a throwaway release-build
+//! harness that drives an exhaustive single-edit sweep over documents of the
+//! shape you suspect. Raising `PROPTEST_CASES` is not the same thing and will
+//! mislead you into thinking the code is clean.
+
 use std::{collections::BTreeSet, sync::Arc};
 
 use proptest::prelude::*;
