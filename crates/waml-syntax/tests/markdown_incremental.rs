@@ -398,6 +398,26 @@ fn a_reference_use_inside_a_failed_inline_destination_still_forces_a_reparse() {
 }
 
 #[test]
+fn a_reference_use_before_an_unterminated_second_bracket_still_forces_a_reparse() {
+    // This fails if the label scan gives up when a second bracket never
+    // closes. `[id][` is no full reference and no collapsed one, so the
+    // parser falls back to reading `[id]` as a shortcut use with the stray
+    // `[` as text -- the bracket pair the scan had already read whole. The
+    // scan broke out of its loop instead of naming it, the guard waved the
+    // window through, and the window reparse -- which cannot see the
+    // definition in the first section -- published `Text` where a full parse
+    // has a `Link`.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\n[][][iz][\n",
+        "[id]: /one\n\n# M\n\n[][][id][\n",
+        &[TextChange {
+            old_range: range(23, 24),
+            replacement: Arc::from("d"),
+        }],
+    );
+}
+
+#[test]
 fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     // This fails if direct incremental reparse allocates another source or if
     // normalization reports an unrelated shell window.

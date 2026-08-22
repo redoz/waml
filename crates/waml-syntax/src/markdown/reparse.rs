@@ -126,9 +126,9 @@ pub(crate) fn change_may_affect_reference_use(
 /// Feeding [`reference_labels`] the whole span is safe in both directions: a
 /// bracket pair the parser would not accept — one straddling the blank line
 /// that ends a paragraph, say — only names a label that costs a fallback,
-/// while the scan's two `break`s cannot hide a later label, since each fires
-/// only when no `]` remains anywhere in the rest of the span and no complete
-/// bracket pair can follow without one.
+/// while the scan's one `break` cannot hide a label, since it fires only when
+/// no `]` remains anywhere in the rest of the span and no bracket pair can
+/// complete without one.
 ///
 /// Reads *every* definition of a label, not the one resolution picked. A label
 /// defined both inside the window and again below it resolves, before the
@@ -268,14 +268,20 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
         };
         let text = &after_open[..close];
         let after = &after_open[close + 1..];
-        let (label, consumed) = if let Some(after_label) = after.strip_prefix('[') {
-            let Some(label_end) = after_label.find(']') else {
-                break;
-            };
-            let label = &after_label[..label_end];
-            (if label.is_empty() { text } else { label }, label_end + 2)
-        } else {
-            (text, 0)
+        let (label, consumed) = match after
+            .strip_prefix('[')
+            .map(|after_label| (after_label, after_label.find(']')))
+        {
+            Some((after_label, Some(label_end))) => {
+                let label = &after_label[..label_end];
+                (if label.is_empty() { text } else { label }, label_end + 2)
+            }
+            // A second bracket that never closes is no full reference and no
+            // collapsed one, so the parser falls back to reading `[text]` as a
+            // shortcut use with the stray `[` as text. Read it that way too,
+            // rather than abandoning a pair this scan has already read whole:
+            // the pair is complete, and only the tail after it is not.
+            Some((_, None)) | None => (text, 0),
         };
         if let Some(normalized) = normalize_label(label) {
             labels.push(normalized);
@@ -1048,6 +1054,19 @@ mod tests {
         // is text and `[ie]` is a shortcut use.
         assert!(reference_labels("[](z [ie])").contains(&label));
         assert!(reference_labels("[](z [ie]").contains(&label));
+    }
+
+    #[test]
+    fn use_scan_names_a_pair_an_unterminated_second_bracket_follows() {
+        let label: Arc<str> = Arc::from("ie");
+        // `[ie][` is no full reference and no collapsed one, so the pair the
+        // scan has already read whole is a shortcut use and the stray `[` is
+        // text. Giving up on the line instead drops it.
+        assert!(reference_labels("[ie][").contains(&label));
+        assert!(reference_labels("[][][ie][").contains(&label));
+        // A second bracket that does close still names what it labels.
+        assert_eq!(reference_labels("[z][ie]"), vec![label.clone()]);
+        assert_eq!(reference_labels("[ie][]"), vec![label]);
     }
 
     #[test]
