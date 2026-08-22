@@ -187,15 +187,20 @@ fn contains_tokens(tokens: &[String], expected: &[&str]) -> bool {
 
 fn constructs_structure_map(tokens: &[String]) -> bool {
     tokens.iter().enumerate().any(|(index, token)| {
-        token == "MarkdownStructureMap"
-            && matches!(tokens.get(index + 1).map(String::as_str), Some("{"))
-            || token == "MarkdownStructureMap"
-                && tokens.get(index + 1).map(String::as_str) == Some(":")
-                && tokens.get(index + 2).map(String::as_str) == Some(":")
-                && matches!(
-                    tokens.get(index + 3).map(String::as_str),
-                    Some("new" | "default")
-                )
+        if token != "MarkdownStructureMap" {
+            return false;
+        }
+        // `-> MarkdownStructureMap {` opens a function body, not a struct literal.
+        let returns_the_map = index >= 2 && tokens[index - 2] == "-" && tokens[index - 1] == ">";
+        let next = tokens.get(index + 1).map(String::as_str);
+        let literal = next == Some("{") && !returns_the_map;
+        let constructor = next == Some(":")
+            && tokens.get(index + 2).map(String::as_str) == Some(":")
+            && matches!(
+                tokens.get(index + 3).map(String::as_str),
+                Some("new" | "default")
+            );
+        literal || constructor
     })
 }
 
@@ -497,6 +502,11 @@ fn authority_guard_rejects_every_in_memory_forbidden_seed() {
             "let _ = MarkdownStructureMap :: new(Default::default());",
         ),
         (
+            "off-projection structure map literal",
+            "crates/waml-syntax/src/markdown/seed.rs",
+            "let _ = MarkdownStructureMap { headings: Vec::new() };",
+        ),
+        (
             "vague Markdown dialect alias",
             "crates/waml/src/seed.rs",
             "let dialect = MarkdownDialect::CommonMarkCurrent;",
@@ -513,6 +523,31 @@ fn authority_guard_rejects_every_in_memory_forbidden_seed() {
         assert!(
             !violations.is_empty(),
             "the authority guard accepted the in-memory {case} seed"
+        );
+    }
+}
+
+#[test]
+fn authority_guard_accepts_every_in_memory_allowed_seed() {
+    let cases = [
+        (
+            "structure map return type",
+            "crates/waml/src/uml/syntax/seed.rs",
+            "fn structure_of(text: &SourceText) -> MarkdownStructureMap { projection(text) }",
+        ),
+        (
+            "structure map return type after an empty parameter list",
+            "crates/waml/src/uml/syntax/seed.rs",
+            "fn structure_of() -> MarkdownStructureMap {}",
+        ),
+    ];
+
+    for (case, path, source) in cases {
+        let violations = authority_violations(&[(PathBuf::from(path), source.into())]);
+        assert!(
+            violations.is_empty(),
+            "the authority guard rejected the in-memory {case} seed:\n{}",
+            violations.join("\n")
         );
     }
 }
