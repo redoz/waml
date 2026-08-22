@@ -229,7 +229,34 @@ fn reference_use_labels(line: &str) -> Vec<Arc<str>> {
     reference_labels(line)
 }
 
-/// Every bracketed label on the line, as a *potential* reference use.
+/// Every bracketed label in the span, as a *potential* reference use.
+///
+/// Models no link syntax whatsoever, on purpose. Every `[` in the span opens
+/// a candidate label that runs to the first `]` after it — which is the one
+/// rule the parser really does follow, since a `]` closes against the
+/// innermost `[` still open. So `use [x[id]` names both `x[id` and `id`, and
+/// the parser's reading, `id`, is among them.
+///
+/// Nothing else about a bracket pair is inferred. Every attempt to decide
+/// from shape alone which pairs the parser would *not* read as a reference
+/// use has been wrong, because none of those questions is about shape:
+///
+/// - `[id](` and `[id](z [id])` look like inline links, but a `(` only opens
+///   a destination when what follows really is one. Neither of these closes
+///   around a destination, so the parser reads both as plain text around
+///   shortcut reference uses — one before the parens, one inside them.
+/// - `[id][` looks like the start of a full reference, but the second bracket
+///   never closes, so the parser falls back to the shortcut use `[id]` with
+///   the stray `[` as text.
+///
+/// Answering any of them needs the whole inline grammar, which this scan
+/// deliberately does not have. So it asks only where the brackets are.
+///
+/// The cost of that is bounded and one-sided: a pair the parser reads as
+/// something else only names a label, and a named label only forces a
+/// fallback when it is *also* a definition label the window cannot see.
+/// Under-reporting has no such bound — it publishes a use the full parse
+/// resolves.
 ///
 /// Definition-shaped lines are scanned like any other. `line_is_definition`
 /// recognises a definition by shape alone, and shape is not the whole rule:
@@ -246,60 +273,40 @@ fn reference_use_labels(line: &str) -> Vec<Arc<str>> {
 /// and stays incremental. It only forces a fallback when a *duplicate*
 /// definition of the label lives outside the window — and there the window's
 /// reading really does depend on the outside text.
-///
-/// An inline link's `(...)` destination is scanned like any other text, for
-/// the same reason. A `(` after a `]` only opens a destination when what
-/// follows really is one, which is not a question about shape: `[id](` never
-/// closes, and `[id](z [id])` closes around bytes that are no destination at
-/// all — CommonMark reads both as plain text around shortcut reference uses.
-/// Telling the two readings apart needs the whole inline-destination grammar,
-/// which this scan deliberately does not have, so it neither drops the
-/// bracket's own text as an inline link's text nor skips the parenthesized
-/// tail as an inline link's destination. Scanning a real inline link both
-/// ways only costs a fallback, and only when the labels it names are defined
-/// elsewhere; skipping either one publishes a use the full parse resolves.
-fn reference_labels(line: &str) -> Vec<Arc<str>> {
+fn reference_labels(span: &str) -> Vec<Arc<str>> {
+    // Every `]` in the span, in order, so the `]` a given `[` closes against
+    // is a step of one pointer rather than a fresh scan.
+    let closes: Vec<usize> = span.match_indices(']').map(|(at, _)| at).collect();
     let mut labels = Vec::new();
-    let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        let after_open = &rest[open + 1..];
-        let Some(close) = after_open.find(']') else {
-            break;
-        };
-        let text = &after_open[..close];
-        let after = &after_open[close + 1..];
-        let (label, consumed) = match after
-            .strip_prefix('[')
-            .map(|after_label| (after_label, after_label.find(']')))
-        {
-            Some((after_label, Some(label_end))) => {
-                let label = &after_label[..label_end];
-                (if label.is_empty() { text } else { label }, label_end + 2)
-            }
-            // A second bracket that never closes is no full reference and no
-            // collapsed one, so the parser falls back to reading `[text]` as a
-            // shortcut use with the stray `[` as text. Read it that way too,
-            // rather than abandoning a pair this scan has already read whole:
-            // the pair is complete, and only the tail after it is not.
-            Some((_, None)) | None => (text, 0),
-        };
+    let mut push = |label: &str| {
         if let Some(normalized) = normalize_label(label) {
             labels.push(normalized);
         }
-        // A `]` closes against the innermost `[` still open, not the leftmost
-        // one, so every `[` inside the label this scan just read opens a label
-        // of its own. The parser reads `use [x[id]` as the text `[x` followed
-        // by the shortcut reference `[id]`, and `use [x][[id]` as `[x][`
-        // followed by `[id]`, while pairing left to right sees only `x[id` and
-        // `[id`. Name them all — over-reporting costs a fallback, and missing
-        // the one the parser picks leaves a reference use resolved against a
-        // definition the window never saw.
-        for (inner, _) in label.match_indices('[') {
-            if let Some(normalized) = normalize_label(&label[inner + 1..]) {
-                labels.push(normalized);
+    };
+    let mut next = 0usize;
+    for (open, _) in span.match_indices('[') {
+        // `open` only grows, so the search for its `]` only ever moves this
+        // pointer forward: the whole loop is one pass over each list.
+        while closes.get(next).is_some_and(|close| *close < open) {
+            next += 1;
+        }
+        let Some(&close) = closes.get(next) else {
+            // No `]` remains anywhere ahead, so no later `[` has one either
+            // and no further pair can complete.
+            break;
+        };
+        let text = &span[open + 1..close];
+        push(text);
+        // `[text][label]` names `label` as well, and `[text][]` names `text`
+        // again. Read the second bracket only when it is really there and
+        // really closes; when it does not, the pair already pushed above
+        // stands on its own, which is how the parser reads it too.
+        if span[close + 1..].starts_with('[') {
+            if let Some(&label_close) = closes.get(next + 1) {
+                let label = &span[close + 2..label_close];
+                push(if label.is_empty() { text } else { label });
             }
         }
-        rest = &after[consumed..];
     }
     labels
 }
@@ -1047,7 +1054,7 @@ mod tests {
         assert!(reference_labels("[ie](a b)").contains(&label));
         // A real inline link is named too — the scan cannot tell the two
         // readings apart, and naming one costs only a fallback.
-        assert_eq!(reference_labels("[a](x)"), vec![Arc::from("a")]);
+        assert!(reference_labels("[a](x)").contains(&Arc::from("a")));
         // A use on the same line after the parens is named.
         assert!(reference_labels("[a](x) then [b][id]").contains(&Arc::from("id")));
         // And so is one *inside* them: `(z [ie])` is no destination, so `[]`
@@ -1064,9 +1071,33 @@ mod tests {
         // text. Giving up on the line instead drops it.
         assert!(reference_labels("[ie][").contains(&label));
         assert!(reference_labels("[][][ie][").contains(&label));
-        // A second bracket that does close still names what it labels.
-        assert_eq!(reference_labels("[z][ie]"), vec![label.clone()]);
-        assert_eq!(reference_labels("[ie][]"), vec![label]);
+        // A second bracket that does close still names what it labels, and a
+        // collapsed one still names the text it stands in for.
+        assert!(reference_labels("[z][ie]").contains(&label));
+        assert!(reference_labels("[ie][]").contains(&label));
+    }
+
+    #[test]
+    fn use_scan_reads_every_bracket_pair_the_parser_could_close() {
+        let names = |span: &str| {
+            reference_labels(span)
+                .into_iter()
+                .map(|label| label.to_string())
+                .collect::<Vec<_>>()
+        };
+        // A `]` closes against the innermost `[` still open, so `use [x[id]`
+        // is the text `[x` followed by the shortcut reference `[id]`. Both
+        // readings of the span are named, the parser's among them.
+        let labels = names("use [x[id]");
+        assert!(labels.contains(&"x[id".to_owned()));
+        assert!(labels.contains(&"id".to_owned()));
+        // The same inside a full reference's label.
+        assert!(names("use [x][[id]").contains(&"id".to_owned()));
+        // A label is not a line: `[\nid]` is a use of `id`.
+        assert!(names("[\nid]").contains(&"id".to_owned()));
+        // A `[` with no `]` anywhere ahead can open no pair, and neither can
+        // anything after it.
+        assert!(names("[unclosed").is_empty());
     }
 
     #[test]
