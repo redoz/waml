@@ -1016,6 +1016,28 @@ fn splice_node(
             )
             .map_err(|_| ParseError::WidthOverflow);
     }
+    // Everything below pairs the two children lists by index, which equal
+    // counts do not earn. A node keeps its width and its child count while the
+    // children themselves are re-cut: unmaking a reference definition kills the
+    // `[ id]` link in a heading that used it, and the dead link's `[` merges
+    // into the text token before it, so five children of widths [1,1,1,5,1]
+    // become five of widths [1,1,2,1,4]. Pairing those by index splices a child
+    // over one of a different width, and the node this rebuilds no longer spans
+    // its own text — a tree that cannot write itself back to its source.
+    //
+    // Only a child-for-child width agreement makes the pairing mean anything,
+    // so demand that much and hand back the oracle's whole subtree otherwise.
+    // That is the same answer the kind, width, and count mismatches above give,
+    // for the same reason: where the two shapes do not correspond, there is no
+    // splice to make, only the freshly parsed node to take.
+    if base
+        .children()
+        .iter()
+        .zip(oracle.children())
+        .any(|(base_child, oracle_child)| element_width(base_child) != element_width(oracle_child))
+    {
+        return Ok(oracle.clone());
+    }
     let mut at = start;
     let mut changed = false;
     let mut children = Vec::with_capacity(base.children().len());

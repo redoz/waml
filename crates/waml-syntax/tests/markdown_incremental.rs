@@ -423,6 +423,27 @@ fn a_reference_use_before_an_unterminated_second_bracket_still_forces_a_reparse(
 }
 
 #[test]
+fn unmaking_a_definition_recuts_its_users_inline_children() {
+    // This fails if the reference-dependent splice pairs a node's children
+    // with the oracle's by index on the strength of their counts matching.
+    // The edit appends ` x` to the definition, which is no title, so `[id]`
+    // stops being a definition and `[ id]` in the heading stops being a link.
+    // The heading keeps its width and its child count across that -- five
+    // children either way -- while the children themselves are re-cut, since
+    // the dead link's `[` merges into the text before it: widths `[1,1,1,5,1]`
+    // become `[1,1,2,1,4]`. Pairing those by index splices a child over one of
+    // a different width, and the rebuilt heading no longer spans its own text.
+    assert_matches_full_oracle(
+        "[id]: /one\n# x[ id]y\n",
+        "[id]: /one x\n# x[ id]y\n",
+        &[TextChange {
+            old_range: range(10, 10),
+            replacement: Arc::from(" x"),
+        }],
+    );
+}
+
+#[test]
 fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     // This fails if direct incremental reparse allocates another source or if
     // normalization reports an unrelated shell window.
