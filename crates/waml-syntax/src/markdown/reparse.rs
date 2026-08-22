@@ -399,6 +399,15 @@ pub(crate) fn restore_unchanged_subtrees(
     map: &ChangeMap,
     excluded: &[TextRange],
 ) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    // Offer the pre-edit tree for reuse in the post-edit coordinate system.
+    // A subtree whose own bytes the edit spared can still hold an annotation
+    // that names a span of the *document*, and the edit renumbered the
+    // document; left alone, such a subtree disagrees with its freshly parsed
+    // counterpart for no reason but arithmetic, and `same_shape` rightly
+    // refuses to reuse it. Doing the arithmetic first turns that refusal back
+    // into a reuse — and where it cannot be done, the refusal is still there
+    // to catch what is left.
+    let previous = &retarget_document_spans(previous, map)?;
     let mut reusable_nodes = HashMap::new();
     let mut reusable_tokens = HashMap::new();
     collect_reusable(
@@ -626,6 +635,98 @@ fn restamp_node(
                 .unwrap_or_else(|| node.annotations().into()),
         )
         .map_err(|_| ParseError::WidthOverflow)
+}
+
+/// Whether an annotation's data is a `start:end` pair of absolute document
+/// offsets, rather than a value that reads the same wherever its node sits.
+///
+/// Only one is: a link's `destination_range`, the span the destination was
+/// *authored* in — inside the link for the inline form, and inside the
+/// reference definition, arbitrarily far away, for the reference form.
+/// Everything else the parser derives (the decoded destination, the title, the
+/// link kind, the reference label, a cell's alignment, an entity's value) is a
+/// value, and a value survives being moved.
+///
+/// Being wrong here is not a correctness risk, only a missed reuse: an offset
+/// this fails to name goes unretargeted, disagrees with the freshly parsed
+/// node, and [`same_shape_node`] declines the reuse.
+fn holds_document_offsets(kind: &str) -> bool {
+    kind == super::inline::destination_range_annotation()
+}
+
+/// The same subtree with every document span it names moved into the post-edit
+/// document.
+///
+/// Total by design. A span the edit overlapped has no post-edit answer — the
+/// bytes it named are gone — and the honest thing to hand back is the span as
+/// written, which then reads as the divergence it is. Repairing what can be
+/// repaired is an optimisation; refusing to reuse what cannot is the
+/// correctness, and that decision belongs to [`same_shape_node`].
+///
+/// Translation, rather than re-reading the destination out of the node: a
+/// reference link's span lies in another block entirely, which this subtree
+/// cannot see, and "where did these bytes end up" answers both link forms with
+/// one question.
+fn retarget_document_spans(
+    node: &GreenNode<OkfMarkdownLanguage>,
+    map: &ChangeMap,
+) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let mut annotations = None;
+    for (at, annotation) in node.annotations().iter().enumerate() {
+        if !holds_document_offsets(annotation.kind()) {
+            continue;
+        }
+        let Some(moved) = annotation
+            .data()
+            .and_then(parse_document_span)
+            .and_then(|span| map.translate_unchanged(span))
+            .map(|span| format!("{}:{}", span.start().to_usize(), span.end().to_usize()))
+            .filter(|moved| annotation.data() != Some(moved.as_str()))
+        else {
+            continue;
+        };
+        let retargeted: &mut Vec<crate::SyntaxAnnotation> =
+            annotations.get_or_insert_with(|| node.annotations().to_vec());
+        retargeted[at] = crate::SyntaxAnnotation::new(
+            annotation.id(),
+            annotation.kind().to_owned(),
+            Some(moved.into()),
+        );
+    }
+
+    let mut children = Vec::with_capacity(node.children().len());
+    let mut children_changed = false;
+    for child in node.children() {
+        match child {
+            GreenElement::Node(child) => {
+                let retargeted = retarget_document_spans(child, map)?;
+                children_changed |= !Arc::ptr_eq(child, &retargeted);
+                children.push(GreenElement::Node(retargeted));
+            }
+            GreenElement::Token(token) => children.push(GreenElement::Token(token.clone())),
+        }
+    }
+
+    if annotations.is_none() && !children_changed {
+        return Ok(node.clone());
+    }
+    GreenFactory::new()
+        .node_with_annotations(
+            node.kind(),
+            children,
+            annotations.map_or_else(|| node.annotations().into(), Arc::from),
+        )
+        .map_err(|_| ParseError::WidthOverflow)
+}
+
+/// The `start:end` pair an offset-bearing annotation spells, as a range.
+fn parse_document_span(data: &str) -> Option<TextRange> {
+    let (start, end) = data.split_once(':')?;
+    TextRange::new(
+        TextSize::try_from_usize(start.parse().ok()?).ok()?,
+        TextSize::try_from_usize(end.parse().ok()?).ok()?,
+    )
+    .ok()
 }
 
 fn collect_reusable(

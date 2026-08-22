@@ -704,6 +704,100 @@ fn escaping_a_definition_destination_moves_the_span_its_uses_cached() {
 }
 
 #[test]
+fn text_inserted_above_an_inline_link_moves_the_span_it_cached() {
+    // The reference form is not the only one that caches a document span: an
+    // inline link's `destination_range` is an absolute offset too, and a
+    // paragraph the edit never touched still *moves* when a character lands
+    // above it. Reusing it across the insertion republished the pre-edit span,
+    // which then named the byte before the destination.
+    let old = "text [inline](/dst \"ti\") more\n";
+    let new = "xtext [inline](/dst \"ti\") more\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(0, 0),
+            replacement: Arc::from("x"),
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        update
+            .snapshot
+            .queries()
+            .links()
+            .next()
+            .unwrap()
+            .destination_range,
+        Some(range(15, 19)),
+        "the cached span moves with the paragraph that holds it"
+    );
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+}
+
+#[test]
+fn a_shifted_block_holding_a_link_keeps_its_identity() {
+    // Retargeting a cached span is what lets the block that holds it still be
+    // reused. Refusing the reuse would publish the right answer too — the
+    // freshly parsed node has the right span — but at the price of a new
+    // identity for a block whose text nobody touched, and identity is what
+    // consumers hang selections and backlinks on.
+    //
+    // This fails if a shifted span is merely *detected* rather than moved: the
+    // pre-edit link disagrees with its freshly parsed counterpart on
+    // `destination_range`, `same_shape` declines, and the paragraph is rebuilt
+    // from scratch.
+    let old = "para one\n\ntext [inline](/dst) more\n\npara three\n";
+    let new = "xpara one\n\ntext [inline](/dst) more\n\npara three\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let owners = |snapshot: &waml_syntax::MarkdownSyntaxSnapshot| {
+        let queries = snapshot.queries();
+        queries
+            .spans(range(0, snapshot.text().shared().len()))
+            .map(|span| span.owner)
+            .collect::<HashSet<SyntaxIdentity>>()
+    };
+    // The identity of whatever owns the link, before the edit.
+    let link_owner = previous
+        .queries()
+        .spans(range(10, 34))
+        .map(|span| span.owner)
+        .collect::<HashSet<_>>();
+    assert!(!link_owner.is_empty());
+
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(0, 0),
+            replacement: Arc::from("x"),
+        }],
+    )
+    .unwrap();
+
+    let survivors = owners(&update.snapshot);
+    assert!(
+        link_owner.iter().all(|owner| survivors.contains(owner)),
+        "the link's block was reused, so it kept its identity: {link_owner:?} not all in {survivors:?}"
+    );
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+}
+
+#[test]
 fn a_delimiter_row_edit_refreshes_the_alignment_its_cells_cached() {
     // This fails if a cell whose own text did not change may be reused across
     // an edit to the row that decides its alignment. A table cell's alignment

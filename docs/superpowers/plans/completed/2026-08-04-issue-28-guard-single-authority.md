@@ -91,6 +91,25 @@ are transferred rather than reparsed. Unrelated to the bracket reading, and
 unchanged by this task: the count and the per-document digests are identical
 before and after.
 
+**Fixed 2026-08-22**, and it was two defects wearing one symptom. The one
+above: the semantic definition diff (`same_definition`) compared a definition's
+label, decoded destination and title but not the span the destination was
+authored in, so `[id]: /one` becoming `[id]:\/one` read as unchanged — same
+decoded `/one`, span moved — and every use kept the old span. The second, which
+only surfaced once the first was closed: restoring an unchanged subtree carried
+its cached span across verbatim, so an edit that merely *shifted* a paragraph
+left every inline link in it naming a span one byte early.
+
+The remedy is layered rather than either-or. `restore_unchanged_subtrees` first
+moves each cached span into post-edit coordinates
+(`reparse::retarget_document_spans`), which is what keeps a shifted block
+reusable and therefore keeps its identity; `same_shape` then compares the
+derived annotations and declines any reuse the retarget could not make agree.
+The retarget is the optimisation, the comparison is the correctness — so an
+offset-bearing annotation nobody remembered to enumerate costs a reuse, never a
+wrong answer. The debug oracle no longer excludes annotations wholesale either:
+it compares every derived one, identities excepted.
+
 
 ## Context
 

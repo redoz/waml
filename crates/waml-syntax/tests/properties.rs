@@ -13,6 +13,7 @@
 //! | this file's random generator | 20,000,000 | **0** |
 //! | exhaustive single-edit over a 3-block reference corpus | 7,718,904 | 1,034 |
 //! | exhaustive single-edit over a container/title/bracket corpus | 15,052,824 | 1,102 |
+//! | exhaustive single-edit over a 48-document link/table corpus | 505,900 | 1,367 |
 //!
 //! The generator explores a wide document space shallowly; these defects need a
 //! *specific small shape* and *a particular edit landing on it*, which random
