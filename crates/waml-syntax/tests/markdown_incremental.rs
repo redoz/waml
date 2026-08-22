@@ -378,6 +378,26 @@ fn a_reference_use_a_failed_inline_destination_follows_still_forces_a_reparse() 
 }
 
 #[test]
+fn a_reference_use_inside_a_failed_inline_destination_still_forces_a_reparse() {
+    // The other half of the same reading. The scan skipped the parenthesised
+    // tail whole, on the same assumption that it holds a destination -- and a
+    // destination holds no reference uses. `(z [id])` is no destination, so
+    // `[]` is plain text and the `[id]` inside the parens is a shortcut
+    // reference use. Skipping the tail named no label for it, the guard waved
+    // the window through, and the window reparse -- which cannot see the
+    // definition in the first section -- published `Text` where a full parse
+    // has a `Link`.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\n[](z [iz])\n",
+        "[id]: /one\n\n# M\n\n[](z [id])\n",
+        &[TextChange {
+            old_range: range(24, 25),
+            replacement: Arc::from("d"),
+        }],
+    );
+}
+
+#[test]
 fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     // This fails if direct incremental reparse allocates another source or if
     // normalization reports an unrelated shell window.

@@ -246,6 +246,18 @@ fn reference_use_labels(line: &str) -> Vec<Arc<str>> {
 /// and stays incremental. It only forces a fallback when a *duplicate*
 /// definition of the label lives outside the window — and there the window's
 /// reading really does depend on the outside text.
+///
+/// An inline link's `(...)` destination is scanned like any other text, for
+/// the same reason. A `(` after a `]` only opens a destination when what
+/// follows really is one, which is not a question about shape: `[id](` never
+/// closes, and `[id](z [id])` closes around bytes that are no destination at
+/// all — CommonMark reads both as plain text around shortcut reference uses.
+/// Telling the two readings apart needs the whole inline-destination grammar,
+/// which this scan deliberately does not have, so it neither drops the
+/// bracket's own text as an inline link's text nor skips the parenthesized
+/// tail as an inline link's destination. Scanning a real inline link both
+/// ways only costs a fallback, and only when the labels it names are defined
+/// elsewhere; skipping either one publishes a use the full parse resolves.
 fn reference_labels(line: &str) -> Vec<Arc<str>> {
     let mut labels = Vec::new();
     let mut rest = line;
@@ -262,43 +274,6 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
             };
             let label = &after_label[..label_end];
             (if label.is_empty() { text } else { label }, label_end + 2)
-        } else if after.starts_with('(') {
-            // A `(` after the bracket *may* open an inline link destination,
-            // and an inline link carries no reference label. It only opens one
-            // when what follows really is a destination, which is not a
-            // question about shape: `[id](` never closes, and `[id](a b)`
-            // closes around two words that are no destination — CommonMark
-            // reads both as the shortcut reference use `[id]` followed by the
-            // parenthesized text. Deciding between the two readings needs the
-            // whole inline-destination grammar, which this scan deliberately
-            // does not have, so name the bracket's text as a potential label
-            // either way. Naming it for a real inline link only forces a
-            // fallback when that text is also a defined label; not naming it
-            // publishes a use the full parse resolves.
-            //
-            // The parenthesized tail is still consumed, so a later reference
-            // use on the same line (e.g. `[a](x) then [b][id]`) is still
-            // scanned. Track paren depth to handle balanced nested parens in
-            // the destination; if the line ends unbalanced, only consume the
-            // opening `(` (consumed = 1) so scanning resumes right after it —
-            // over-scanning is safe (extra fallback), under-scanning is the
-            // bug this guards against.
-            let mut depth = 0usize;
-            let mut close_at = None;
-            for (idx, ch) in after.char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close_at = Some(idx);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            (text, close_at.map_or(1, |idx| idx + 1))
         } else {
             (text, 0)
         };
@@ -1067,8 +1042,12 @@ mod tests {
         // A real inline link is named too — the scan cannot tell the two
         // readings apart, and naming one costs only a fallback.
         assert_eq!(reference_labels("[a](x)"), vec![Arc::from("a")]);
-        // Its tail is still consumed, so a later use on the line is named.
+        // A use on the same line after the parens is named.
         assert!(reference_labels("[a](x) then [b][id]").contains(&Arc::from("id")));
+        // And so is one *inside* them: `(z [ie])` is no destination, so `[]`
+        // is text and `[ie]` is a shortcut use.
+        assert!(reference_labels("[](z [ie])").contains(&label));
+        assert!(reference_labels("[](z [ie]").contains(&label));
     }
 
     #[test]
