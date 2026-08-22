@@ -263,14 +263,26 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
             let label = &after_label[..label_end];
             (if label.is_empty() { text } else { label }, label_end + 2)
         } else if after.starts_with('(') {
-            // Inline link destination: `[text](dest)` carries no reference
-            // label. Consume only the parenthesized tail so a later
-            // reference use on the same line (e.g. `[a](x) then [b][id]`)
-            // is still scanned. Track paren depth to handle balanced nested
-            // parens in the destination; if the line ends unbalanced, only
-            // consume the opening `(` (consumed = 1) so scanning resumes
-            // right after it — over-scanning is safe (extra fallback),
-            // under-scanning is the bug this guards against.
+            // A `(` after the bracket *may* open an inline link destination,
+            // and an inline link carries no reference label. It only opens one
+            // when what follows really is a destination, which is not a
+            // question about shape: `[id](` never closes, and `[id](a b)`
+            // closes around two words that are no destination — CommonMark
+            // reads both as the shortcut reference use `[id]` followed by the
+            // parenthesized text. Deciding between the two readings needs the
+            // whole inline-destination grammar, which this scan deliberately
+            // does not have, so name the bracket's text as a potential label
+            // either way. Naming it for a real inline link only forces a
+            // fallback when that text is also a defined label; not naming it
+            // publishes a use the full parse resolves.
+            //
+            // The parenthesized tail is still consumed, so a later reference
+            // use on the same line (e.g. `[a](x) then [b][id]`) is still
+            // scanned. Track paren depth to handle balanced nested parens in
+            // the destination; if the line ends unbalanced, only consume the
+            // opening `(` (consumed = 1) so scanning resumes right after it —
+            // over-scanning is safe (extra fallback), under-scanning is the
+            // bug this guards against.
             let mut depth = 0usize;
             let mut close_at = None;
             for (idx, ch) in after.char_indices() {
@@ -286,7 +298,7 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
                     _ => {}
                 }
             }
-            ("", close_at.map_or(1, |idx| idx + 1))
+            (text, close_at.map_or(1, |idx| idx + 1))
         } else {
             (text, 0)
         };
@@ -1041,6 +1053,22 @@ mod tests {
         // The strict test stays strict: its caller drops what it accepts.
         assert!(line_is_definition("  [id]: /one"));
         assert!(!line_is_definition("> [id]: /one"));
+    }
+
+    #[test]
+    fn use_scan_names_the_label_a_failed_inline_destination_follows() {
+        let label: Arc<str> = Arc::from("ie");
+        // `[ie](` opens a destination that never closes, so the parser reads
+        // `[ie]` as a shortcut reference use and `(` as text.
+        assert!(reference_labels("[ie](").contains(&label));
+        // Closing the parens is not enough: `a b` is no destination, so this
+        // is a shortcut use too.
+        assert!(reference_labels("[ie](a b)").contains(&label));
+        // A real inline link is named too — the scan cannot tell the two
+        // readings apart, and naming one costs only a fallback.
+        assert_eq!(reference_labels("[a](x)"), vec![Arc::from("a")]);
+        // Its tail is still consumed, so a later use on the line is named.
+        assert!(reference_labels("[a](x) then [b][id]").contains(&Arc::from("id")));
     }
 
     #[test]

@@ -349,6 +349,35 @@ fn inline_link_before_reference_use_in_separate_paragraph_still_resolves() {
 }
 
 #[test]
+fn a_reference_use_a_failed_inline_destination_follows_still_forces_a_reparse() {
+    // This fails if the label scan reads every `(` after a `]` as an inline
+    // link's destination. A `(` only makes one when what follows really is a
+    // destination: `[id](` never closes, and `[id](a b)` closes around two
+    // words that are no destination at all, so CommonMark falls back to
+    // reading `[id]` as a shortcut reference use with the parenthesised tail
+    // as plain text. The scan named no label for either, so the guard waved
+    // the window through, and the window reparse -- which cannot see the
+    // definition in the first section -- published `Text` where a full parse
+    // has a `Link`.
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\nuse [iz](\n",
+        "[id]: /one\n\n# M\n\nuse [id](\n",
+        &[TextChange {
+            old_range: range(23, 24),
+            replacement: Arc::from("d"),
+        }],
+    );
+    assert_matches_full_oracle(
+        "[id]: /one\n\n# M\n\nuse [iz](a b)\n",
+        "[id]: /one\n\n# M\n\nuse [id](a b)\n",
+        &[TextChange {
+            old_range: range(23, 24),
+            replacement: Arc::from("d"),
+        }],
+    );
+}
+
+#[test]
 fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     // This fails if direct incremental reparse allocates another source or if
     // normalization reports an unrelated shell window.
