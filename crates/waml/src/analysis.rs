@@ -1,3 +1,25 @@
+//! The analysis pipeline: the vocabulary a domain specialization is written
+//! against, and the composition root that runs one.
+//!
+//! Two halves, in this order. Everything from [`DocumentVersion`] through
+//! [`validate_disjoint_claims`] is **vocabulary** — the types a specialization
+//! declares against and nothing else. From [`PreviousAnalyses`] down is the
+//! **composition root**: it runs the okf substrate, hands the result to a
+//! specialization as a [`DomainAnalysisContext`], and owns the composed
+//! [`PreparedCandidate`].
+//!
+//! This module therefore names `crate::uml` — a tier above it — in exactly two
+//! places, [`crate::uml::Analysis`] and [`crate::uml::analyze`], and that is
+//! the whole of its dependency on anything above the substrate. That is
+//! composition, not coupling: `tests/specialization_composition.rs` builds a
+//! second, non-UML specialization against the same vocabulary from outside the
+//! crate. `tests/analysis_layering.rs` enforces the rule — a third UML name
+//! here fails the build, as does any shipped `uml/` file calling back into a
+//! pipeline entry point.
+//!
+//! Audit A12 prescribed lifting the vocabulary into a crate below both. That
+//! was measured and refused: see `docs/design/analysis-uml-layering.md`.
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
