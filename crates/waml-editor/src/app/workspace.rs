@@ -1,3 +1,5 @@
+#[cfg(target_arch = "wasm32")]
+use super::web_boot::ApiBackend;
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,19 +83,6 @@ pub(super) fn restore_markdown_asset_host_after_open(
         *installed = previous;
     }
     opened
-}
-
-/// The backend a browser boot committed to at open time: a live `waml serve`
-/// mounted at `base`, presenting `token` on every request, tracking the
-/// revision the last successful read or write reported. Held once the `?api=`
-/// boot fetch succeeds; consulted by the wasm `save_backend` (Task 9) so the
-/// save seam stays a choice made once at open, not re-derived per save.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(super) struct ApiBackend {
-    pub(super) base: String,
-    pub(super) token: Option<String>,
-    pub(super) revision: u64,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -296,16 +285,7 @@ impl App {
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
     fn save_backend(&mut self, cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveOutcome, String> {
-        if let Some(api) = self.api_backend.clone() {
-            // One save in flight at a time: a second POST while the first is
-            // pending would overwrite `pending_api_save` (the first response
-            // then completes the WRONG ticket, the second's is dropped) and
-            // would post the same stale `api.revision`. Defer through the
-            // debounce; it re-arms itself here until the response lands.
-            if self.pending_api_save.is_some() {
-                self.schedule_save(cx);
-                return Ok(SaveOutcome::Pending);
-            }
+        if let Some(api) = self.web.backend().cloned() {
             self.start_api_save(cx, api, ticket.clone());
             return Ok(SaveOutcome::Pending);
         }
@@ -340,11 +320,7 @@ impl App {
         ticket: SaveTicket,
         result: Result<u64, String>,
     ) {
-        let result = result.map(|revision| {
-            if let Some(api) = self.api_backend.as_mut() {
-                api.revision = revision;
-            }
-        });
+        let result = result.map(|revision| self.web.set_revision(revision));
         let completion = SaveCompletion {
             revision: ticket.revision,
             history_state: ticket.history_state,
@@ -362,11 +338,22 @@ impl App {
     }
 
     /// Send `ticket`'s dirty documents to `api`'s `/api/documents` route and
-    /// stash the ticket so the response can complete it. One save in flight at
-    /// a time: a save requested while this one is pending goes back through
-    /// the existing debounce and will be sent once this response lands.
+    /// stash the ticket so the response can complete it.
+    ///
+    /// One save in flight at a time: a second POST while the first is pending
+    /// would overwrite the stashed ticket -- the first response would then
+    /// complete the WRONG ticket and the second's would find an empty slot --
+    /// and would carry the same already-stale `api.revision`. A save asked for
+    /// while one is pending goes back through the existing debounce, which
+    /// re-arms itself here until the response lands. The check sits next to the
+    /// arm rather than in `save_backend` so that no future caller can reach the
+    /// arm without it.
     #[cfg(target_arch = "wasm32")]
     fn start_api_save(&mut self, cx: &mut Cx, api: ApiBackend, ticket: SaveTicket) {
+        if self.web.save_in_flight() {
+            self.schedule_save(cx);
+            return;
+        }
         let body = match crate::api_save::documents_request(&ticket, api.revision) {
             Ok(body) => body,
             Err(error) => {
@@ -374,7 +361,7 @@ impl App {
                 return;
             }
         };
-        self.pending_api_save = Some(ticket);
+        self.web.arm_save(ticket);
         let mut request = HttpRequest::new(
             format!("{}/documents", api.base.trim_end_matches('/')),
             HttpMethod::POST,
@@ -395,7 +382,7 @@ impl App {
     /// usual conflict from that path and is left alone).
     #[cfg(target_arch = "wasm32")]
     pub(super) fn start_api_reload(&mut self, cx: &mut Cx) {
-        let Some(api) = self.api_backend.clone() else {
+        let Some(api) = self.web.backend().cloned() else {
             return;
         };
         let (url, headers) =
@@ -620,7 +607,7 @@ impl App {
         debug_assert_eq!(change.revision, self.session.revision());
         self.project.opened_replacement_bundle();
         self.sync_save_error(cx);
-        if self.pending_boot_index_hash.is_some() {
+        if self.web.index_pending() {
             // An export-time index asset for THIS bundle is already in flight
             // (spec §Export-time index, decision 10). Building the index
             // locally here and replacing it moments later would spend exactly

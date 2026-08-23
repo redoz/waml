@@ -8,6 +8,10 @@ mod open_project;
 mod projection;
 mod session_search;
 mod shell;
+// Every field and all but one method are written only by the wasm build;
+// `index_pending` is the one the shared `open_bundle` reads.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod web_boot;
 mod workspace;
 
 use self::deferred::DeferredNavigation;
@@ -16,6 +20,7 @@ use self::navigation::TransitionCause;
 use self::open_project::OpenProject;
 use self::projection::Projection;
 use self::session_search::SessionSearch;
+use self::web_boot::WebBoot;
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save};
@@ -801,11 +806,6 @@ pub struct App {
     /// back. See [`open_project`] for what opening and closing owe each other.
     #[rust]
     project: OpenProject,
-    /// `waml serve` backend, when this session booted from `?api=`. See
-    /// `workspace::ApiBackend`.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    #[rust]
-    api_backend: Option<workspace::ApiBackend>,
     #[rust]
     documents: DocumentHost,
     /// The bundle-wide text index: built on open, refreshed per document on
@@ -915,34 +915,13 @@ pub struct App {
     /// last one left behind (see `popup::palette::OpenPalette`).
     #[rust]
     palette: Option<crate::popup::palette::OpenPalette>,
-    /// URL of the in-flight boot-bundle fetch -- asked for by the page URL or
-    /// by the site's own config -- so its response can name it in an error.
-    /// `None` once the response (or error) is handled.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    /// Everything a browser session remembers about reaching the network: the
+    /// boot it is waiting on, the index asset that boot armed, the `waml serve`
+    /// backend a boot can commit to, and that backend's outstanding save. Only
+    /// the wasm build writes any of it; see [`web_boot`] for the invariants
+    /// that hold over the group.
     #[rust]
-    pending_boot_bundle: Option<String>,
-    /// Expected `waml::search::asset::bundle_hash` of an in-flight boot-time
-    /// search-index-asset fetch (spec §Export-time index), started right
-    /// after a boot bundle decodes. `None` once the response (or error) is
-    /// handled -- on ANY failure to fetch/decode/hash-match, the
-    /// `SearchState` `open_bundle` already built locally is left as-is
-    /// (decision 10's fallback), so this field's absence is itself the
-    /// "nothing to do" case, not an error.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    #[rust]
-    pending_boot_index_hash: Option<u64>,
-    /// `{ base, token }` of an in-flight `?api=` boot fetch, so its response
-    /// can name the base URL in an error and, on success, commit both into
-    /// the workspace's API backend (Task 9 consults it for saves).
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    #[rust]
-    pending_api_boot: Option<(String, Option<String>)>,
-    /// The `SaveTicket` an in-flight `POST /api/documents` was built from, so
-    /// `handle_http_response`/`handle_http_request_error` can complete it
-    /// (`workspace::App::finish_api_save`) once the write resolves.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    #[rust]
-    pending_api_save: Option<SaveTicket>,
+    web: WebBoot,
 }
 
 impl MatchEvent for App {
@@ -1090,13 +1069,13 @@ impl MatchEvent for App {
             return;
         }
         if request_id == live_id!(boot_api) {
-            let Some((base, token)) = self.pending_api_boot.take() else {
+            let Some(pending) = self.web.claim_api_boot() else {
                 return;
             };
             if !ok {
                 log!(
                     "{}",
-                    crate::browser_boot::api_boot_error(&base, Some(response.status_code))
+                    crate::browser_boot::api_boot_error(&pending.base, Some(response.status_code))
                 );
                 return;
             }
@@ -1120,27 +1099,21 @@ impl MatchEvent for App {
                     // analysis must not present a blank editor bound to a live
                     // save backend (`open_bundle` has already reported why).
                     if self.open_bundle(cx, bundle, "served".to_string(), None) {
-                        self.api_backend = Some(workspace::ApiBackend {
-                            base,
-                            token,
-                            revision,
-                        });
+                        self.web.commit_backend(pending, revision);
                         self.show_editor(cx);
                     }
                 }
-                Err(e) => log!("could not open {base}: {e}"),
+                Err(e) => log!("could not open {}: {e}", pending.base),
             }
             return;
         }
         if request_id == live_id!(save_api) {
-            let Some(ticket) = self.pending_api_save.take() else {
+            let Some(ticket) = self.web.claim_save() else {
                 return;
             };
             if response.status_code == 409 {
                 if let Ok(current) = crate::api_save::parse_conflict(body) {
-                    if let Some(api) = self.api_backend.as_mut() {
-                        api.revision = current;
-                    }
+                    self.web.set_revision(current);
                 }
                 self.start_api_reload(cx);
                 self.finish_api_save(
@@ -1167,7 +1140,7 @@ impl MatchEvent for App {
             return;
         }
         if request_id == live_id!(reload_api) {
-            let Some(api) = self.api_backend.clone() else {
+            let Some(api) = self.web.backend().cloned() else {
                 return;
             };
             if !ok {
@@ -1190,8 +1163,8 @@ impl MatchEvent for App {
                     // has actually been applied; a failed structural reopen
                     // must not present a stale bundle as current.
                     if self.reload_from_bundle(cx, bundle) {
-                        if let (Some(revision), Some(api)) = (revision, self.api_backend.as_mut()) {
-                            api.revision = revision;
+                        if let Some(revision) = revision {
+                            self.web.set_revision(revision);
                         }
                     }
                 }
@@ -1207,7 +1180,7 @@ impl MatchEvent for App {
         // never user-facing, but it IS logged: an export whose asset never
         // matches is a real fault that would otherwise show no signal at all.
         if request_id == live_id!(boot_search_index) {
-            let Some(expected_hash) = self.pending_boot_index_hash.take() else {
+            let Some(expected_hash) = self.web.claim_index() else {
                 return;
             };
             let decoded = if ok {
@@ -1244,7 +1217,7 @@ impl MatchEvent for App {
         if request_id != live_id!(boot_bundle) {
             return;
         }
-        let Some(url) = self.pending_boot_bundle.take() else {
+        let Some(url) = self.web.claim_boot_bundle() else {
             return;
         };
         if !ok {
@@ -1274,8 +1247,19 @@ impl MatchEvent for App {
                 // is to skip the boot-time index build, and `open_bundle`
                 // only knows to skip it when the fetch is already in flight.
                 self.start_boot_index_fetch(cx, &url, expected_hash);
-                self.open_bundle(cx, bundle, "exported".to_string(), None);
-                self.show_editor(cx);
+                // Same guard as the `?api=` response above, which this path
+                // did not share until 2026-08-23: a bundle that fails session
+                // analysis must not present a blank editor. `open_bundle` has
+                // already reported why, and the start screen is still up.
+                if self.open_bundle(cx, bundle, "exported".to_string(), None) {
+                    self.show_editor(cx);
+                } else {
+                    // The index asset is in flight for a bundle that never
+                    // opened. Left armed, it would land, hash-match the bundle
+                    // it was exported for, and install itself over a session
+                    // holding entirely different documents.
+                    self.web.cancel_index();
+                }
             }
             Err(e) => {
                 let message = format!("could not open {url}: {e}");
@@ -1291,15 +1275,15 @@ impl MatchEvent for App {
     #[cfg(target_arch = "wasm32")]
     fn handle_http_request_error(&mut self, cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
         if request_id == live_id!(boot_api) {
-            if let Some((base, _token)) = self.pending_api_boot.take() {
-                let message = crate::browser_boot::api_boot_error(&base, None);
-                tracing::error!(base = %base, "{message}");
+            if let Some(pending) = self.web.claim_api_boot() {
+                let message = crate::browser_boot::api_boot_error(&pending.base, None);
+                tracing::error!(base = %pending.base, "{message}");
                 self.report_action_error(cx, &message);
             }
             return;
         }
         if request_id == live_id!(save_api) {
-            if let Some(ticket) = self.pending_api_save.take() {
+            if let Some(ticket) = self.web.claim_save() {
                 self.finish_api_save(
                     cx,
                     ticket,
@@ -1309,7 +1293,7 @@ impl MatchEvent for App {
             return;
         }
         if request_id == live_id!(reload_api) {
-            if let Some(api) = self.api_backend.as_ref() {
+            if let Some(api) = self.web.backend() {
                 log!("could not reload {} after a save conflict", api.base);
             }
             return;
@@ -1320,7 +1304,7 @@ impl MatchEvent for App {
         // fault to surface -- but `open_bundle` skipped its own build waiting
         // for it, so the fallback build has to run here.
         if request_id == live_id!(boot_search_index) {
-            if self.pending_boot_index_hash.take().is_some() {
+            if self.web.claim_index().is_some() {
                 self.rebuild_search_index();
             }
             return;
@@ -1328,7 +1312,7 @@ impl MatchEvent for App {
         if request_id != live_id!(boot_bundle) {
             return;
         }
-        if let Some(url) = self.pending_boot_bundle.take() {
+        if let Some(url) = self.web.claim_boot_bundle() {
             let message = crate::browser_boot::boot_fetch_error(&url, None);
             tracing::error!(url = %url, "{message}");
             self.report_action_error(cx, &message);
@@ -1347,7 +1331,7 @@ impl App {
     /// blank one -- and stays put if the fetch fails.
     #[cfg(target_arch = "wasm32")]
     fn start_boot_bundle_fetch(&mut self, cx: &mut Cx, url: String) {
-        self.pending_boot_bundle = Some(url.clone());
+        self.web.arm_boot_bundle(url.clone());
         cx.http_request(
             live_id!(boot_bundle),
             HttpRequest::new(url, HttpMethod::GET),
@@ -1364,7 +1348,7 @@ impl App {
     /// it.
     #[cfg(target_arch = "wasm32")]
     fn start_boot_index_fetch(&mut self, cx: &mut Cx, bundle_url: &str, expected_hash: u64) {
-        self.pending_boot_index_hash = Some(expected_hash);
+        self.web.arm_index(expected_hash);
         cx.http_request(
             live_id!(boot_search_index),
             HttpRequest::new(
@@ -1380,7 +1364,7 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn start_api_boot_fetch(&mut self, cx: &mut Cx, base: String, token: Option<String>) {
         let (url, headers) = crate::browser_boot::api_bundle_request(&base, token.as_deref());
-        self.pending_api_boot = Some((base, token));
+        self.web.arm_api_boot(base, token);
         let mut request = HttpRequest::new(url, HttpMethod::GET);
         for (name, value) in headers {
             request.set_header(name, value);

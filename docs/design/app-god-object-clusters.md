@@ -27,7 +27,7 @@ writing (test files excluded). The seven files are `app.rs` (1,639),
 | C1 | **Dock chrome** | 11 | 54 | `shell` (44), `workspace` (7), `actions` (3) | **extracted** → `app::dock_chrome::DockChrome` |
 | C11 | Core shell | 9 | 242 | everywhere | stays on `App` — this *is* the app shell |
 | C2 | Search sessions | 5 | 30 | `actions` (17), `event` (4), `navigation` (3), `app` (2), `workspace` (2) | **partly extracted** (`SessionSearch`, `DeferredNavigation`) |
-| C4 | Web / remote boot | 5 | 22 | `app` (16), `workspace` (6) | open |
+| C4 | **Web / remote boot** | 5 | 22 | `app` (16), `workspace` (6) | **extracted** → `app::web_boot::WebBoot` |
 | C6 | View history + deferred navigation | 5 | 28 | `navigation` (25), `actions` (2), `workspace` (1) | **partly extracted** (`DeferredNavigation`) |
 | C5 | Open project + save | 4 | 28 | `workspace` (24), one each in `app`/`event`/`shell`/`actions` | **extracted** → `app::open_project::OpenProject` |
 | C7 | Projection + tree cache | 4 | 27 | `navigation` (18), `workspace` (3), `actions` (3), `shell` (1) | **extracted** → `app::projection::Projection` |
@@ -85,14 +85,69 @@ The state of ONE open Ctrl+K palette. All three are set together on open, read
 together on a row commit, and meaningless while it is closed — so they are one
 `Option<OpenPalette>`, not three fields. Covered by `app/tests/palette.rs`.
 
-### C4 — Web / remote boot (5 fields)
+### C4 — Web / remote boot (5 fields) — **extracted**
 
 `api_backend`, `pending_boot_bundle`, `pending_boot_index_hash`,
 `pending_api_boot`, `pending_api_save`.
 
-Four in-flight-request slots and the backend one of them commits. Every one is
-`#[cfg(target_arch = "wasm32")]` in practice (all five carry a
-`cfg_attr(..., allow(dead_code))` for the native build).
+Four in-flight-request slots and the backend one of them commits. Now
+`App::web: WebBoot`, in `crates/waml-editor/src/app/web_boot.rs`, at **four**
+fields rather than five, because two of the five were one field:
+
+* `pending_boot_bundle` and `pending_api_boot` are two `Option`s where at most
+  one is ever `Some` — **C10's defect exactly**, and for the same reason: a
+  session boots from one place. `select_browser_boot` answers with a single
+  `BrowserBootSource`, and only its `Start` arm goes on to ask the site config,
+  which can name a bundle but never an `?api=` base. That exclusivity was a fact
+  about the call graph that nothing checked; as one `Option<PendingBoot>`,
+  arming either channel disarms the other by construction. Both are read through
+  the same `claim` helper `deferred` uses, which empties the slot *before*
+  asking whether the response belongs to the channel that armed it.
+* `pending_api_boot`'s `(String, Option<String>)` was `ApiBackend` minus its
+  revision — it is destructured into exactly that struct's first two fields on
+  success. It is now `PendingApiBoot`, and `commit_backend` is the only way to
+  build an `ApiBackend`, so the base and token a backend carries cannot come
+  from anywhere but the boot that landed. `ApiBackend` moved out of
+  `workspace.rs` with it.
+
+The save slot's guard moved to sit beside its write. `save_backend` checked
+`pending_api_save.is_some()` and `start_api_save` did the assignment, two
+functions apart; the check is now the first thing `start_api_save` does, and
+`WebBoot::arm_save` asserts the slot it fills was empty. The failure it prevents
+is the one the old comment described: a second POST overwrites the stashed
+ticket, so the first response completes the *second* ticket and the second
+response finds an empty slot.
+
+**Two latent bugs, both in the `?bundle=` channel, both from the two channels
+disagreeing.** The `?api=` response guards `show_editor` on `open_bundle`'s
+return value — "a server bundle that fails session analysis must not present a
+blank editor bound to a live save backend". Its sibling ignored that return
+value entirely:
+
+* A `?bundle=` boot whose bundle failed session analysis **showed the editor
+  anyway**, blank, over a session that had not been replaced.
+* Worse, the index-asset fetch stays armed through that failure. `open_bundle`
+  returns early, before the point where it reads the claim, so the asset lands a
+  moment later, hash-matches the bundle it was exported for, and installs itself
+  over a session holding entirely different documents — a search index whose
+  hits point into documents that are not open. `WebBoot::cancel_index` is the
+  boot path's statement that the bundle it armed for never opened.
+
+The first is a **change in what the editor does** on that path (start screen
+plus the error, instead of a blank editor) and is **V18** in
+`docs/reviews/visual-signoff-ledger.md`.
+
+**And the cluster is no longer invisible to the gate.** The warning further down
+— that `cargo test --workspace` cannot execute a line of C4 — was true of the
+fields *while they were fields on `App`*, reachable only through `Cx` and an
+`#[cfg(target_arch = "wasm32")]` event handler. As a plain struct the state
+machine is ordinary Rust: `web_boot.rs` carries ten native unit tests over
+channel exclusivity, the claim-empties-the-slot rule, the index cancel, the
+backend commit, and the save mutex (including a `#[should_panic]` over the
+assertion that guards it). What the gate still cannot reach is the wasm event
+plumbing around it, which is what the two browser scripts are for:
+`scripts/serve-browser-check.mjs` (`?api=`) and `scripts/bundle-boot-check.mjs`
+(`?bundle=`, added with this move — the repo had no check for that channel).
 
 ### C5 — Open project + save (4 fields) — **extracted**
 
@@ -282,7 +337,10 @@ Runners-up and why not:
 
 * **C4 (web boot, 5 fields)** is equally concentrated but `cargo test
   --workspace` cannot execute a single line of it — it is all wasm-gated. A
-  refactor whose only verification is a type-check is not a first move.
+  refactor whose only verification is a type-check is not a first move. (Taken
+  last, and the extraction is what fixed that: the state is now a plain struct
+  with native unit tests. The judgement stands for the *order*, not as a
+  permanent property of the cluster.)
 * **C6 (view history, 5 fields)** is the best-covered cluster in the file, but
   its 25 references in `navigation.rs` are threaded through the deferred-restore
   generation logic, which is the subtlest thing in the app module. Worth doing;
@@ -307,20 +365,18 @@ Both were invisible while `#[derive(Script)]` was generating a read of every
 field on `App`. Moving a cluster into a plain struct is what surfaces them —
 which is an argument for doing the rest.
 
-## Recommended order for the remaining clusters
+## The order they were taken
 
-Cheap-and-safe first, so the pattern is established before the risky ones; the
+Cheap-and-safe first, so the pattern was established before the risky ones; the
 untestable one last.
 
-**Next one to take: C4 (item 9)** — and it is the last one, so read item 9's
-warning before starting. Nothing in `cargo test --workspace` executes a line of
-it; a mistake there is invisible to the gate, and only a real `?bundle=` /
-`?api=` boot in a browser can see it.
+**All nine are done.** `App` is at **24 fields** (23 `#[rust]` plus `ui`), down
+from the 54 the audit found. What is left of C6 (`view_history`,
+`history_controls_visible`) and of C2 (`search`, `find`) are deliberately NOT
+extractions; items 5 and 8 say why. C11's nine are the app shell itself.
 
-`App` is at 28 fields (27 `#[rust]` plus `ui`), down from the 54 the audit
-found. (The line above said 29/28 before this move; the real count was 30/29,
-so the trio took it from 30 to 28.) What is left of C6 (`view_history`, `history_controls_visible`) and of
-C2 (`search`, `find`) are deliberately NOT extractions; items 5 and 8 say why.
+Nothing here is a queue any more. The section that matters from now on is "The
+rule this file is really for", at the bottom.
 
 1. ~~**C8 Zoom (3)**~~ — **done.** `zoom::Zoom` holds the percent-per-target,
    the wheel accumulator and the target it banks for, because the reset-on-
@@ -356,9 +412,14 @@ C2 (`search`, `find`) are deliberately NOT extractions; items 5 and 8 say why.
    `stepped_session_index`) became `SessionSearch`; `pending_reveal` left with
    the deferred-apply trio; `search` and `find` stay, and the C2 section says
    why forcing them together would be wrong.
-9. **C4 Web / remote boot (5)** — last, not because it is hard but because
-   nothing in `cargo test --workspace` executes it. Move it only in a session
-   that can verify a `?bundle=` / `?api=` boot in a real browser.
+9. ~~**C4 Web / remote boot (5)**~~ — **done**, last, and it went to four
+   fields rather than five: two of the five were C10's defect again, two
+   `Option`s where at most one is ever `Some`. Taken in a session that could
+   verify both channels in a real browser, which is what the warning here asked
+   for — and the move itself is what made the state machine reachable from
+   `cargo test --workspace` at all. It also found two latent bugs in the
+   `?bundle=` channel, both from its never having adopted the guard its `?api=`
+   sibling has. See the C4 section above.
 
 C11 stays where it is.
 
