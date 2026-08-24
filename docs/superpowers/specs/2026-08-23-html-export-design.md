@@ -187,22 +187,30 @@ first concept rather than the one being read.
 **Prose is serif; diagram labels are not.** The constraint above forces the
 split, so the design leans into it rather than hiding it.
 
-**IBM Plex Serif** for prose. Same superfamily as the faces the diagrams are
-already welded to, so a page with a diagram in it reads as one design rather
-than a collision, and the same SIL OFL licence as the Plex faces already
-vendored here.
+**Noto Serif** for prose. It is already vendored, at
+`crates/waml-editor/resources/fonts/Noto_Serif/` — 74 files with the full weight
+range and italics — and it carries its own `OFL.txt` and `README.txt`, as each
+of the four vendored families does (Cascadia Code, IBM Plex Mono, IBM Plex Sans,
+Noto Serif). So there is **no font to vendor and no new attribution to write**.
 
-**It is not in the repository yet.** Only Sans (Regular, SemiBold) and Mono are
-— in `crates/waml/assets/fonts/`, where they back `sizing.rs`'s `Font` enum, and
-in `crates/waml-editor/resources/fonts/`. Adding Serif means vendoring a new
-font file and giving it its own entry in `THIRD-PARTY.md`, whose Fonts section
-currently describes only the subsets pruned from the makepad distribution. Small,
-but it is a licensing and attribution step, not a copy.
+Better still, nothing renders with it today. `scripts/prune-web-fonts.mjs` notes
+that "the app names exactly 8 of them -- Noto_Serif alone is 36 MB of weights",
+and its test asserts the entire `Noto_Serif` directory is deleted from the web
+artifact. It is currently dead weight that is never distributed. Two
+consequences: using it here cannot change how the editor renders anything, and
+the export is the first thing to give those files a purpose.
+
+One doc follow-up: `THIRD-PARTY.md`'s Fonts section describes only the subsets
+pruned from the makepad distribution. Once the export ships Noto Serif from
+waml-editor's own resources tree, that section needs a line saying so.
 
 **Fonts are embedded as subset woff2** rather than left to a system stack. The
 export is meant to be hosted or sent, and a system serif stack renders
-differently on every machine, which defeats the point of styling it at all.
-`scripts/prune-web-fonts.mjs` is prior art for the subsetting step.
+differently on every machine, which defeats the point of styling it at all. Three
+faces are enough — Regular, Italic, and one bold cut — subset to the glyphs the
+bundle actually uses. `scripts/prune-web-fonts.mjs` is prior art for the pruning
+step, though it prunes by "what the app names" and the export needs its own
+subsetting.
 
 ## Testing
 
